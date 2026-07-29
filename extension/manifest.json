@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "dcwatch bridge",
+  "version": "1.0.0",
+  "description": "把 Discord 网页版里看到的新消息转发给本机 dcwatch（只读，不发任何东西给 Discord）",
+  "host_permissions": ["http://127.0.0.1:8777/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://discord.com/channels/*", "https://ptb.discord.com/channels/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

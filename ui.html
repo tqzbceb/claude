@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>dcwatch · Discord 监听工作台</title>
+<style>
+/* ============ tokens ============ */
+:root{
+  --bg:#faf9f5; --bg-elev:#fffefb; --bg-side:#f0eee6; --bg-hover:#eae7dd; --bg-sunk:#f5f3ec;
+  --text:#1f1e1c; --text2:#57544c; --text3:#8b8779;
+  --line:#e6e2d7; --line2:#d8d3c5;
+  --accent:#c96442; --accent-h:#b5573a; --accent-soft:#f7e9e2; --accent-line:#e8c8b9;
+  --ok:#2f8f6a; --ok-soft:#e4f2eb; --warn:#a8760c; --warn-soft:#f8efd9; --err:#bf4340; --err-soft:#fae7e5;
+  --shadow:0 1px 2px rgba(31,30,28,.04),0 4px 14px rgba(31,30,28,.05);
+  --shadow-lg:0 8px 40px rgba(31,30,28,.14);
+  --r:10px; --r-lg:14px;
+  --sans:ui-sans-serif,-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --serif:"Copernicus",ui-serif,Georgia,"Songti SC","Noto Serif SC",serif;
+  --mono:ui-monospace,"SFMono-Regular","JetBrains Mono",Menlo,Consolas,monospace;
+}
+[data-theme=dark]{
+  --bg:#1f1e1d; --bg-elev:#272624; --bg-side:#191817; --bg-hover:#302e2b; --bg-sunk:#232221;
+  --text:#f3f1ea; --text2:#b5b1a6; --text3:#7f7b70;
+  --line:#37352f; --line2:#45423b;
+  --accent:#d97757; --accent-h:#e08a6d; --accent-soft:#3a2a23; --accent-line:#5a3f33;
+  --ok:#5ac2a0; --ok-soft:#1f2f2a; --warn:#d9a441; --warn-soft:#31281a; --err:#e0776f; --err-soft:#33211f;
+  --shadow:0 1px 2px rgba(0,0,0,.3); --shadow-lg:0 10px 44px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.55 var(--sans);
+  -webkit-font-smoothing:antialiased;display:flex;overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:none}
+::selection{background:var(--accent-soft);color:var(--text)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--line2);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--text3);background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ============ sidebar ============ */
+.sb{width:232px;flex:0 0 232px;background:var(--bg-side);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;padding:14px 10px 10px}
+.brand{display:flex;align-items:center;gap:9px;padding:4px 8px 16px;font-family:var(--serif);
+  font-size:19px;letter-spacing:-.2px}
+.brand .glyph{width:22px;height:22px;border-radius:6px;background:var(--accent);flex:0 0 22px;
+  display:grid;place-items:center;color:#fff;font:600 12px/1 var(--sans)}
+.brand small{font:400 11px var(--sans);color:var(--text3);margin-left:auto}
+.nav{display:flex;flex-direction:column;gap:1px}
+.nav b{font:500 11px var(--sans);color:var(--text3);letter-spacing:.06em;text-transform:uppercase;
+  padding:14px 10px 5px}
+.nav a{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;color:var(--text2);
+  text-decoration:none;transition:background .12s,color .12s;position:relative}
+.nav a:hover{background:var(--bg-hover);color:var(--text)}
+.nav a.on{background:var(--bg-elev);color:var(--text);box-shadow:var(--shadow);font-weight:500}
+.nav a .ic{width:16px;text-align:center;opacity:.75;font-size:14px}
+.nav a .cnt{margin-left:auto;font:500 11px var(--mono);background:var(--accent);color:#fff;
+  padding:1px 6px;border-radius:20px;min-width:19px;text-align:center}
+.nav a.on .cnt{background:var(--accent)}
+.nav a .cnt.mute{background:var(--line2);color:var(--text2)}
+.sb-foot{margin-top:auto;padding:10px 6px 2px;border-top:1px solid var(--line);display:grid;gap:8px}
+.srcrow{display:flex;align-items:center;gap:8px;padding:4px 4px}
+.srcrow .nm{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text2)}
+.srcrow .nm i{width:7px;height:7px;border-radius:50%;background:var(--line2);display:inline-block}
+.srcrow.live .nm i{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.srcrow.err .nm i{background:var(--err);box-shadow:0 0 0 3px var(--err-soft)}
+.sw{margin-left:auto;width:34px;height:19px;border-radius:20px;background:var(--line2);position:relative;
+  transition:background .18s;flex:0 0 34px}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;
+  background:#fff;transition:transform .18s;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.sw.on{background:var(--accent)}
+.sw.on::after{transform:translateX(15px)}
+.pausebtn{display:flex;align-items:center;justify-content:center;gap:7px;padding:7px;border-radius:8px;
+  border:1px solid var(--line2);color:var(--text2);font-size:12.5px;background:var(--bg-elev)}
+.pausebtn:hover{background:var(--bg-hover);color:var(--text)}
+.pausebtn.paused{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
+
+/* ============ shell ============ */
+main{flex:1;display:flex;flex-direction:column;min-width:0}
+.top{height:56px;flex:0 0 56px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+  gap:12px;padding:0 18px;background:var(--bg)}
+.top h1{font:400 17px/1.2 var(--serif);letter-spacing:-.2px}
+.top .sub{font-size:12.5px;color:var(--text3);border-left:1px solid var(--line2);padding-left:12px}
+.top .sp{flex:1}
+.icbtn{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--text2);font-size:14px}
+.icbtn:hover{background:var(--bg-hover);color:var(--text)}
+.view{flex:1;min-height:0;display:none;overflow:hidden}
+.view.on{display:flex}
+.pad{padding:22px 26px;overflow:auto;flex:1}
+.pad.narrow>*{max-width:880px;margin-left:auto;margin-right:auto}
+
+/* ============ generic bits ============ */
+.btn{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;padding:6px 12px;border-radius:8px;
+  border:1px solid var(--line2);background:var(--bg-elev);color:var(--text);font-size:13px;
+  transition:.12s;box-shadow:var(--shadow)}
+.btn:hover{background:var(--bg-hover)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.pri:hover{background:var(--accent-h)}
+.btn.ghost{box-shadow:none;background:transparent;border-color:transparent;color:var(--text2)}
+.btn.ghost:hover{background:var(--bg-hover);color:var(--text)}
+.btn.sm{padding:3px 9px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:default}
+.card{background:var(--bg-elev);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+.card>h3{font:500 14px var(--sans);padding:14px 16px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:8px}
+.card>h3 .hint{font-weight:400;font-size:12px;color:var(--text3);margin-left:auto}
+.card .bd{padding:16px}
+label.f{display:block;margin-bottom:13px}
+label.f>span{display:block;font-size:12.5px;color:var(--text2);margin-bottom:5px;font-weight:500}
+label.f>span em{font-style:normal;color:var(--text3);font-weight:400}
+input[type=text],input[type=password],input[type=number],select,textarea{
+  width:100%;padding:7px 10px;border:1px solid var(--line2);border-radius:8px;background:var(--bg-elev);
+  transition:border-color .12s,box-shadow .12s}
+textarea{resize:vertical;min-height:64px;font:13px/1.5 var(--sans)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft)}
+.mono{font-family:var(--mono);font-size:12.5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:0 14px}
+.row{display:flex;align-items:center;gap:8px}
+.tag{display:inline-flex;align-items:center;gap:5px;padding:1.5px 8px;border-radius:20px;font-size:11.5px;
+  background:var(--bg-sunk);border:1px solid var(--line);color:var(--text2);white-space:nowrap}
+.tag.a{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.tag.g{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+.tag.w{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.tag.r{background:var(--err-soft);border-color:transparent;color:var(--err)}
+.empty{display:grid;place-content:center;gap:8px;justify-items:center;height:100%;color:var(--text3);
+  text-align:center;padding:40px}
+.empty .big{font:400 34px var(--serif);color:var(--line2)}
+.chk{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--text2);cursor:pointer;
+  padding:5px 0}
+.chk input{accent-color:var(--accent);width:14px;height:14px}
+.hr{height:1px;background:var(--line);margin:14px 0}
+/* ============ inbox ============ */
+.split{display:flex;flex:1;min-height:0;width:100%}
+.mlist{width:420px;flex:0 0 420px;border-right:1px solid var(--line);display:flex;flex-direction:column;
+  background:var(--bg)}
+.filters{display:flex;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line);align-items:center;
+  flex-wrap:wrap}
+.chip{padding:3px 10px;border-radius:20px;font-size:12px;color:var(--text2);border:1px solid transparent}
+.chip:hover{background:var(--bg-hover)}
+.chip.on{background:var(--bg-elev);border-color:var(--line2);color:var(--text);font-weight:500;
+  box-shadow:var(--shadow)}
+.search{flex:1;min-width:110px}
+.search input{padding:4px 9px;font-size:12.5px;border-radius:20px;background:var(--bg-sunk)}
+.mscroll{overflow:auto;flex:1}
+.mi{display:block;width:100%;text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);
+  cursor:pointer;position:relative;transition:background .1s}
+.mi:hover{background:var(--bg-sunk)}
+.mi.on{background:var(--bg-elev)}
+.mi.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--accent)}
+.mi .h{display:flex;align-items:center;gap:7px;margin-bottom:3px}
+.mi .av{width:22px;height:22px;border-radius:50%;flex:0 0 22px;display:grid;place-items:center;
+  font:600 10px var(--sans);color:#fff;letter-spacing:-.3px}
+.mi .who{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+.mi .ch{font-size:11.5px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mi .tm{margin-left:auto;font-size:11px;color:var(--text3);flex:0 0 auto}
+.mi .txt{font-size:13px;color:var(--text2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;padding-left:29px}
+.mi .foot{display:flex;gap:5px;padding-left:29px;margin-top:5px;flex-wrap:wrap}
+.mi.unread .who::after{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;
+  background:var(--accent);margin-left:6px;vertical-align:middle}
+.score{font:600 10.5px var(--mono);padding:1px 6px;border-radius:5px}
+.s-hi{background:var(--err-soft);color:var(--err)} .s-md{background:var(--warn-soft);color:var(--warn)}
+.s-lo{background:var(--bg-sunk);color:var(--text3)}
+
+.detail{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg-elev)}
+.dhead{padding:18px 24px 14px;border-bottom:1px solid var(--line)}
+.dhead .t{font:400 18px/1.35 var(--serif);margin-bottom:8px}
+.dbody{padding:20px 24px;overflow:auto;flex:1;max-width:760px}
+.dbody .msgtext{font-size:14.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+.aibox{margin-top:18px;border:1px solid var(--accent-line);background:var(--accent-soft);
+  border-radius:var(--r);padding:13px 15px}
+.aibox h4{font:500 12px var(--sans);color:var(--accent);letter-spacing:.04em;text-transform:uppercase;
+  margin-bottom:7px;display:flex;align-items:center;gap:6px}
+.aibox .kv{font-size:13px;color:var(--text2);margin-bottom:3px}
+.aibox .kv b{color:var(--text);font-weight:600}
+.dfoot{border-top:1px solid var(--line);padding:12px 24px;display:flex;gap:8px;align-items:flex-end;
+  background:var(--bg)}
+.dfoot textarea{min-height:38px;max-height:130px;border-radius:10px}
+.meta{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--text3)}
+.meta code{font-family:var(--mono);color:var(--text2);background:var(--bg-sunk);padding:0 4px;border-radius:4px}
+
+/* ============ rules ============ */
+.rcard{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;border:1px solid var(--line);
+  border-radius:var(--r-lg);background:var(--bg-elev);box-shadow:var(--shadow);margin-bottom:10px;
+  transition:border-color .12s}
+.rcard:hover{border-color:var(--line2)}
+.rcard.off{opacity:.55}
+.rcard .body{flex:1;min-width:0}
+.rcard .nm{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.rcard .desc{font-size:12.5px;color:var(--text2);line-height:1.7}
+.rcard .desc b{color:var(--text);font-weight:600}
+.act-pill{padding:2px 9px;border-radius:6px;font:500 11.5px var(--sans);background:var(--bg-sunk);
+  border:1px solid var(--line)}
+.flowline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--text3)}
+.flowline .seg{background:var(--bg-sunk);border:1px solid var(--line);padding:2px 8px;border-radius:6px;
+  color:var(--text2)}
+
+/* ============ drawer ============ */
+.scrim{position:fixed;inset:0;background:rgba(31,30,28,.34);opacity:0;pointer-events:none;
+  transition:opacity .2s;z-index:40;backdrop-filter:blur(1.5px)}
+.scrim.on{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:520px;max-width:94vw;background:var(--bg);
+  border-left:1px solid var(--line);box-shadow:var(--shadow-lg);z-index:50;transform:translateX(102%);
+  transition:transform .24s cubic-bezier(.32,.72,0,1);display:flex;flex-direction:column}
+.drawer.on{transform:none}
+.drawer .dh{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.drawer .dh h2{font:400 17px var(--serif)}
+.drawer .db{overflow:auto;flex:1;padding:18px 20px}
+.drawer .df{border-top:1px solid var(--line);padding:12px 20px;display:flex;gap:8px;align-items:center;
+  background:var(--bg-side)}
+.sect{margin-bottom:20px}
+.sect>.st{display:flex;align-items:baseline;gap:8px;margin-bottom:10px;padding-bottom:7px;
+  border-bottom:1px solid var(--line)}
+.sect>.st b{font:500 12px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.sect>.st span{font-size:12px;color:var(--text3)}
+.chips{display:flex;flex-wrap:wrap;gap:5px;padding:5px;border:1px solid var(--line2);border-radius:8px;
+  background:var(--bg-elev);min-height:36px;align-items:center}
+.chips input{border:none;flex:1;min-width:90px;padding:2px 4px;background:transparent;box-shadow:none!important}
+.chips input:focus{outline:none}
+.chipx{display:inline-flex;align-items:center;gap:5px;background:var(--bg-sunk);border:1px solid var(--line);
+  border-radius:6px;padding:1px 4px 1px 7px;font:12px var(--mono)}
+.chipx b{font:400 12px var(--sans);color:var(--text3)}
+.chipx button{color:var(--text3);font-size:13px;line-height:1;padding:0 2px}
+.chipx button:hover{color:var(--err)}
+.tester{background:var(--bg-sunk);border:1px dashed var(--line2);border-radius:var(--r);padding:12px}
+.verdict{font:500 13px var(--sans);display:flex;align-items:center;gap:7px}
+
+/* ============ picker / workbench / misc ============ */
+.tree{max-height:50vh;overflow:auto;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--bg-elev)}
+.tnode{padding:7px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.tnode:last-child{border:none}
+.tnode.g{background:var(--bg-side);font-weight:600;font-size:12.5px}
+.tnode.c{padding-left:26px} .tnode.t{padding-left:44px;font-size:12.5px;color:var(--text2)}
+.tnode .add{margin-left:auto;opacity:0}
+.tnode:hover .add{opacity:1}
+.wb{display:flex;flex-direction:column;gap:14px;height:100%}
+.chatlog{flex:1;overflow:auto;display:flex;flex-direction:column;gap:14px;padding:4px}
+.bub{max-width:min(72ch,88%);padding:11px 15px;border-radius:14px;font-size:14px;line-height:1.65;
+  white-space:pre-wrap}
+.bub.u{align-self:flex-end;background:var(--accent-soft);border:1px solid var(--accent-line)}
+.bub.a{align-self:flex-start;background:var(--bg-elev);border:1px solid var(--line);box-shadow:var(--shadow)}
+.bub .lbl{font:500 11px var(--sans);text-transform:uppercase;letter-spacing:.05em;color:var(--text3);
+  margin-bottom:5px}
+.composer{border:1px solid var(--line2);border-radius:var(--r-lg);background:var(--bg-elev);padding:10px 12px;
+  box-shadow:var(--shadow)}
+.composer textarea{border:none;box-shadow:none!important;min-height:52px;padding:0}
+.composer .cf{display:flex;align-items:center;gap:8px;margin-top:8px}
+.stat{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.stat .b{flex:1;min-width:120px;background:var(--bg-elev);border:1px solid var(--line);border-radius:var(--r);
+  padding:12px 14px;box-shadow:var(--shadow)}
+.stat .b i{display:block;font:400 11.5px var(--sans);font-style:normal;color:var(--text3);margin-bottom:3px}
+.stat .b b{font:500 21px var(--serif)}
+.logline{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);font:12.5px var(--mono)}
+.logline .t{color:var(--text3);flex:0 0 62px}
+.logline .l{flex:0 0 52px;font-weight:600}
+.l-info{color:var(--text2)} .l-warn{color:var(--warn)} .l-error{color:var(--err)}
+#toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);z-index:80;
+  background:var(--text);color:var(--bg);padding:9px 16px;border-radius:20px;font-size:13px;opacity:0;
+  transition:.22s;pointer-events:none;box-shadow:var(--shadow-lg);max-width:80vw}
+#toast.on{opacity:1;transform:translateX(-50%)}
+.banner{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:var(--r);font-size:13px;
+  background:var(--warn-soft);color:var(--warn);border:1px solid transparent;margin-bottom:14px}
+.spin{width:13px;height:13px;border:2px solid var(--line2);border-top-color:var(--accent);border-radius:50%;
+  animation:sp .7s linear infinite;display:inline-block}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:1080px){.mlist{width:330px;flex-basis:330px}.sb{width:60px;flex-basis:60px}
+  .sb .brand small,.sb .nav a span.lb,.sb .nav b,.sb .srcrow .nm span{display:none}}
+</style>
+</head>
+<body>
+<aside class="sb">
+  <div class="brand"><span class="glyph">dw</span> dcwatch <small id="modeTag"></small></div>
+  <nav class="nav">
+    <b>收信</b>
+    <a href="#" class="on" data-v="inbox"><span class="ic">◍</span><span class="lb">收信箱</span><span class="cnt" id="cInbox">0</span></a>
+    <a href="#" data-v="ai"><span class="ic">✧</span><span class="lb">AI 工作台</span></a>
+    <b>配置</b>
+    <a href="#" data-v="rules"><span class="ic">◆</span><span class="lb">监听规则</span><span class="cnt mute" id="cRules">0</span></a>
+    <a href="#" data-v="models"><span class="ic">✦</span><span class="lb">模型接入</span></a>
+    <a href="#" data-v="notify"><span class="ic">◔</span><span class="lb">通知与转发</span></a>
+    <a href="#" data-v="settings"><span class="ic">⚙</span><span class="lb">设置</span></a>
+    <a href="#" data-v="logs"><span class="ic">≡</span><span class="lb">运行日志</span></a>
+  </nav>
+  <div class="sb-foot">
+    <div class="srcrow" id="srcBrowser">
+      <span class="nm"><i></i><span>浏览器旁听</span></span>
+      <button class="sw" data-src="browser" title="开/关 浏览器旁听收信"></button>
+    </div>
+    <div class="srcrow" id="srcDiscord">
+      <span class="nm"><i></i><span>Discord Token</span></span>
+      <button class="sw" data-src="discord" title="开/关 Token 直连收信"></button>
+    </div>
+    <div class="srcrow">
+      <span class="nm" style="opacity:.5"><i></i><span>Telegram</span></span>
+      <span class="tag" style="margin-left:auto;font-size:10.5px">待接</span>
+    </div>
+    <button class="pausebtn" id="btnPause"><span>⏸</span><span class="lb">全部暂停</span></button>
+  </div>
+</aside>
+
+<main>
+  <div class="top">
+    <h1 id="vTitle">收信箱</h1>
+    <span class="sub" id="vSub">实时监听命中的消息</span>
+    <span class="sp"></span>
+    <button class="icbtn" id="btnTheme" title="浅色/深色">◐</button>
+    <button class="icbtn" id="btnReload" title="刷新">⟳</button>
+  </div>
+
+  <!-- ============ inbox ============ -->
+  <section class="view on" id="v-inbox">
+    <div class="split">
+      <div class="mlist">
+        <div class="filters">
+          <button class="chip on" data-f="all">全部</button>
+          <button class="chip" data-f="matched">命中规则</button>
+          <button class="chip" data-f="high">高优先</button>
+          <button class="chip" data-f="mention">@我</button>
+          <span class="search"><input id="q" type="text" placeholder="搜索内容 / 作者 / 频道"></span>
+        </div>
+        <div class="mscroll" id="mlist"></div>
+      </div>
+      <div class="detail" id="detail"></div>
+    </div>
+  </section>
+
+  <!-- ============ rules ============ -->
+  <section class="view" id="v-rules">
+    <div class="pad">
+      <div class="row" style="margin-bottom:16px">
+        <button class="btn pri" id="btnNewRule">＋ 新建规则</button>
+        <button class="btn" id="btnPreset">从模板创建</button>
+        <span class="sp" style="flex:1"></span>
+        <span style="font-size:12.5px;color:var(--text3)">规则自上而下全部匹配，一条消息可命中多条</span>
+      </div>
+      <div id="rlist"></div>
+    </div>
+  </section>
+
+  <!-- ============ ai workbench ============ -->
+  <section class="view" id="v-ai">
+    <div class="pad" style="display:flex;flex-direction:column;gap:0">
+      <div class="wb">
+        <div class="row" style="flex-wrap:wrap">
+          <select id="wbModel" style="width:auto;min-width:230px"></select>
+          <button class="btn sm" data-quick="summary">总结选中消息</button>
+          <button class="btn sm" data-quick="todo">抽出待办</button>
+          <button class="btn sm" data-quick="draft">起草回复</button>
+          <button class="btn sm" data-quick="translate">翻译成中文</button>
+          <span class="sp" style="flex:1"></span>
+          <span class="tag" id="wbCtx">未带上下文</span>
+          <button class="btn ghost sm" id="wbClear">清空</button>
+        </div>
+        <div class="chatlog" id="wbLog"></div>
+        <div class="composer">
+          <textarea id="wbInput" placeholder="问点什么…  在收信箱勾选消息后，它们会作为上下文一起发给模型（Enter 发送 · Shift+Enter 换行）"></textarea>
+          <div class="cf">
+            <span style="font-size:12px;color:var(--text3)" id="wbHint">上下文 0 条消息</span>
+            <span class="sp" style="flex:1"></span>
+            <button class="btn pri" id="wbSend">发送 ↵</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ models ============ -->
+  <section class="view" id="v-models">
+    <div class="pad narrow">
+      <div class="card" style="margin-bottom:16px">
+        <h3>接入的模型服务 <span class="hint">任何 OpenAI 兼容端点：OpenAI / DeepSeek / OpenRouter / Ollama / vLLM / 自建</span></h3>
+        <div class="bd" id="provList"></div>
+        <div class="bd" style="border-top:1px solid var(--line)">
+          <button class="btn" id="btnAddProv">＋ 添加服务商</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>默认模型 <span class="hint">规则里不单独指定时用这个</span></h3>
+        <div class="bd">
+          <div class="grid2">
+            <label class="f"><span>服务商</span><select id="defProv"></select></label>
+            <label class="f"><span>模型</span><select id="defModel"></select></label>
+          </div>
+          <div class="row"><button class="btn" id="btnSaveDef">保存默认模型</button>
+            <button class="btn" id="btnPing">测试一次调用</button></div>
+          <div id="pingOut" style="margin-top:10px;font-size:13px;color:var(--text2)"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ settings ============ -->
+  <!-- ============ notify & forward ============ -->
+  <section class="view" id="v-notify">
+    <div class="pad narrow">
+      <div class="card" style="margin-bottom:16px">
+        <h3>本机提醒 <em id="nfOs"></em></h3>
+        <div class="bd">
+          <div class="grid3">
+            <label class="f"><span>Windows 系统通知</span><select id="nfToast"><option value="1">开</option><option value="0">关</option></select></label>
+            <label class="f"><span>提示音</span><select id="nfSound"><option value="1">开</option><option value="0">关</option></select></label>
+            <label class="f"><span>网页通知 <em>需开着界面</em></span><select id="nfBrowser"><option value="1">开</option><option value="0">关</option></select></label>
+          </div>
+          <label class="f"><span>自定义提示音 <em>— .wav 绝对路径，留空用系统默认「叮」</em></span>
+            <input id="nfSoundFile" type="text" placeholder="C:\Windows\Media\Alarm02.wav"></label>
+          <div class="grid3">
+            <label class="f"><span>免打扰从 <em>只静音本机，不影响转发</em></span><input id="nfQFrom" type="text" placeholder="23:00"></label>
+            <label class="f"><span>到</span><input id="nfQTo" type="text" placeholder="08:00"></label>
+            <label class="f"><span>分数低于多少不往外发 <em>没打分的一律发</em></span><input id="nfMin" type="number" min="0" max="100"></label>
+          </div>
+          <div class="row"><button class="btn pri" id="btnSaveNf">保存</button>
+            <button class="btn" data-test="toast">试一下系统通知</button>
+            <button class="btn" data-test="sound">试一下提示音</button></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <h3>转发到别的地方 <em>命中的消息会推一份过去</em></h3>
+        <div class="bd">
+          <label class="f"><span>Discord 频道 Webhook <em>— 你自己的服务器：频道设置 → 整合 → 创建 Webhook → 复制链接。零风险，手机 Discord 直接收推送</em></span>
+            <input id="nfDc" type="text" placeholder="https://discord.com/api/webhooks/…"></label>
+          <div class="row" style="margin:-6px 0 14px"><button class="btn" data-test="discord_webhook">测试</button></div>
+
+          <div class="grid2">
+            <label class="f"><span>Telegram Bot Token <em>— @BotFather 要</em></span><input id="nfTgT" type="password" placeholder="123456:AA…"></label>
+            <label class="f"><span>Chat ID <em>— 给 bot 发条消息后看 @userinfobot</em></span><input id="nfTgC" type="text" placeholder="123456789"></label>
+          </div>
+          <div class="row" style="margin:-6px 0 14px"><button class="btn" data-test="telegram">测试</button></div>
+
+          <label class="f"><span>微信：Server酱 SendKey <em>— sct.ftqq.com 扫码绑定，推到微信「服务号」。官方通道，不会封号</em></span>
+            <input id="nfSc" type="password" placeholder="SCT… / sctp…"></label>
+          <div class="row" style="margin:-6px 0 14px"><button class="btn" data-test="serverchan">测试</button></div>
+
+          <label class="f"><span>企业微信群机器人 Webhook <em>— 群设置 → 群机器人 → 添加。也能拉微信用户进群看</em></span>
+            <input id="nfWc" type="text" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…"></label>
+          <div class="row" style="margin:-6px 0 14px"><button class="btn" data-test="wecom">测试</button></div>
+
+          <label class="f"><span>自定义 Webhook <em>— 原始 JSON POST（飞书/钉钉/n8n/自建）</em></span>
+            <input id="nfHook" type="text" placeholder="https://…"></label>
+          <div class="row"><button class="btn pri" id="btnSaveOut">保存全部出口</button>
+            <button class="btn" data-test="webhook">测试</button>
+            <button class="btn" data-test="all">全部测一遍</button></div>
+          <div id="nfResult" style="margin-top:12px"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>不建议的路子</h3>
+        <div class="bd" style="font-size:13px;color:var(--text2);line-height:1.9">
+          <b>个人微信直推</b>（itchat / wechaty 那类网页版协议）：要拿你微信的登录态去模拟客户端，
+          属于非官方协议，<b>封号风险高</b>，而且微信近年封得很狠。所以这里没做，
+          想收到微信上就走上面的 <b>Server酱</b> 或 <b>企业微信机器人</b>，都是官方通道。<br>
+          <b>短信 / 邮件</b>：需要的话说一声，加一个出口大概十几行代码。
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="v-settings">
+    <div class="pad narrow">
+      <div class="card" style="margin-bottom:16px">
+        <h3>消息从哪来</h3>
+        <div class="bd">
+          <label class="f"><span>接入方式</span>
+            <select id="dcMode">
+              <option value="browser">浏览器旁听 — 不需要任何 Token（普通账号用这个）</option>
+              <option value="bot">Bot Token — 官方方式，需要能把 bot 拉进服务器</option>
+              <option value="user">个人账号 Token — 违反 Discord ToS，有封号风险</option>
+            </select></label>
+          <div class="banner" id="modeHelp" style="background:var(--bg-sunk);color:var(--text2);margin:0 0 14px"></div>
+
+          <div id="tokenBox" style="display:none">
+            <label class="f"><span>Token <em>— 存在本机 dcwatch.db，界面只回显掩码</em></span>
+              <input id="dcToken" type="password" placeholder="粘贴 Token"></label>
+            <div class="chk"><input type="checkbox" id="dcEnabled"><label for="dcEnabled">启用 Token 直连监听</label></div>
+            <div class="row" style="margin-top:12px"><button class="btn pri" id="btnSaveDc">保存并连接</button>
+              <span id="dcState" style="font-size:12.5px;color:var(--text3)"></span></div>
+          </div>
+
+          <div id="brBox">
+            <div style="font-size:13px;color:var(--text2);line-height:1.85">
+              1 · 装扩展：Chrome → <code>chrome://extensions</code> → 打开「开发者模式」→「加载已解压的扩展程序」→ 选 <b>dcwatch/extension</b> 文件夹<br>
+              2 · 在 Chrome 里打开 <code>discord.com</code>，用你自己的账号登录，把要盯的频道／子区留在标签页里<br>
+              3 · 该频道来新消息时，扩展只读页面 DOM 转发到本机 <code>127.0.0.1:8777</code>，规则、AI、通知照常跑
+            </div>
+            <div class="row" style="margin-top:12px"><span id="brState" style="font-size:12.5px;color:var(--text3)"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>收信与用量</h3>
+        <div class="bd">
+          <div class="grid3">
+            <label class="f"><span>消息保留天数</span><input id="setRet" type="number" min="1"></label>
+            <label class="f"><span>每日 AI 调用上限</span><input id="setCap" type="number" min="1"></label>
+            <label class="f"><span>桌面通知</span><select id="setNotify"><option value="1">开</option><option value="0">关</option></select></label>
+          </div>
+          <label class="f"><span>转发 Webhook <em>— 命中后 POST 出去（飞书/钉钉/n8n/自建）</em></span>
+            <input id="setHook" type="text" placeholder="https://…"></label>
+          <div class="row"><button class="btn pri" id="btnSaveSet">保存</button>
+            <button class="btn" id="btnClearMsg">清空历史消息</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ logs ============ -->
+  <section class="view" id="v-logs">
+    <div class="pad">
+      <div class="stat" id="stats"></div>
+      <div class="card"><h3>运行日志</h3><div class="bd" id="logs" style="max-height:52vh;overflow:auto"></div></div>
+    </div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<div class="drawer" id="drawer"></div>
+<div id="toast"></div>
+<script>
+/* ================= state & utils ================= */
+const S={cfg:null,status:{},rules:[],msgs:[],models:{},sel:null,ctx:new Set(),filter:'all',q:'',
+  demo:false,view:'inbox',editing:null,chat:[]};
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const AVC=['#c96442','#7a8b5c','#5b7fa6','#a1743b','#8d6a9f','#3f8f7c','#b05b6e'];
+const avc=s=>AVC[[...String(s)].reduce((a,c)=>a+c.charCodeAt(0),0)%AVC.length];
+const ini=s=>String(s||'?').replace(/[^\p{L}\p{N}]/gu,'').slice(0,2).toUpperCase()||'?';
+/* Enter 直接发送，Shift+Enter 换行。
+   e.isComposing / keyCode 229 = 中文输入法正在选词，这时的回车是确认候选，不能当发送。 */
+function enterToSend(el,send){
+  if(!el)return;
+  el.onkeydown=e=>{
+    if(e.key!=='Enter'||e.shiftKey||e.isComposing||e.keyCode===229)return;
+    e.preventDefault();send();
+  };
+}
+function ago(ts){const d=Date.now()/1000-ts;if(d<60)return'刚刚';if(d<3600)return~~(d/60)+'分钟';
+  if(d<86400)return~~(d/3600)+'小时';return new Date(ts*1000).toLocaleDateString('zh-CN',{month:'numeric',day:'numeric'});}
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(e._t);
+  e._t=setTimeout(()=>e.classList.remove('on'),2600);}
+async function api(p,m='GET',b){
+  try{const r=await fetch(p,{method:m,headers:b?{'Content-Type':'application/json'}:{},
+      body:b?JSON.stringify(b):null});if(!r.ok)throw 0;return await r.json();}
+  catch(e){if(!S.demo){S.demo=true;$('#modeTag').textContent='演示模式';}return null;}
+}
+
+/* ================= demo seed (backend 不在时也能看界面) ================= */
+const DEMO_RULES=[
+ {id:1,enabled:1,hits:37,name:'老板点我',source:'discord',guild_ids:['9312…4471'],channel_ids:['1102…8830'],
+  thread_ids:[],author_ids:['4471…1092'],include_threads_of_channels:true,ignore_bots:true,mention_only:false,
+  keywords_any:[],keywords_all:[],regex:'',action:'ai_tag',model:'',prompt:'',notify_min_score:60,
+  cooldown_sec:15,max_per_hour:40,dm:false,author_name_contains:'',min_len:0,summary_every:20,reply_in_thread:true,webhook_url:''},
+ {id:2,enabled:1,hits:12,name:'#bug-report 子区自动答复',source:'discord',guild_ids:[],channel_ids:['1188…2201'],
+  thread_ids:[],author_ids:[],include_threads_of_channels:true,ignore_bots:true,mention_only:true,
+  keywords_any:[],keywords_all:[],regex:'',action:'ai_reply',model:'',prompt:'你是项目维护者，先复述问题再给排查步骤，≤120字。',
+  notify_min_score:0,cooldown_sec:30,max_per_hour:20,dm:false,author_name_contains:'',min_len:8,summary_every:20,reply_in_thread:true,webhook_url:''},
+ {id:3,enabled:0,hits:0,name:'空投/白名单 关键词',source:'discord',guild_ids:[],channel_ids:[],thread_ids:['1201…7788'],
+  author_ids:[],include_threads_of_channels:false,ignore_bots:false,mention_only:false,
+  keywords_any:['whitelist','空投','snapshot'],keywords_all:[],regex:'',action:'webhook',model:'',prompt:'',
+  notify_min_score:0,cooldown_sec:5,max_per_hour:60,dm:false,author_name_contains:'',min_len:0,summary_every:20,reply_in_thread:true,webhook_url:''}];
+const DEMO_MSGS=[
+ {id:101,author:'Marcus',author_id:'4471…1092',channel_name:'general',is_thread:0,content:'@you 明天的 demo 能不能提前到 10 点？客户那边时区变了',ts:Date.now()/1000-140,matched:'老板点我',score:88,unread:1,
+  ai:{score:88,tags:['需回复','排期'],reason:'直属上级要求改会议时间，需当天确认',todo:'确认 10:00 是否可行并回复'},guild_id:'9312…4471',channel_id:'1102…8830',msg_id:'1',is_bot:0},
+ {id:102,author:'lily.dev',author_id:'8823…4410',channel_name:'bug-report › 登录 500',is_thread:1,content:'点登录直接 500，后台日志 redis connection refused，@maintainer 求看',ts:Date.now()/1000-900,matched:'#bug-report 子区自动答复',score:null,unread:1,ai:null,guild_id:'9312…4471',channel_id:'1188…9931',msg_id:'2',is_bot:0},
+ {id:103,author:'CryptoBot',author_id:'1001…0001',channel_name:'announcements',is_thread:0,content:'Snapshot 将在 24h 后进行，whitelist 名单见置顶',ts:Date.now()/1000-4200,matched:'空投/白名单 关键词',score:41,unread:0,
+  ai:{score:41,tags:['公告'],reason:'例行公告，无需立刻处理',todo:''},guild_id:'9312…4471',channel_id:'1201…7788',msg_id:'3',is_bot:1},
+ {id:104,author:'Ana',author_id:'7712…3390',channel_name:'design',is_thread:0,content:'配色我改成暖白＋赤陶了，你看下 Figma',ts:Date.now()/1000-9000,matched:'',score:null,unread:0,ai:null,guild_id:'9312…4471',channel_id:'1150…2210',msg_id:'4',is_bot:0}];
+function seedDemo(){S.cfg={discord:{token:'',enabled:false,mode:'browser'},providers:[{name:'openai',base_url:'https://api.openai.com/v1',api_key:''},
+   {name:'ollama',base_url:'http://127.0.0.1:11434/v1',api_key:''}],default_model:{provider:'openai',model:'gpt-4o-mini'},
+   sources:{discord:true,browser:true},retention_days:14,ai_daily_call_cap:500,
+   sinks:{browser:true,toast:true,sound:true,sound_file:'',quiet_from:'23:00',quiet_to:'08:00',min_score:0,
+     discord_webhook:'https://discord.com/api/webhooks/…示例',telegram:{token:'',chat_id:''},
+     serverchan:'',wecom:'',webhook:''}};
+  S.env={win:true,frozen:false};
+  S.status={discord:{state:'stopped'},browser:{state:'online',count:37}};S.rules=DEMO_RULES;S.msgs=DEMO_MSGS;
+  S.stats={msgs:1284,matched:96,ai_today:23,ai_cap:500};}
+
+/* ================= shell ================= */
+const TITLES={inbox:['收信箱','实时监听命中的消息'],rules:['监听规则','决定“听谁、听哪、听到什么就做什么”'],
+  ai:['AI 工作台','拿收到的消息直接喂给你接入的模型'],models:['模型接入','填端点 → 拉取模型 → 设为默认'],
+  notify:['通知与转发','命中的消息怎么提醒你、往哪儿转'],
+  settings:['设置','Token、收信开关、保留与用量'],logs:['运行日志','连接状态与每次动作的痕迹']};
+function go(v){S.view=v;$$('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+v));
+  $$('.nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
+  $('#vTitle').textContent=TITLES[v][0];$('#vSub').textContent=TITLES[v][1];
+  if(v==='logs')loadLogs();if(v==='ai')renderWb();if(v==='notify')renderNotify();}
+$$('.nav a').forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.v)});
+$('#btnTheme').onclick=()=>{const d=document.documentElement.dataset.theme==='dark'?'light':'dark';
+  document.documentElement.dataset.theme=d;localStorage.dcwTheme=d;};
+if(localStorage.dcwTheme)document.documentElement.dataset.theme=localStorage.dcwTheme;
+$('#btnReload').onclick=()=>boot();
+
+/* ================= inbox ================= */
+function passes(m){
+  if(S.filter==='matched'&&!m.matched)return false;
+  if(S.filter==='high'&&!(m.score>=60))return false;
+  if(S.filter==='mention'&&!/@you|@me|@maintainer/i.test(m.content||''))return false;
+  if(S.q){const q=S.q.toLowerCase();
+    if(!((m.content||'')+m.author+m.channel_name).toLowerCase().includes(q))return false;}
+  return true;}
+function scoreCls(s){return s>=60?'s-hi':s>=35?'s-md':'s-lo';}
+function renderList(){
+  const rows=S.msgs.filter(passes);
+  $('#cInbox').textContent=S.msgs.filter(m=>m.unread).length;
+  $('#mlist').innerHTML=rows.length?rows.map(m=>`
+   <div class="mi ${m.unread?'unread':''} ${S.sel===m.id?'on':''}" data-id="${m.id}">
+     <div class="h">
+       <span class="av" style="background:${avc(m.author)}">${ini(m.author)}</span>
+       <span class="who">${esc(m.author)}</span>
+       <span class="ch">${m.is_thread?'⤷ ':'#'}${esc(m.channel_name)}</span>
+       <span class="tm">${ago(m.ts)}</span>
+     </div>
+     <div class="txt">${esc(m.content)||'<i style="color:var(--text3)">（无文本／可能未开 MESSAGE CONTENT）</i>'}</div>
+     <div class="foot">
+       ${m.score!=null?`<span class="score ${scoreCls(m.score)}">${m.score}</span>`:''}
+       ${m.matched?`<span class="tag a">${esc(m.matched)}</span>`:''}
+       ${(m.ai?.tags||[]).slice(0,2).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}
+       ${m.is_bot?'<span class="tag">bot</span>':''}
+       <button class="btn ghost sm addctx" data-id="${m.id}" title="加入 AI 上下文">${S.ctx.has(m.id)?'✓ 已选':'✧'}</button>
+     </div>
+   </div>`).join(''):`<div class="empty"><span class="big">◍</span><div>还没有消息</div>
+     <div style="font-size:12.5px;max-width:240px">先在「设置」填 Bot Token，再到「监听规则」建一条规则</div></div>`;
+  $$('#mlist .mi').forEach(e=>e.onclick=ev=>{
+    if(ev.target.closest('.addctx'))return;openMsg(+e.dataset.id)});
+  $$('#mlist .addctx').forEach(b=>b.onclick=()=>{const id=+b.dataset.id;
+    S.ctx.has(id)?S.ctx.delete(id):S.ctx.add(id);renderList();renderCtxHint()});
+}
+function renderCtxHint(){const n=S.ctx.size;
+  $('#wbCtx').textContent=n?`上下文 ${n} 条`:'未带上下文';$('#wbHint').textContent=`上下文 ${n} 条消息`;}
+function openMsg(id){
+  S.sel=id;const m=S.msgs.find(x=>x.id===id);if(!m)return;m.unread=0;renderList();
+  const link=m.guild_id?`https://discord.com/channels/${m.guild_id}/${m.channel_id}/${m.msg_id}`:'#';
+  $('#detail').innerHTML=`
+   <div class="dhead">
+     <div class="t">${esc(m.author)} <span style="color:var(--text3);font-size:14px">在 ${m.is_thread?'子区':'频道'} ${esc(m.channel_name)}</span></div>
+     <div class="meta">
+       <span>${new Date(m.ts*1000).toLocaleString('zh-CN')}</span>
+       <span>author_id <code>${esc(m.author_id)}</code></span>
+       <span>channel_id <code>${esc(m.channel_id)}</code></span>
+       ${m.matched?`<span class="tag a">${esc(m.matched)}</span>`:'<span class="tag">未命中规则</span>'}
+       <a href="${link}" target="_blank" style="color:var(--accent)">在 Discord 打开 ↗</a>
+     </div>
+   </div>
+   <div class="dbody">
+     <div class="msgtext">${esc(m.content)}</div>
+     ${m.ai?`<div class="aibox"><h4>✧ 模型判定</h4>
+       ${m.ai.score!=null?`<div class="kv">重要度 <b>${m.ai.score}</b> / 100</div>`:''}
+       ${m.ai.tags?.length?`<div class="kv">标签 <b>${m.ai.tags.map(esc).join('、')}</b></div>`:''}
+       ${m.ai.reason?`<div class="kv">理由 ${esc(m.ai.reason)}</div>`:''}
+       ${m.ai.todo?`<div class="kv">待办 <b>${esc(m.ai.todo)}</b></div>`:''}</div>`:''}
+     <div class="hr"></div>
+     <div class="row" style="flex-wrap:wrap">
+       <button class="btn sm" id="dCtx">${S.ctx.has(m.id)?'✓ 已在上下文':'✧ 加入 AI 上下文'}</button>
+       <button class="btn sm" id="dDraft">让模型起草回复</button>
+       <button class="btn sm" id="dRule">按此消息新建规则</button>
+     </div>
+   </div>
+   <div class="dfoot">
+     <textarea id="rBox" placeholder="直接回复到该频道／子区…（Enter 发送 · Shift+Enter 换行）"></textarea>
+     <button class="btn pri" id="rSend">发送</button>
+   </div>`;
+  $('#dCtx').onclick=()=>{S.ctx.has(m.id)?S.ctx.delete(m.id):S.ctx.add(m.id);openMsg(id);renderCtxHint();renderList()};
+  $('#dDraft').onclick=()=>{S.ctx.add(m.id);renderCtxHint();go('ai');
+    $('#wbInput').value=`帮我起草一条回复 ${m.author} 的消息，中文，简洁礼貌。`;wbSend()};
+  $('#dRule').onclick=()=>{go('rules');editRule({name:`来自 ${m.author} 的消息`,channel_ids:[m.channel_id],
+    author_ids:[m.author_id],guild_ids:m.guild_id?[m.guild_id]:[]})};
+  $('#rSend').onclick=async()=>{const t=$('#rBox').value.trim();if(!t)return;
+    const r=await api('/api/reply','POST',{channel_id:m.channel_id,content:t,reply_to:m.msg_id});
+    if(!r){toast('演示模式：未真的发送');return;} r.ok?(toast('已发送'),$('#rBox').value=''):toast('发送失败：'+r.error);};
+  enterToSend($('#rBox'),()=>$('#rSend').click());
+}
+$$('.chip[data-f]').forEach(c=>c.onclick=()=>{S.filter=c.dataset.f;
+  $$('.chip[data-f]').forEach(x=>x.classList.toggle('on',x===c));renderList()});
+$('#q').oninput=e=>{S.q=e.target.value;renderList()};
+/* ================= rules ================= */
+const ACTIONS={
+ notify:{n:'只提醒我',d:'不调模型，命中就进收信箱并弹通知。最省钱。'},
+ ai_tag:{n:'AI 判重要度 + 打标签',d:'模型输出 0-100 分和标签；低于阈值的不打扰你。降噪主力。'},
+ ai_reply:{n:'AI 自动回复',d:'带最近 12 条上下文生成回复，直接发回该频道／子区。'},
+ ai_summary:{n:'AI 攒够 N 条做摘要',d:'不逐条调用，攒满 N 条一次性总结，适合水群频道。'},
+ ai_extract:{n:'AI 抽取结构化字段',d:'把消息里的信息抽成 JSON 存库（价格、地址、单号…），可导出。'},
+ webhook:{n:'转发到 Webhook',d:'原样 POST 给飞书/钉钉/n8n，不调模型。'}};
+const BLANK={name:'新规则',source:'discord',guild_ids:[],channel_ids:[],thread_ids:[],
+ include_threads_of_channels:true,dm:false,author_ids:[],author_name_contains:'',ignore_bots:true,
+ mention_only:false,keywords_any:[],keywords_all:[],regex:'',min_len:0,action:'notify',model:'',provider:'',
+ prompt:'',reply_in_thread:true,notify_min_score:0,summary_every:20,cooldown_sec:20,max_per_hour:30,webhook_url:''};
+const PRESETS=[
+ {name:'盯某个人（任何频道）',author_ids:[],action:'notify'},
+ {name:'盯某个频道 + 它的所有子区',channel_ids:[],include_threads_of_channels:true,action:'ai_tag',notify_min_score:55},
+ {name:'只盯一个子区',thread_ids:[],action:'notify'},
+ {name:'被 @ 就让 AI 回',mention_only:true,action:'ai_reply'},
+ {name:'关键词命中转发 Webhook',keywords_any:['空投','whitelist'],action:'webhook'},
+ {name:'水群频道每 30 条出摘要',action:'ai_summary',summary_every:30}];
+function ruleDesc(r){
+  const wh=[];
+  if(r.guild_ids?.length)wh.push(`<span class="seg">服务器 ${r.guild_ids.length} 个</span>`);
+  if(r.channel_ids?.length)wh.push(`<span class="seg">频道 ${r.channel_ids.map(esc).join(', ')}${r.include_threads_of_channels?' + 其子区':''}</span>`);
+  if(r.thread_ids?.length)wh.push(`<span class="seg">子区 ${r.thread_ids.map(esc).join(', ')}</span>`);
+  if(r.dm)wh.push('<span class="seg">私信</span>');
+  if(!wh.length)wh.push('<span class="seg">全部可见频道</span>');
+  const who=[];
+  if(r.author_ids?.length)who.push(`<span class="seg">用户 ${r.author_ids.map(esc).join(', ')}</span>`);
+  if(r.author_name_contains)who.push(`<span class="seg">昵称含 ${esc(r.author_name_contains)}</span>`);
+  if(r.mention_only)who.push('<span class="seg">@我</span>');
+  if(!who.length)who.push('<span class="seg">任何人</span>');
+  const wt=[];
+  if(r.keywords_any?.length)wt.push(`<span class="seg">含任一 ${r.keywords_any.map(esc).join('/')}</span>`);
+  if(r.keywords_all?.length)wt.push(`<span class="seg">同时含 ${r.keywords_all.map(esc).join('+')}</span>`);
+  if(r.regex)wt.push(`<span class="seg">正则 ${esc(r.regex)}</span>`);
+  if(!wt.length)wt.push('<span class="seg">任何内容</span>');
+  return `<div class="flowline">听 ${wh.join('')} · 谁 ${who.join('')} · 内容 ${wt.join('')}
+    <span>→</span><span class="act-pill">${ACTIONS[r.action]?.n||r.action}</span></div>`;}
+function renderRules(){
+  $('#cRules').textContent=S.rules.filter(r=>r.enabled).length;
+  $('#rlist').innerHTML=S.rules.length?S.rules.map(r=>`
+   <div class="rcard ${r.enabled?'':'off'}" data-id="${r.id}">
+     <button class="sw ${r.enabled?'on':''}" data-tog="${r.id}" style="margin:3px 0 0"></button>
+     <div class="body">
+       <div class="nm">${esc(r.name)} ${r.hits?`<span class="tag">命中 ${r.hits}</span>`:''}
+         ${r.action.startsWith('ai')?`<span class="tag a">✧ ${esc(r.model||S.cfg?.default_model?.model||'默认模型')}</span>`:''}</div>
+       ${ruleDesc(r)}
+     </div>
+     <div class="row">
+       <button class="btn sm" data-edit="${r.id}">编辑</button>
+       <button class="btn ghost sm" data-del="${r.id}">删除</button>
+     </div>
+   </div>`).join(''):`<div class="empty" style="height:340px"><span class="big">◆</span>
+     <div>还没有规则 —— 监听不会发生</div>
+     <div style="font-size:12.5px;max-width:300px">一条规则 = 听哪里 + 听谁 + 听到什么 + 做什么。先用「从模板创建」最快。</div></div>`;
+  $$('#rlist [data-edit]').forEach(b=>b.onclick=()=>editRule(S.rules.find(r=>r.id==b.dataset.edit)));
+  $$('#rlist [data-del]').forEach(b=>b.onclick=async()=>{if(!confirm('删除这条规则？'))return;
+    const r=await api('/api/rules/'+b.dataset.del,'DELETE');
+    S.rules=r?r.rules:S.rules.filter(x=>x.id!=b.dataset.del);renderRules();toast('已删除')});
+  $$('#rlist [data-tog]').forEach(b=>b.onclick=async()=>{const r=S.rules.find(x=>x.id==b.dataset.tog);
+    r.enabled=r.enabled?0:1;await api('/api/rules','POST',r);renderRules()});
+}
+$('#btnNewRule').onclick=()=>editRule(null);
+$('#btnPreset').onclick=()=>{
+  openDrawer(`<div class="dh"><h2>选一个模板</h2><span class="sp" style="flex:1"></span>
+     <button class="btn ghost" onclick="closeDrawer()">✕</button></div>
+    <div class="db">${PRESETS.map((p,i)=>`<div class="rcard" style="cursor:pointer" data-p="${i}">
+      <div class="body"><div class="nm">${esc(p.name)}</div>${ruleDesc({...BLANK,...p})}</div></div>`).join('')}</div>`);
+  $$('[data-p]').forEach(e=>e.onclick=()=>editRule({...PRESETS[+e.dataset.p]}));};
+
+/* ---------- drawer ---------- */
+function openDrawer(html){$('#drawer').innerHTML=html;$('#drawer').classList.add('on');$('#scrim').classList.add('on');}
+function closeDrawer(){$('#drawer').classList.remove('on');$('#scrim').classList.remove('on');}
+$('#scrim').onclick=closeDrawer;
+const chipsHtml=(k,ph,extra='')=>`<div class="chips" data-chips="${k}">
+  <span class="cs"></span><input type="text" placeholder="${ph}">${extra}</div>`;
+function paintChips(k){const box=$(`[data-chips="${k}"] .cs`);const arr=S.editing[k]||[];
+  box.innerHTML=arr.map((v,i)=>`<span class="chipx">${esc(v)}<button data-rm="${i}" data-k="${k}">✕</button></span>`).join('');
+  box.parentElement.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{
+    S.editing[k].splice(+b.dataset.rm,1);paintChips(k);});}
+function wireChips(){$$('[data-chips]').forEach(box=>{const k=box.dataset.chips;paintChips(k);
+  const inp=box.querySelector('input');
+  inp.onkeydown=e=>{if(e.key==='Enter'||e.key===','){e.preventDefault();const v=inp.value.trim();
+    if(v){(S.editing[k]=S.editing[k]||[]).push(v);inp.value='';paintChips(k);}}
+    if(e.key==='Backspace'&&!inp.value&&S.editing[k]?.length){S.editing[k].pop();paintChips(k);}};
+  inp.onblur=()=>{const v=inp.value.trim();if(v){(S.editing[k]=S.editing[k]||[]).push(v);inp.value='';paintChips(k);}};});}
+function bindField(sel,k,type='text'){const e=$(sel);if(!e)return;
+  e.oninput=e.onchange=()=>{S.editing[k]=type==='num'?+e.value:type==='bool'?e.checked:e.value;
+    if(k==='action')editRule(S.editing);};}
+function editRule(r){
+  S.editing=JSON.parse(JSON.stringify({...BLANK,...(r||{})}));
+  const E=S.editing,A=E.action;
+  const provOpts=(S.cfg?.providers||[]).map(p=>`<option value="${esc(p.name)}" ${E.provider===p.name?'selected':''}>${esc(p.name)}</option>`).join('');
+  const modelOpts=(S.models[E.provider||S.cfg?.default_model?.provider]||[]).map(m=>`<option ${E.model===m?'selected':''}>${esc(m)}</option>`).join('');
+  openDrawer(`
+  <div class="dh"><h2>${r?.id?'编辑规则':'新建规则'}</h2><span class="sp" style="flex:1"></span>
+    <button class="btn ghost" onclick="closeDrawer()">✕</button></div>
+  <div class="db">
+    <label class="f"><span>规则名</span><input id="e_name" type="text" value="${esc(E.name)}"></label>
+
+    <div class="sect"><div class="st"><b>1 · 听哪里</b><span>留空 = 不限。ID 从下面「挑」或 Discord 右键复制 ID</span></div>
+      <label class="f"><span>服务器 ID <em>guild_id</em></span>${chipsHtml('guild_ids','粘贴服务器 ID，回车')}</label>
+      <label class="f"><span>频道 ID <em>channel_id，可多个</em></span>
+        ${chipsHtml('channel_ids','粘贴频道 ID，回车',`<button class="btn sm" id="pickBtn" style="margin-left:auto">从服务器里挑 ▾</button>`)}</label>
+      <div class="chk"><input type="checkbox" id="e_incthr" ${E.include_threads_of_channels?'checked':''}>
+        <label for="e_incthr">同时监听这些频道下的<b>所有子区</b>（thread）</label></div>
+      <label class="f" style="margin-top:10px"><span>只听某个子区 <em>thread_id：子区标题右键 → 复制频道 ID</em></span>${chipsHtml('thread_ids','粘贴子区 ID，回车')}</label>
+      <div class="chk"><input type="checkbox" id="e_dm" ${E.dm?'checked':''}><label for="e_dm">包含私信 DM</label></div>
+    </div>
+
+    <div class="sect"><div class="st"><b>2 · 听谁</b><span>用户 ID 最准，昵称会变</span></div>
+      <label class="f"><span>用户 ID <em>author_id</em></span>${chipsHtml('author_ids','粘贴用户 ID，回车')}</label>
+      <div class="grid2">
+        <label class="f"><span>昵称包含</span><input id="e_anc" type="text" value="${esc(E.author_name_contains)}" placeholder="可留空"></label>
+        <div style="padding-top:22px">
+          <div class="chk"><input type="checkbox" id="e_nobot" ${E.ignore_bots?'checked':''}><label for="e_nobot">忽略机器人</label></div>
+          <div class="chk"><input type="checkbox" id="e_ment" ${E.mention_only?'checked':''}><label for="e_ment">只在 @ 我时触发</label></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sect"><div class="st"><b>3 · 听到什么</b><span>都留空 = 该范围内每条都算命中</span></div>
+      <label class="f"><span>含任一关键词</span>${chipsHtml('keywords_any','如 空投，回车')}</label>
+      <label class="f"><span>必须同时含</span>${chipsHtml('keywords_all','如 发布 + 版本，回车')}</label>
+      <div class="grid2">
+        <label class="f"><span>正则 <em>可留空</em></span><input id="e_re" class="mono" type="text" value="${esc(E.regex)}" placeholder="(紧急|asap)"></label>
+        <label class="f"><span>最短字数</span><input id="e_len" type="number" min="0" value="${E.min_len}"></label>
+      </div>
+    </div>
+
+    <div class="sect"><div class="st"><b>4 · 命中后做什么</b><span>这就是模型的用武之地</span></div>
+      <label class="f"><span>动作</span><select id="e_act">${Object.entries(ACTIONS).map(([k,v])=>
+        `<option value="${k}" ${A===k?'selected':''}>${v.n}</option>`).join('')}</select></label>
+      <div class="banner" style="background:var(--bg-sunk);color:var(--text2)">${ACTIONS[A].d}</div>
+      ${A.startsWith('ai')?`
+        <div class="grid2">
+          <label class="f"><span>服务商 <em>留空用默认</em></span><select id="e_prov"><option value="">默认</option>${provOpts}</select></label>
+          <label class="f"><span>模型</span><select id="e_model"><option value="">默认</option>${modelOpts}</select></label>
+        </div>
+        <label class="f"><span>提示词 <em>留空用内置</em></span><textarea id="e_prompt" placeholder="${A==='ai_reply'?'你是该频道助手，简洁中文回答…':A==='ai_extract'?'抽取 {价格, 数量, 链接} 成 JSON…':'判断这条消息对我是否重要…'}">${esc(E.prompt)}</textarea></label>`:''}
+      ${A==='ai_tag'?`<label class="f"><span>只有分数 ≥ 多少才提醒我 <em>当前 ${E.notify_min_score}</em></span>
+        <input id="e_min" type="number" min="0" max="100" value="${E.notify_min_score}"></label>`:''}
+      ${A==='ai_summary'?`<label class="f"><span>攒够多少条出一次摘要</span><input id="e_sum" type="number" min="2" value="${E.summary_every}"></label>`:''}
+      ${A==='ai_reply'?`<div class="chk"><input type="checkbox" id="e_thr" ${E.reply_in_thread?'checked':''}><label for="e_thr">以「回复」形式发送（引用原消息）</label></div>`:''}
+      ${A==='webhook'?`<label class="f"><span>Webhook URL</span><input id="e_hook" type="text" value="${esc(E.webhook_url)}" placeholder="留空则用设置里的全局 Webhook"></label>`:''}
+      <div class="grid2" style="margin-top:8px">
+        <label class="f"><span>冷却秒数 <em>防连发烧钱</em></span><input id="e_cd" type="number" min="0" value="${E.cooldown_sec}"></label>
+        <label class="f"><span>每小时最多触发</span><input id="e_max" type="number" min="1" value="${E.max_per_hour}"></label>
+      </div>
+    </div>
+
+    <div class="sect"><div class="st"><b>5 · 试算</b><span>不连 Discord 也能验证匹配逻辑</span></div>
+      <div class="tester">
+        <div class="grid3">
+          <label class="f"><span>作者昵称</span><input id="t_au" type="text" value="Marcus"></label>
+          <label class="f"><span>作者 ID</span><input id="t_aid" type="text" value="${esc(E.author_ids[0]||'')}"></label>
+          <label class="f"><span>频道 ID</span><input id="t_cid" type="text" value="${esc(E.channel_ids[0]||E.thread_ids[0]||'')}"></label>
+        </div>
+        <label class="f"><span>消息内容</span><textarea id="t_ct" style="min-height:52px">明天的 demo 提前到 10 点可以吗</textarea></label>
+        <div class="row"><button class="btn" id="t_run">试算</button><span id="t_out" class="verdict"></span></div>
+      </div>
+    </div>
+  </div>
+  <div class="df"><button class="btn pri" id="e_save">保存规则</button>
+    <button class="btn" onclick="closeDrawer()">取消</button>
+    <span class="sp" style="flex:1"></span>
+    ${r?.id?`<span style="font-size:12px;color:var(--text3)">#${r.id} · 命中 ${r.hits||0}</span>`:''}</div>`);
+  wireChips();
+  bindField('#e_name','name');bindField('#e_anc','author_name_contains');bindField('#e_re','regex');
+  bindField('#e_len','min_len','num');bindField('#e_cd','cooldown_sec','num');bindField('#e_max','max_per_hour','num');
+  bindField('#e_min','notify_min_score','num');bindField('#e_sum','summary_every','num');
+  bindField('#e_prompt','prompt');bindField('#e_hook','webhook_url');bindField('#e_act','action');
+  bindField('#e_prov','provider');bindField('#e_model','model');
+  bindField('#e_incthr','include_threads_of_channels','bool');bindField('#e_dm','dm','bool');
+  bindField('#e_nobot','ignore_bots','bool');bindField('#e_ment','mention_only','bool');
+  bindField('#e_thr','reply_in_thread','bool');
+  if($('#pickBtn'))$('#pickBtn').onclick=openPicker;
+  $('#t_run').onclick=async()=>{
+    const sample={author:$('#t_au').value,author_id:$('#t_aid').value,channel_id:$('#t_cid').value,
+      content:$('#t_ct').value,channel_name:'test',mentions_me:E.mention_only,is_bot:false};
+    const res=await api('/api/rules/test','POST',{rule:S.editing,sample});
+    const ok=res?res.match:localMatch(S.editing,sample);
+    $('#t_out').innerHTML=ok?'<span class="tag g">✓ 命中，会执行动作</span>':
+      `<span class="tag r">✕ 不命中${res?'（'+esc(res.why)+'）':''}</span>`;};
+  $('#e_save').onclick=async()=>{
+    const res=await api('/api/rules','POST',S.editing);
+    if(res){S.rules=res.rules;}else{ // demo
+      if(S.editing.id)Object.assign(S.rules.find(x=>x.id===S.editing.id),S.editing);
+      else S.rules.push({...S.editing,id:Date.now()%9999,enabled:1,hits:0});}
+    renderRules();closeDrawer();toast('规则已保存');};
+}
+function localMatch(r,s){const c=(s.content||'').toLowerCase();
+  if(r.author_ids.length&&!r.author_ids.includes(s.author_id))return false;
+  if(r.author_name_contains&&!s.author.toLowerCase().includes(r.author_name_contains.toLowerCase()))return false;
+  if(r.channel_ids.length&&!r.channel_ids.includes(s.channel_id)&&!r.thread_ids.includes(s.channel_id))return false;
+  if(r.keywords_any.length&&!r.keywords_any.some(k=>c.includes(k.toLowerCase())))return false;
+  if(r.keywords_all.length&&!r.keywords_all.every(k=>c.includes(k.toLowerCase())))return false;
+  if(r.regex){try{if(!new RegExp(r.regex,'i').test(s.content))return false}catch(e){return false}}
+  return (s.content||'').length>=(r.min_len||0);}
+async function openPicker(){
+  const wrap=document.createElement('div');
+  const res=await api('/api/discord/tree');
+  const gs=res?.ok?res.guilds:[{id:'9312…4471',name:'（演示）我的服务器',channels:[
+    {id:'1102…8830',name:'general',threads:[]},{id:'1188…2201',name:'bug-report',threads:[
+      {id:'1201…7788',name:'登录 500'},{id:'1201…7799',name:'移动端白屏'}]}]}];
+  openDrawer(`<div class="dh"><h2>挑频道 / 子区</h2><span class="sp" style="flex:1"></span>
+      <button class="btn ghost" id="pkBack">返回规则</button></div>
+    <div class="db">${res?.ok?'':'<div class="banner">没连上 Discord，下面是示例结构。填好 Token 后这里会列出真实频道。</div>'}
+    <div class="tree">${gs.map(g=>`<div class="tnode g">${esc(g.name)}<code class="mono" style="margin-left:auto;color:var(--text3)">${esc(g.id)}</code></div>
+      ${g.channels.map(c=>`<div class="tnode c"># ${esc(c.name)}
+        <button class="btn sm add" data-k="channel_ids" data-id="${esc(c.id)}">加为频道</button></div>
+        ${c.threads.map(t=>`<div class="tnode t">⤷ ${esc(t.name)}
+          <button class="btn sm add" data-k="thread_ids" data-id="${esc(t.id)}">加为子区</button></div>`).join('')}`).join('')}`).join('')}</div></div>`);
+  $$('.add').forEach(b=>b.onclick=()=>{const k=b.dataset.k;(S.editing[k]=S.editing[k]||[]);
+    if(!S.editing[k].includes(b.dataset.id))S.editing[k].push(b.dataset.id);toast('已加入 '+b.dataset.id);});
+  $('#pkBack').onclick=()=>editRule(S.editing);}
+/* ================= models ================= */
+function renderProviders(){
+  $('#provList').innerHTML=(S.cfg.providers||[]).map((p,i)=>`
+   <div style="padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--line)">
+     <div class="grid3">
+       <label class="f"><span>名称</span><input type="text" data-p="${i}" data-k="name" value="${esc(p.name)}"></label>
+       <label class="f"><span>Base URL <em>要带 /v1</em></span><input type="text" data-p="${i}" data-k="base_url" value="${esc(p.base_url)}" placeholder="https://api.deepseek.com/v1"></label>
+       <label class="f"><span>API Key</span><input type="password" data-p="${i}" data-k="api_key" value="${esc(p.api_key)}" placeholder="sk-…"></label>
+     </div>
+     <div class="row">
+       <button class="btn" data-pull="${i}">⇣ 拉取模型列表</button>
+       <span class="tag" id="pm${i}">${(S.models[p.name]||[]).length?`已拉到 ${(S.models[p.name]||[]).length} 个模型`:'未拉取'}</span>
+       <span class="sp" style="flex:1"></span>
+       <button class="btn ghost sm" data-rmp="${i}">移除</button>
+     </div>
+     ${(S.models[p.name]||[]).length?`<div style="margin-top:8px;display:flex;gap:5px;flex-wrap:wrap">
+       ${S.models[p.name].slice(0,14).map(m=>`<span class="tag mono">${esc(m)}</span>`).join('')}
+       ${S.models[p.name].length>14?`<span class="tag">+${S.models[p.name].length-14}</span>`:''}</div>`:''}
+   </div>`).join('');
+  $$('#provList input').forEach(e=>e.onchange=()=>{S.cfg.providers[+e.dataset.p][e.dataset.k]=e.value;});
+  $$('#provList [data-pull]').forEach(b=>b.onclick=async()=>{
+    const p=S.cfg.providers[+b.dataset.pull];const tag=$('#pm'+b.dataset.pull);
+    tag.innerHTML='<span class="spin"></span> 拉取中';
+    await api('/api/config','POST',{providers:S.cfg.providers});
+    const r=await api('/api/models','POST',{provider:p.name,base_url:p.base_url,api_key:p.api_key});
+    if(!r){S.models[p.name]=['gpt-4o-mini','gpt-4o','o4-mini','claude-sonnet-4','deepseek-chat','qwen2.5:7b'];
+      tag.textContent='演示：6 个模型';}
+    else if(r.ok){S.models[p.name]=r.models;tag.textContent=`已拉到 ${r.models.length} 个`;toast('拉取成功');}
+    else{tag.innerHTML=`<span style="color:var(--err)">失败：${esc(r.error).slice(0,60)}</span>`;}
+    renderProviders();renderDefaults();});
+  $$('#provList [data-rmp]').forEach(b=>b.onclick=()=>{S.cfg.providers.splice(+b.dataset.rmp,1);renderProviders()});
+}
+function renderDefaults(){
+  const d=S.cfg.default_model||{};
+  $('#defProv').innerHTML=(S.cfg.providers||[]).map(p=>`<option ${d.provider===p.name?'selected':''}>${esc(p.name)}</option>`).join('');
+  const ms=S.models[$('#defProv').value]||[d.model].filter(Boolean);
+  $('#defModel').innerHTML=ms.length?ms.map(m=>`<option ${d.model===m?'selected':''}>${esc(m)}</option>`).join('')
+    :'<option value="">先拉取模型列表</option>';
+  $('#wbModel').innerHTML=(S.cfg.providers||[]).flatMap(p=>(S.models[p.name]||[]).map(m=>
+    `<option value="${esc(p.name)}|${esc(m)}" ${d.provider===p.name&&d.model===m?'selected':''}>${esc(p.name)} · ${esc(m)}</option>`)).join('')
+    ||`<option value="">${esc(d.provider||'')} · ${esc(d.model||'未设置模型')}</option>`;
+}
+$('#defProv').onchange=renderDefaults;
+$('#btnAddProv').onclick=()=>{S.cfg.providers.push({name:'new',base_url:'',api_key:''});renderProviders()};
+$('#btnSaveDef').onclick=async()=>{S.cfg.default_model={provider:$('#defProv').value,model:$('#defModel').value};
+  await api('/api/config','POST',{providers:S.cfg.providers,default_model:S.cfg.default_model});
+  toast('已保存默认模型');renderDefaults();renderRules();};
+$('#btnPing').onclick=async()=>{$('#pingOut').innerHTML='<span class="spin"></span> 调用中…';
+  const r=await api('/api/ask','POST',{prompt:'用一句中文回复：连接正常'});
+  $('#pingOut').innerHTML=!r?'演示模式：没有后端，无法真调用'
+    :r.ok?`<span class="tag g">✓</span> ${esc(r.text).slice(0,300)}`:`<span class="tag r">✕</span> ${esc(r.error)}`;};
+
+/* ================= settings ================= */
+const MODE_HELP={
+  browser:'不碰 token，也不用 bot：Chrome 扩展只读你已经登录的 Discord 网页版，把新消息转给本机。'
+         +'代价是浏览器要开着、频道要留在标签页里，而且只能收不能发。',
+  bot:'最稳，延迟 <1 秒，浏览器不用开。前提：你能把 bot 拉进那个服务器（需要该服务器的「管理服务器」权限），'
+     +'且必须打开 MESSAGE CONTENT INTENT，否则 content 是空的。',
+  user:'⚠ 用个人账号 token 连 Gateway 属于 selfbot，明确违反 Discord ToS，账号可能被永久封禁。'
+      +'本程序在这个模式下只读、不主动发消息，但风险由你自己承担。能用前两种就别用这个。'};
+function renderSettings(){
+  const mode=S.cfg.discord.mode||'browser';
+  $('#dcMode').value=mode;
+  $('#modeHelp').textContent=MODE_HELP[mode];
+  $('#tokenBox').style.display=mode==='browser'?'none':'';
+  $('#brBox').style.display=mode==='browser'?'':'none';
+  $('#dcToken').value=S.cfg.discord.token||'';
+  $('#dcToken').placeholder=mode==='user'?'个人账号 token（风险自负）':'MTIz…（Bot Token）';
+  $('#dcEnabled').checked=!!S.cfg.discord.enabled;
+  $('#setRet').value=S.cfg.retention_days;$('#setCap').value=S.cfg.ai_daily_call_cap;
+  $('#setHook').value=S.cfg.sinks?.webhook||'';
+  $('#setNotify').value=S.cfg.sinks?.browser?'1':'0';
+  const st=S.status.discord||{};
+  $('#dcState').textContent=st.state==='online'?`已连接：${st.user||''}（${st.guilds||0} 个服务器）`:`状态：${st.state||'未连接'}`;
+  const b=S.status.browser||{};
+  $('#brState').textContent=b.state==='online'
+    ?`扩展在线 · 已转发 ${b.count||0} 条`:'扩展未连上（装好扩展并打开一个 discord.com 频道标签页）';
+}
+$('#dcMode').onchange=async()=>{
+  const mode=$('#dcMode').value;S.cfg.discord.mode=mode;
+  if(mode==='user'&&!confirm('个人账号 Token 模式违反 Discord ToS，有封号风险。确定继续？')){
+    S.cfg.discord.mode='browser';renderSettings();return;}
+  renderSettings();
+  await api('/api/config','POST',{discord:{...S.cfg.discord,mode}});
+  renderSources();};
+$('#btnSaveDc').onclick=async()=>{
+  const r=await api('/api/config','POST',{discord:{token:$('#dcToken').value.trim(),
+    enabled:$('#dcEnabled').checked,mode:$('#dcMode').value}});
+  toast(r?'已保存，正在连接…':'演示模式：未保存');};
+$('#btnSaveSet').onclick=async()=>{
+  if($('#setNotify').value==='1'&&Notification?.permission==='default')Notification.requestPermission();
+  await api('/api/config','POST',{retention_days:+$('#setRet').value,ai_daily_call_cap:+$('#setCap').value,
+    sinks:{browser:$('#setNotify').value==='1',webhook:$('#setHook').value.trim()}});toast('已保存');};
+$('#btnClearMsg').onclick=async()=>{if(!confirm('清空全部历史消息？'))return;
+  await api('/api/messages/clear','POST',{});S.msgs=[];renderList();$('#detail').innerHTML='';toast('已清空');};
+
+/* ================= notify & forward ================= */
+function renderNotify(){
+  const s=S.cfg?.sinks||{},e=S.env||{};
+  $('#nfToast').value=s.toast!==false?'1':'0';
+  $('#nfSound').value=s.sound!==false?'1':'0';
+  $('#nfBrowser').value=s.browser!==false?'1':'0';
+  $('#nfSoundFile').value=s.sound_file||'';
+  $('#nfQFrom').value=s.quiet_from||'';$('#nfQTo').value=s.quiet_to||'';
+  $('#nfMin').value=s.min_score??0;
+  $('#nfDc').value=s.discord_webhook||'';
+  $('#nfTgT').value=(s.telegram||{}).token||'';$('#nfTgC').value=(s.telegram||{}).chat_id||'';
+  $('#nfSc').value=s.serverchan||'';$('#nfWc').value=s.wecom||'';$('#nfHook').value=s.webhook||'';
+  $('#nfOs').textContent=e.win===false?'— 当前不是 Windows：系统通知/提示音只会写进运行日志'
+    :(e.win?'— Windows 原生通知，不用装任何东西':'');
+}
+function collectSinks(){
+  return {toast:$('#nfToast').value==='1',sound:$('#nfSound').value==='1',
+    browser:$('#nfBrowser').value==='1',sound_file:$('#nfSoundFile').value.trim(),
+    quiet_from:$('#nfQFrom').value.trim(),quiet_to:$('#nfQTo').value.trim(),
+    min_score:+$('#nfMin').value||0,discord_webhook:$('#nfDc').value.trim(),
+    telegram:{token:$('#nfTgT').value.trim(),chat_id:$('#nfTgC').value.trim()},
+    serverchan:$('#nfSc').value.trim(),wecom:$('#nfWc').value.trim(),webhook:$('#nfHook').value.trim()};
+}
+async function saveSinks(msg){
+  if($('#nfBrowser').value==='1'&&window.Notification&&Notification.permission==='default')Notification.requestPermission();
+  const r=await api('/api/config','POST',{sinks:collectSinks()});
+  if(r){S.cfg=r.config;renderNotify();}
+  toast(r?(msg||'已保存'):'演示模式：未保存');
+}
+$('#btnSaveNf').onclick=()=>saveSinks();
+$('#btnSaveOut').onclick=()=>saveSinks('出口已保存');
+$$('[data-test]').forEach(b=>b.onclick=async()=>{
+  const which=b.dataset.test,old=b.textContent;
+  b.textContent='测试中…';b.disabled=true;
+  await api('/api/config','POST',{sinks:collectSinks()});    // 先落盘，再用存下来的去测
+  const r=await api('/api/sinks/test','POST',{which});
+  b.textContent=old;b.disabled=false;
+  const box=$('#nfResult');
+  if(!r){box.innerHTML='<div class="banner">演示模式：连上本机 dcwatch 之后，这里会逐条显示每个出口通没通</div>';return;}
+  if(!r.ok){box.innerHTML=`<div class="banner">${esc(r.error||'没填/没开')}</div>`;return;}
+  box.innerHTML=Object.entries(r.results).map(([k,v])=>
+    `<div class="logline"><span class="l ${v==='ok'?'l-info':'l-error'}">${v==='ok'?'通':'失败'}</span>
+     <span><b>${esc(k)}</b> ${v==='ok'?'':esc(v)}</span></div>`).join('');
+});
+
+/* ================= sources ================= */
+function renderSources(){
+  const st=S.status.discord||{},on=S.cfg?.sources?.discord;
+  const row=$('#srcDiscord');row.classList.toggle('live',st.state==='online');
+  row.classList.toggle('err',st.state==='error');
+  row.querySelector('.sw').classList.toggle('on',!!on);
+  const b=S.status.browser||{},bon=S.cfg?.sources?.browser!==false;
+  const brow=$('#srcBrowser');brow.classList.toggle('live',b.state==='online'&&bon);
+  brow.querySelector('.sw').classList.toggle('on',bon);
+  const any=on||bon;
+  $('#btnPause').classList.toggle('paused',!any);
+  $('#btnPause').querySelector('.lb').textContent=any?'全部暂停':'已暂停 · 恢复';
+}
+$$('.sw[data-src]').forEach(b=>b.onclick=async()=>{
+  const on=!b.classList.contains('on');
+  S.cfg.sources[b.dataset.src]=on;renderSources();
+  const r=await api('/api/source/toggle','POST',{source:b.dataset.src,on});
+  toast(`${b.dataset.src} 收信已${on?'开启':'关闭'}${r?'':'（演示）'}`);});
+$('#btnPause').onclick=()=>{const target=$('#btnPause').classList.contains('paused');  // 已暂停→全开
+  $$('.sw[data-src]').forEach(b=>{if(b.classList.contains('on')!==target)b.click();});};
+
+/* ================= AI workbench ================= */
+function renderWb(){renderCtxHint();
+  $('#wbLog').innerHTML=S.chat.length?S.chat.map(m=>`<div class="bub ${m.r==='u'?'u':'a'}">
+    <div class="lbl">${m.r==='u'?'我':'模型'}</div>${esc(m.t)}</div>`).join('')
+    :`<div class="empty"><span class="big">✧</span><div>把消息交给模型处理</div>
+      <div style="font-size:12.5px;max-width:330px">在收信箱点消息卡右下的 ✧ 把它加进上下文，再回来问：<br>
+      「这几条里有哪些需要我今天回？」「起草一条回复」「抽成表格」</div></div>`;
+  $('#wbLog').scrollTop=1e6;}
+async function wbSend(){
+  const t=$('#wbInput').value.trim();if(!t)return;
+  const [prov,model]=($('#wbModel').value||'|').split('|');
+  S.chat.push({r:'u',t});$('#wbInput').value='';S.chat.push({r:'a',t:'…'});renderWb();
+  const r=await api('/api/ask','POST',{prompt:t,provider:prov,model,msg_ids:[...S.ctx]});
+  S.chat.pop();
+  S.chat.push({r:'a',t:!r?'（演示模式：没有后端。真实运行时这里是模型的回答，并且会带上你勾选的 '+S.ctx.size+' 条消息作为上下文。）'
+    :r.ok?r.text:'调用失败：'+r.error});
+  renderWb();}
+$('#wbSend').onclick=wbSend;
+$('#wbClear').onclick=()=>{S.chat=[];S.ctx.clear();renderWb();renderList()};
+enterToSend($('#wbInput'),wbSend);
+$$('[data-quick]').forEach(b=>b.onclick=()=>{const q=b.dataset.quick;
+  $('#wbInput').value={summary:'把这些消息压成 3-5 条要点，标出需要我行动的部分。',
+    todo:'从这些消息里抽出待办清单，每条含负责人和截止时间，没写就标未定。',
+    draft:'针对最后一条消息起草一条中文回复，语气专业简洁，≤120 字。',
+    translate:'把这些消息翻译成中文，保留原作者名。'}[q];wbSend();});
+
+/* ================= logs & stats ================= */
+async function loadLogs(){
+  const s=S.stats||{};
+  $('#stats').innerHTML=[['收到消息',s.msgs??'—'],['命中规则',s.matched??'—'],
+    ['今日 AI 调用',`${s.ai_today??'—'} / ${s.ai_cap??'—'}`],['启用规则',S.rules.filter(r=>r.enabled).length]]
+    .map(([k,v])=>`<div class="b"><i>${k}</i><b>${v}</b></div>`).join('');
+  const r=await api('/api/logs');
+  const logs=r?r.logs:[{ts:Date.now()/1000-20,level:'info',text:'演示模式：这里是真实运行日志（连接、命中、模型调用、报错）'}];
+  $('#logs').innerHTML=logs.map(l=>`<div class="logline"><span class="t">${new Date(l.ts*1000).toLocaleTimeString('zh-CN',{hour12:false})}</span>
+    <span class="l l-${l.level}">${l.level}</span><span>${esc(l.text)}</span></div>`).join('');}
+
+/* ================= live stream ================= */
+function connectSSE(){
+  try{
+    const es=new EventSource('/api/events');
+    es.onmessage=e=>{const {kind,data}=JSON.parse(e.data);
+      if(kind==='message'){S.msgs.unshift({...data,unread:1});if(S.msgs.length>400)S.msgs.pop();renderList();
+        if(data.alert&&S.cfg?.sinks?.browser&&Notification?.permission==='granted')
+          new Notification(`${data.author} · ${data.channel_name}`,{body:(data.content||'').slice(0,120)});}
+      if(kind==='status'){S.status.discord=data;renderSources();renderSettings();}
+      if(kind==='log'&&S.view==='logs')loadLogs();
+      if(kind==='summary')toast('新摘要：'+data.channel);};
+    es.onerror=()=>{};
+  }catch(e){}}
+
+/* ================= boot ================= */
+async function boot(){
+  const st=await api('/api/state');
+  if(st){S.cfg=st.config;S.status=st.status;S.rules=st.rules;S.stats=st.stats;S.env=st.env||{};
+    const ms=await api('/api/messages?limit=300');S.msgs=ms?ms.messages:[];
+    $('#modeTag').textContent='';}
+  else{seedDemo();}
+  renderSources();renderList();renderRules();renderProviders();renderDefaults();renderSettings();renderCtxHint();
+  if(S.msgs.length)openMsg(S.msgs[0].id);
+  if(!S.demo)connectSSE();
+}
+boot();
+</script>
+</body>
+</html>

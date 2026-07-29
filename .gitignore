@@ -1,0 +1,9 @@
+# 运行时产物，别提交
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec.bak
