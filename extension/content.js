@@ -25,6 +25,31 @@ function titleChannelName() {
   return t.replace(/^[#@]/, "") || "";
 }
 
+/* 当前登录的是哪个号 —— 左下角用户区。多号监控时 dcwatch 要能分开显示。
+   名字来源按可靠度排：用户区里的用户名标签 → 头像 aria-label；
+   id 从头像 URL /avatars/<id>/ 抠（用默认头像的号抠不到，留空不影响功能）。
+   Discord 的 class 名会变，所以只用 [class*=] 模糊匹配 + 多个候选。 */
+let accCache = { name: "", id: "", at: 0 };
+function myAccount() {
+  if (accCache.name && Date.now() - accCache.at < 60000) return accCache;
+  const area = document.querySelector(
+    'section[class*="panels"], section[aria-label*="User"], div[class*="panels-"]');
+  let name = "", id = "";
+  if (area) {
+    for (const sel of ['[class*="nameTag"] [class*="hovered"]', '[class*="nameTag"]',
+                       '[class*="panelTitle"]', 'div[class*="usernameContainer"]',
+                       '[class*="accountProfileCard"] [class*="username"]']) {
+      const v = txt(area.querySelector(sel)).split("\n")[0].trim();
+      if (v) { name = v; break; }
+    }
+    const img = area.querySelector('img[src*="/avatars/"]');
+    const m = img && img.getAttribute("src").match(/\/avatars\/(\d+)\//);
+    if (m) id = m[1];
+  }
+  if (name) accCache = { name, id, at: Date.now() };
+  return accCache.name ? accCache : { name, id, at: 0 };
+}
+
 /* 子区面板（右侧展开的 thread）标题 */
 function threadPanelName() {
   const h = document.querySelector('[class*="threadSidebar"] [class*="title"], [aria-label*="Thread"] h1, [class*="threadSidebar"] h1');
@@ -87,7 +112,8 @@ function flush() {
   flushTimer = null;
   const messages = queue.splice(0, 50);
   if (!messages.length) return;
-  send({ messages });
+  const a = myAccount();
+  send({ messages, account: a.name, account_id: a.id });
 }
 
 function enqueue(msg) {
@@ -126,7 +152,10 @@ observer.observe(document.body, { childList: true, subtree: true });
 /* 心跳：让 dcwatch 界面左下角亮绿灯（服务端判定是 90 秒内有心跳），
    顺手把当前频道名带上，扩展图标的提示里会显示「正在旁听 #xxx」。
    20 秒一次，比 90 秒的判定留足余量，切频道后状态也跟得上。 */
-const ping = () => send({ ping: true, where: titleChannelName() });
+const ping = () => {
+  const a = myAccount();
+  send({ ping: true, where: titleChannelName(), account: a.name, account_id: a.id });
+};
 ping();
 setInterval(ping, 20000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
@@ -218,6 +247,7 @@ function paint() {
   p.innerHTML = `<div class="card">
       <h4><span class="dot ${cls}"></span>dcwatch ${short}<button class="x" title="收起">×</button></h4>
       <div class="row"><span>本机程序</span><b>${st && st.serverOk ? "在跑 :" + (st.port || 8777) : "连不上"}</b></div>
+      <div class="row"><span>当前账号</span><b>${myAccount().name || "认不出（不影响）"}</b></div>
       <div class="row"><span>本页在盯</span><b>#${(st && st.where) || titleChannelName() || "?"}</b></div>
       <div class="row"><span>已上报</span><b>${(st && st.sent) || 0} 条${st && st.lastMsgAt ? "（" + ago(st.lastMsgAt) + "）" : ""}</b></div>
       <div class="row"><span>服务端累计</span><b>${(st && st.srvCount) || 0} 条</b></div>

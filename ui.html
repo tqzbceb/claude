@@ -280,6 +280,17 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .demotag{font:500 11px var(--sans);color:var(--accent);border:1px solid var(--accent);
   border-radius:999px;padding:2px 9px;letter-spacing:.02em}
 .demotag:empty{display:none}
+#bridgeList:empty{display:none}
+.brg{font:11.5px var(--sans);color:var(--text2);background:var(--bg-sunk);border-radius:8px;
+  padding:6px 8px;display:grid;gap:2px;line-height:1.5}
+.brg b{color:var(--text);font-weight:600}
+.brg .d{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:5px;background:#c0392b}
+.brg.on .d{background:#3f7d58}
+#connBar:empty{display:none}
+#connBar .cb{margin:0 0 12px;padding:10px 12px;border-radius:10px;font:13px var(--sans);line-height:1.6;
+  background:#fdf0e6;border:1px solid var(--accent);color:#7a3a1e}
+#connBar .cb b{font-weight:700}
+#connBar .cb.ok{background:var(--bg-sunk);border-color:var(--line);color:var(--text2)}
 .sb{position:relative;transition:width .16s,flex-basis .16s}
 html[data-sb="mini"] .sb{width:56px;flex-basis:56px;padding:14px 6px 10px}
 html[data-sb="mini"] .sb .lb,html[data-sb="mini"] .brand .txt,
@@ -350,6 +361,7 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
       <span class="nm"><i></i><span>浏览器旁听</span></span>
       <button class="sw" data-src="browser" title="开/关 浏览器旁听收信"></button>
     </div>
+    <div id="bridgeList"></div>
     <div class="srcrow" id="srcDiscord">
       <span class="nm"><i></i><span>Discord Token</span></span>
       <button class="sw" data-src="discord" title="开/关 Token 直连收信"></button>
@@ -374,6 +386,7 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
   <section class="view on" id="v-inbox">
     <div class="split">
       <div class="mlist">
+        <div id="connBar"></div>
         <div class="filters">
           <button class="chip on" data-f="all">全部</button>
           <button class="chip" data-f="matched">命中规则</button>
@@ -584,8 +597,10 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
 
           <div id="brBox">
             <div class="row" style="margin-bottom:10px">
-              <a class="btn pri" href="/extension.zip" download>⇣ 下载浏览器扩展</a>
-              <button class="btn" data-help="browser">扩展怎么装</button></div>
+              <a class="btn pri" href="/extension.zip" download id="btnExtDl">⇣ 下载浏览器扩展</a>
+              <button class="btn" data-help="browser">扩展怎么装</button>
+              <span id="extVer" style="font-size:12.5px;color:var(--text3)"></span></div>
+            <div id="extWarn"></div>
             <div class="row"><span id="brState" style="font-size:12.5px;color:var(--text3)"></span></div>
           </div>
         </div>
@@ -608,7 +623,11 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
             <label class="f"><span>消息保留天数</span><input id="setRet" type="number" min="1"></label>
             <label class="f"><span>每日 AI 调用上限</span><input id="setCap" type="number" min="1"></label>
           </div>
-          <div class="hint" style="margin:-4px 0 12px">通知、提示音、转发都在「通知与转发」页设置。</div>
+          <label class="f"><span>代理 <em>拉不到模型、连不上 API 时填这里；留空＝跟随系统代理</em></span>
+            <input id="setProxy" type="text" placeholder="http://127.0.0.1:7890"></label>
+          <div class="hint" style="margin:-4px 0 12px">代理只用于访问模型 API 和 Discord，不影响本机界面。
+            填了还是不行就把地址里的端口跟你的代理软件核对一遍。<br>
+            通知、提示音、转发都在「通知与转发」页设置。</div>
           <div class="row"><button class="btn pri" id="btnSaveSet">保存</button>
             <button class="btn" id="btnClearMsg">清空历史消息</button></div>
         </div>
@@ -633,7 +652,7 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
 <script>
 /* ================= state & utils ================= */
 const S={cfg:null,status:{},rules:[],msgs:[],models:{},sel:null,ctx:new Set(),filter:'all',q:'',
-  demo:false,view:'inbox',editing:null,chat:[]};
+  demo:false,live:false,lastErr:'',modelsDemo:{},view:'inbox',editing:null,chat:[]};
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const AVC=['#c96442','#7a8b5c','#5b7fa6','#a1743b','#8d6a9f','#3f8f7c','#b05b6e'];
@@ -652,10 +671,23 @@ function ago(ts){const d=Date.now()/1000-ts;if(d<60)return'刚刚';if(d<3600)ret
   if(d<86400)return~~(d/3600)+'小时';return new Date(ts*1000).toLocaleDateString('zh-CN',{month:'numeric',day:'numeric'});}
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(e._t);
   e._t=setTimeout(()=>e.classList.remove('on'),2600);}
+/* 只有 boot 第一次探活失败才会进演示模式。一旦连上过后端，S.live 永久为真，
+   之后任何请求失败都必须把真实原因喊出来 —— 绝不能悄悄变回假数据，
+   否则你会以为在用真模型，其实在跟一堆编造的名字较劲。 */
 async function api(p,m='GET',b){
-  try{const r=await fetch(p,{method:m,headers:b?{'Content-Type':'application/json'}:{},
-      body:b?JSON.stringify(b):null});if(!r.ok)throw 0;return await r.json();}
-  catch(e){if(!S.demo){S.demo=true;$('#modeTag').textContent='演示模式';}return null;}
+  try{
+    const r=await fetch(p,{method:m,headers:b?{'Content-Type':'application/json'}:{},
+      body:b?JSON.stringify(b):null});
+    if(!r.ok){const t=await r.text().catch(()=>'');
+      throw new Error(`${r.status} ${r.statusText} ${t.slice(0,180)}`.trim());}
+    const j=await r.json();          // 先解析成功再认定「连上了」：
+    if(!S.live){S.live=true;S.demo=false;$('#modeTag').textContent='';}  // 有些东西会回 200 但不是 JSON
+    S.lastErr='';return j;
+  }catch(e){
+    S.lastErr=`${m} ${p} → ${e.message||'连不上'}`;
+    if(S.live){toast('请求失败：'+S.lastErr);console.error('[dcwatch]',S.lastErr);}
+    return null;
+  }
 }
 
 /* ================= demo seed (backend 不在时也能看界面) ================= */
@@ -817,7 +849,7 @@ const ACTIONS={
  ai_extract:{n:'AI 抽取结构化字段',d:'把消息里的信息抽成 JSON 存库（价格、地址、单号…），可导出。'},
  webhook:{n:'转发到 Webhook',d:'原样 POST 给飞书/钉钉/n8n，不调模型。'}};
 const BLANK={name:'新规则',source:'discord',guild_ids:[],channel_ids:[],thread_ids:[],
- include_threads_of_channels:true,dm:false,author_ids:[],author_name_contains:'',ignore_bots:true,
+ include_threads_of_channels:true,dm:false,accounts:[],author_ids:[],author_name_contains:'',ignore_bots:true,
  mention_only:false,keywords_any:[],keywords_all:[],regex:'',min_len:0,action:'notify',model:'',provider:'',
  prompt:'',reply_in_thread:true,notify_min_score:0,summary_every:20,cooldown_sec:20,max_per_hour:30,webhook_url:''};
 const PRESETS=[
@@ -889,9 +921,12 @@ async function compose(){
   $('#nlOut').innerHTML='';
   const r=await api('/api/rules/compose','POST',{text,provider:prov,model});
   b.textContent=old;b.disabled=false;
-  if(!r){                                    // 演示模式：本地按关键词粗略拼一条，让流程能走完
-    const demo=nlDemo(text);
-    showNl(demo.rule,demo.notes.concat('由 演示（未连后端）生成，真实运行时这一步交给你选的模型'));
+  if(!r){
+    if(S.live){$('#nlOut').innerHTML=
+      `<div class="banner">生成失败：${esc(S.lastErr)}<br>常见原因：没选模型、模型没拉过、API Key 不对或要走代理（设置页可填）。</div>`;
+      return;}
+    const demo=nlDemo(text);                 // 只在完全没连上后端时用本地土办法，让流程能看完
+    showNl(demo.rule,demo.notes.concat('演示模式生成（未连后端），不是模型输出'));
     return;}
   if(!r.ok){$('#nlOut').innerHTML=`<div class="banner">${esc(r.error)}</div>`;return;}
   showNl(r.rule,r.notes||[]);
@@ -965,6 +1000,11 @@ function editRule(r){
         <label for="e_incthr">同时监听这些频道下的<b>所有子区</b>（thread）</label></div>
       <label class="f" style="margin-top:10px"><span>只听某个子区 <em>thread_id：子区标题右键 → 复制频道 ID</em></span>${chipsHtml('thread_ids','粘贴子区 ID，回车')}</label>
       <div class="chk"><input type="checkbox" id="e_dm" ${E.dm?'checked':''}><label for="e_dm">包含私信 DM</label></div>
+      ${accOpts().length>1?`<label class="f" style="margin-top:10px">
+        <span>只听这些账号 <em>你有多个号在旁听。不勾＝所有号</em></span>
+        <div class="chips">${accOpts().map(a=>`<label class="chk" style="display:inline-flex;margin-right:12px">
+          <input type="checkbox" data-acc="${esc(a)}" ${(E.accounts||[]).includes(a)?'checked':''}>
+          <span>${esc(a)}</span></label>`).join('')}</div></label>`:''}
     </div>
 
     <div class="sect"><div class="st"><b>2 · 听谁</b><span>用户 ID 最准，昵称会变</span></div>
@@ -1031,6 +1071,8 @@ function editRule(r){
   bindField('#e_prompt','prompt');bindField('#e_hook','webhook_url');bindField('#e_act','action');
   bindField('#e_prov','provider');bindField('#e_model','model');
   bindField('#e_incthr','include_threads_of_channels','bool');bindField('#e_dm','dm','bool');
+  $$('[data-acc]').forEach(c=>c.onchange=()=>{
+    E.accounts=$$('[data-acc]').filter(x=>x.checked).map(x=>x.dataset.acc);});
   bindField('#e_nobot','ignore_bots','bool');bindField('#e_ment','mention_only','bool');
   bindField('#e_thr','reply_in_thread','bool');
   if($('#pickBtn'))$('#pickBtn').onclick=openPicker;
@@ -1043,10 +1085,12 @@ function editRule(r){
       `<span class="tag r">✕ 不命中${res?'（'+esc(res.why)+'）':''}</span>`;};
   $('#e_save').onclick=async()=>{
     const res=await api('/api/rules','POST',S.editing);
-    if(res){S.rules=res.rules;}else{ // demo
+    if(!res&&S.live){toast('没保存成功：'+S.lastErr);return;}   // 假的「已保存」最害人
+    if(res){S.rules=res.rules;}
+    else{                                                      // 演示模式：只改本地，看看效果
       if(S.editing.id)Object.assign(S.rules.find(x=>x.id===S.editing.id),S.editing);
       else S.rules.push({...S.editing,id:Date.now()%9999,enabled:1,hits:0});}
-    renderRules();closeDrawer();toast('规则已保存');};
+    renderRules();closeDrawer();toast(res?'规则已保存':'演示模式：只改了界面，没落盘');};
 }
 function localMatch(r,s){const c=(s.content||'').toLowerCase();
   if(r.author_ids.length&&!r.author_ids.includes(s.author_id))return false;
@@ -1089,7 +1133,8 @@ function renderProviders(){
      </div>
      <div class="row">
        <button class="btn" data-pull="${i}">⇣ 拉取模型列表</button>
-       <span class="tag" id="pm${i}">${ms.length?`已拉到 ${ms.length} 个模型`:'未拉取'}</span>
+       <span class="tag" id="pm${i}">${!ms.length?'未拉取'
+         :(S.modelsDemo&&S.modelsDemo[p.name]?'演示模式：不是真模型列表':`已拉到 ${ms.length} 个模型`)}</span>
        <span class="sp" style="flex:1"></span>
        <button class="btn ghost sm" data-rmp="${i}">移除</button>
      </div>
@@ -1107,9 +1152,14 @@ function renderProviders(){
     tag.innerHTML='<span class="spin"></span> 拉取中';
     await api('/api/config','POST',{providers:cleanProviders()});
     const r=await api('/api/models','POST',{provider:p.name,base_url:p.base_url,api_key:p.api_key});
-    if(!r){S.models[p.name]=['gpt-4o-mini','gpt-4o','o4-mini','claude-sonnet-4','deepseek-chat','qwen2.5:7b'];
-      tag.textContent='演示：6 个模型';}
-    else if(r.ok){S.models[p.name]=r.models;tag.textContent=`已拉到 ${r.models.length} 个`;
+    if(!r){
+      if(S.live){                                  // 后端在，是这次请求炸了：说清楚，别编模型
+        tag.innerHTML='<span style="color:var(--err)">拉取失败，看右下角提示</span>';
+        renderDefaults();return;}
+      S.models[p.name]=['（演示）gpt-4o-mini','（演示）qwen2.5:7b'];
+      (S.modelsDemo=S.modelsDemo||{})[p.name]=true;}
+    else if(r.ok){S.models[p.name]=r.models;if(S.modelsDemo)delete S.modelsDemo[p.name];
+      tag.textContent=`已拉到 ${r.models.length} 个`;
       $('#defProv').value=p.name;toast(`拉到 ${r.models.length} 个模型，去上面「默认模型」里挑`);}
     else{tag.innerHTML=`<span style="color:var(--err)">失败：${esc(r.error).slice(0,80)}</span>`;
       renderDefaults();return;}
@@ -1200,11 +1250,27 @@ function renderSettings(){
       :(mode==='user'?'个人账号 token（风险自负）':'MTIz…（Bot Token）');}
   $('#dcEnabled').checked=!!S.cfg.discord.enabled;
   $('#setRet').value=S.cfg.retention_days;$('#setCap').value=S.cfg.ai_daily_call_cap;
+  $('#setProxy').value=(S.cfg.net||{}).proxy||'';
   const st=S.status.discord||{};
   $('#dcState').textContent=st.state==='online'?`已连接：${st.user||''}（${st.guilds||0} 个服务器）`:`状态：${st.state||'未连接'}`;
   const b=S.status.browser||{};
-  $('#brState').textContent=b.state==='online'
-    ?`扩展在线 · 已转发 ${b.count||0} 条`:'扩展未连上（装好扩展并打开一个 discord.com 频道标签页）';
+  const bl=b.bridges||[],lv=bl.filter(x=>x.fresh);
+  /* 这个按钮给出去的是本机磁盘上那份扩展。从 GitHub 或旧压缩包拿到老版本时，
+     以前界面上完全看不出来 —— 现在直接写出版本号，不一致就红字挡脸。 */
+  const eh=(S.env||{}).ext_have||'', ev2=(S.env||{}).ver||'';
+  if($('#extVer'))$('#extVer').textContent=eh?`这里下到的是 v${eh}`:'找不到 extension 文件夹';
+  if($('#extWarn'))$('#extWarn').innerHTML=(eh&&ev2&&eh!==ev2)
+    ? `<div style="display:block;background:#fdf0e6;border:1px solid var(--accent);color:#7a3a1e;
+        border-radius:10px;padding:10px 12px;margin:8px 0 0;font-size:12.5px;line-height:1.65">
+        <b>注意：这个按钮给你的是 v${esc(eh)}，程序本身却是 v${esc(ev2)}。</b>
+        说明你这份 dcwatch 里的 extension 文件夹是旧的（常见于从 GitHub 或旧压缩包解压出来的副本）。
+        下载它装上去还是旧版 —— 要装新版就用单独给你的扩展包，或者把新的 extension 文件夹
+        覆盖到 <code>server.py</code> 旁边再来下。</div>`
+    : '';
+  $('#brState').textContent=lv.length
+    ?`${lv.length} 个浏览器在旁听（${lv.map(x=>(x.account||'?')+' / 扩展 v'+(x.ver||'?')).join('；')}）· 累计 ${b.count||0} 条`
+    :(bl.length?`扩展装过但已失联 ${~~((bl[0].ago||0)/60)} 分钟：打开 Discord 标签页按 F5`
+              :'扩展未连上：装好扩展后必须回 Discord 页面按一次 F5');
   renderAutostart();
 }
 /* ---------- 开机自启动 ---------- */
@@ -1245,8 +1311,9 @@ $('#btnSaveDc').onclick=async()=>{
   toast(r?'已保存，正在连接…':'演示模式：未保存');};
 $('#btnSaveSet').onclick=async()=>{
   const r=await api('/api/config','POST',{retention_days:+$('#setRet').value,
-    ai_daily_call_cap:+$('#setCap').value});
-  if(r)S.cfg=r.config;toast(r?'已保存':'演示模式：未保存');};
+    ai_daily_call_cap:+$('#setCap').value,net:{proxy:$('#setProxy').value.trim()}});
+  if(r)S.cfg=r.config;
+  toast(r?'已保存':(S.live?'没保存成功：'+S.lastErr:'演示模式：未保存'));};
 $('#btnClearMsg').onclick=async()=>{if(!confirm('清空全部历史消息？'))return;
   await api('/api/messages/clear','POST',{});S.msgs=[];renderList();$('#detail').innerHTML='';toast('已清空');};
 
@@ -1618,6 +1685,10 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeHelp();closeDr
   $('#modal').classList.remove('on');}});
 
 /* ================= sources ================= */
+/* 现在有哪些账号在旁听（多号分流用）*/
+function accOpts(){return (S.status?.browser?.accounts)||[];}
+function cmpVer(a,b){const x=String(a).split('.').map(Number),y=String(b).split('.').map(Number);
+  for(let i=0;i<3;i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)-(y[i]||0);}return 0;}
 function renderSources(){
   const st=S.status.discord||{},on=S.cfg?.sources?.discord;
   const row=$('#srcDiscord');row.classList.toggle('live',st.state==='online');
@@ -1626,6 +1697,26 @@ function renderSources(){
   const b=S.status.browser||{},bon=S.cfg?.sources?.browser!==false;
   const brow=$('#srcBrowser');brow.classList.toggle('live',b.state==='online'&&bon);
   brow.querySelector('.sw').classList.toggle('on',bon);
+  const bl=b.bridges||[];
+  $('#bridgeList').innerHTML=bl.map(x=>`<div class="brg ${x.fresh?'on':''}">
+    <div><span class="d"></span><b>${esc(x.account||'认不出账号')}</b> · ${esc(x.browser||'浏览器')}</div>
+    <div>${x.fresh?`在盯 #${esc(x.where||'?')} · ${x.ago<2?'刚刚':~~x.ago+'秒前'}`:`已失联 ${~~(x.ago/60)} 分钟`}
+      · 扩展 v${esc(x.ver||'?')} · 报了 ${x.count||0} 条</div>
+    ${x.err?`<div style="color:var(--err)">${esc(x.err)}</div>`:''}</div>`).join('');
+  const live=bl.filter(x=>x.fresh);
+  const extOld=live.filter(x=>x.ver&&(S.env||{}).ext_min&&cmpVer(x.ver,(S.env||{}).ext_min)<0);
+  let cb='';
+  if(!bon)cb=`<div class="cb">浏览器旁听<b>已关闭</b>，左下角开关打开才会收信。</div>`;
+  else if(!bl.length)cb=`<div class="cb">还<b>没有任何浏览器</b>在旁听。装好扩展后，
+    <b>必须回到 Discord 页面按一次 F5</b> —— 内容脚本只在页面加载时注入，装完不刷新＝完全没生效。
+    刷新后这里会变成绿色，右下角也会出现「dcwatch 正在旁听」的小药丸。</div>`;
+  else if(!live.length)cb=`<div class="cb">扩展装过，但<b>最近 90 秒没有心跳</b>：Discord 标签页可能关了、
+    睡眠了，或扩展被停用。打开 Discord 标签页按 F5 就会恢复。</div>`;
+  else if(extOld.length)cb=`<div class="cb">有浏览器还在跑<b>旧版扩展 v${esc(extOld[0].ver)}</b>（当前 v${esc((S.env||{}).ext_min)}）：
+    去 chrome://extensions 点扩展卡片上的<b>刷新箭头</b>，再回 Discord 按 F5。</div>`;
+  else cb=`<div class="cb ok">正在旁听：${live.map(x=>esc((x.account||'?')+' @ '+(x.browser||'浏览器'))).join('、')}
+    ${live.length>1?`（${live.length} 个浏览器，重复消息会自动去重）`:''}</div>`;
+  $('#connBar').innerHTML=cb;
   const any=on||bon;
   $('#btnPause').classList.toggle('paused',!any);
   $('#btnPause').querySelector('.lb').textContent=any?'全部暂停':'已暂停 · 恢复';
@@ -1738,13 +1829,21 @@ async function boot(){
   if(st){S.cfg=st.config;S.status=st.status;S.rules=st.rules;S.stats=st.stats;S.env=st.env||{};
     const ms=await api('/api/messages?limit=300');S.msgs=ms?ms.messages:[];
     $('#modeTag').textContent='';}
-  else{seedDemo();}
+  else{seedDemo();S.demo=true;$('#modeTag').textContent='演示模式（未连上后端）';
+    console.warn('[dcwatch] 未连上后端：',S.lastErr);}
   S.models={...(S.cfg.models_cache||{})};          // 拉过的模型列表存在配置里，刷新也还在
   renderSources();renderSinkRows();renderList();renderRules();renderNl();
   renderProviders();renderDefaults();renderPrompts();renderSettings();renderCtxHint();
   bindEyes();loadSounds();
   if(S.msgs.length)openMsg(S.msgs[0].id);
-  if(!S.demo)connectSSE();
+  if(!S.demo){connectSSE();
+    /* 桥的「几秒前」会变旧，SSE 只推 Discord 状态，所以这里定时刷一下连接状态。
+       15 秒够了：服务端判定新鲜是 90 秒，扩展心跳 20 秒。 */
+    setInterval(async()=>{
+      if(document.hidden)return;
+      const st=await api('/api/state');
+      if(st){S.status=st.status;S.env=st.env||S.env;renderSources();}
+    },15000);}
 }
 boot();
 </script>

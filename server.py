@@ -16,6 +16,8 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
+VERSION = "1.4.0"                               # 服务端版本，界面和扩展都能看到
+EXT_MIN = "1.4.0"                               # 低于这个版本的扩展要提示用户更新
 FROZEN = getattr(sys, "frozen", False)          # True 时 = PyInstaller 打出来的 exe
 # ui.html 在 exe 里是打进包的临时解包目录；数据必须写到真实可写目录
 BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -124,6 +126,8 @@ DEFAULT_CONFIG = {
     ],
     "default_model": {"provider": "openai", "model": ""},
     "sources": {"discord": True, "browser": True},   # master switch per source
+    # 出网设置。proxy 留空＝跟随系统环境变量；填了就强制走它（形如 http://127.0.0.1:7890）
+    "net": {"proxy": ""},
     # 出口：命中并达到 min_score 的消息往哪儿送
     "sinks": {
         "browser": True,            # 网页通知（要开着界面）
@@ -309,7 +313,8 @@ CREATE TABLE IF NOT EXISTS messages(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT, msg_id TEXT UNIQUE, guild_id TEXT, channel_id TEXT, channel_name TEXT,
   parent_id TEXT, is_thread INT, author_id TEXT, author TEXT, is_bot INT,
-  content TEXT, ts REAL, matched TEXT, ai_json TEXT, score INT, unread INT DEFAULT 1);
+  content TEXT, ts REAL, matched TEXT, ai_json TEXT, score INT, unread INT DEFAULT 1,
+  account TEXT DEFAULT '', bridge TEXT DEFAULT '');
 CREATE INDEX IF NOT EXISTS idx_msg_ts ON messages(ts DESC);
 CREATE TABLE IF NOT EXISTS rules(
   id INTEGER PRIMARY KEY AUTOINCREMENT, json TEXT, enabled INT DEFAULT 1, hits INT DEFAULT 0);
@@ -324,6 +329,11 @@ class DB:
         self.c = sqlite3.connect(path, check_same_thread=False)
         self.c.row_factory = sqlite3.Row
         self.c.executescript(SCHEMA)
+        # 老库补列（1.0 的库没有 account/bridge）
+        have = {r[1] for r in self.c.execute("PRAGMA table_info(messages)")}
+        for col in ("account", "bridge"):
+            if col not in have:
+                self.c.execute(f"ALTER TABLE messages ADD COLUMN {col} TEXT DEFAULT ''")
         self.c.execute("PRAGMA journal_mode=WAL")
         self.c.commit()
 
@@ -355,6 +365,7 @@ DEFAULT_RULE = {
     "include_threads_of_channels": True,   # channel_ids also match its threads (子区)
     "dm": False,
     # ---- WHO ----
+    "accounts": [],       # 只听这些 Discord 账号（空＝全部）。多号监控用它分流
     "author_ids": [], "author_name_contains": "",
     "ignore_bots": True, "mention_only": False,
     # ---- WHAT ----
@@ -409,6 +420,27 @@ rule 里只允许这些字段（不确定的就别写，别编）：
 """
 
 
+def ext_dir():
+    """扩展目录：源码版在 BASE 下；exe 版优先打进包里的，其次 exe 旁边，最后数据目录。"""
+    for p in (BASE / "extension", Path(sys.executable).resolve().parent / "extension",
+              DATA_DIR / "extension"):
+        if p.is_dir():
+            return p
+    return None
+
+
+def ext_version():
+    """磁盘上那份扩展的版本。下载按钮给出去的就是这一份 —— 必须让人看得见，
+    否则从 GitHub 或旧包里拿到老扩展，界面上完全看不出来。"""
+    d = ext_dir()
+    if not d:
+        return ""
+    try:
+        return str(json.loads((d / "manifest.json").read_text(encoding="utf-8")).get("version") or "")
+    except Exception:
+        return ""
+
+
 def now():
     return time.time()
 
@@ -441,10 +473,33 @@ class App:
         self.chan_cache: dict[str, dict] = {}
         self.rate: dict[str, list] = {}
         self.sum_buf: dict[str, list] = {}
-        self.last_ingest = 0.0        # 浏览器旁听最后一次投递时间
+        self.last_ingest = 0.0        # 浏览器旁听最后一次投递时间（所有桥里最新的那次）
         self.ingest_count = 0
+        self.bridges = {}             # 每个装了扩展的浏览器 = 一个桥，独立跟踪
+        self._inflight = set()        # 正在处理的 msg_id，防两个桥同时报同一条
         self._last_toast = 0.0        # 系统通知防刷屏
         self.port = 8777
+
+    def touch_bridge(self, b, n=0, err=""):
+        """记下这个桥的身份和心跳。多浏览器、多账号就靠它区分。"""
+        bid = str(b.get("bridge") or "anon")[:64]
+        br = self.bridges.setdefault(bid, {"id": bid, "count": 0, "first": now()})
+        for k, lim in (("ver", 16), ("browser", 40), ("account", 60), ("account_id", 32), ("where", 60)):
+            v = str(b.get(k) or "")[:lim]
+            if v or k not in br:
+                br[k] = v
+        br["last"] = now()
+        br["count"] += n
+        br["err"] = err
+        self.last_ingest = now()
+        return br
+
+    def bridge_list(self):
+        out = []
+        for br in sorted(self.bridges.values(), key=lambda x: -x.get("last", 0)):
+            out.append(dict(br, fresh=now() - br.get("last", 0) < 90,
+                            ago=round(now() - br.get("last", 0), 1)))
+        return out
 
     def log(self, level, text):
         self.db.x("INSERT INTO logs(ts,level,text) VALUES(?,?,?)", (now(), level, str(text)[:800]))
@@ -471,31 +526,64 @@ class App:
                 return p
         return self.cfg["providers"][0] if self.cfg["providers"] else None
 
+    def rq(self, **kw):
+        """出网请求的公共参数：显式代理优先，没填就靠 trust_env 认系统代理。"""
+        px = ((self.cfg.get("net") or {}).get("proxy") or "").strip()
+        if px:
+            kw["proxy"] = px
+        return kw
+
+    @staticmethod
+    def base_candidates(base_url):
+        """用户粘什么都尽量认：少了 /v1、多了 /chat/completions、末尾多斜杠，都试一遍。"""
+        b = (base_url or "").strip().rstrip("/")
+        for tail in ("/chat/completions", "/completions", "/models"):
+            if b.endswith(tail):
+                b = b[: -len(tail)].rstrip("/")
+        out = [b]
+        if not b.endswith("/v1"):
+            out.append(b + "/v1")
+        return [x for x in out if x]
+
     async def list_models(self, base_url, api_key):
-        base = base_url.rstrip("/")
         hdr = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        # OpenAI-compatible
-        try:
-            async with self.http.get(f"{base}/models", headers=hdr, timeout=aiohttp.ClientTimeout(total=25)) as r:
-                if r.status == 200:
-                    j = await r.json()
-                    ids = [m.get("id") for m in j.get("data", j if isinstance(j, list) else [])]
-                    ids = sorted([i for i in ids if i])
-                    if ids:
-                        return ids
-                body = (await r.text())[:200]
-        except Exception as e:
-            body = str(e)[:200]
+        tried = []
+        for base in self.base_candidates(base_url):
+            try:
+                async with self.http.get(f"{base}/models", headers=hdr,
+                                         timeout=aiohttp.ClientTimeout(total=25), **self.rq()) as r:
+                    if r.status == 200:
+                        j = await r.json(content_type=None)
+                        ids = [m.get("id") for m in j.get("data", j if isinstance(j, list) else [])]
+                        ids = sorted([i for i in ids if i])
+                        if ids:
+                            self.models_base = base       # 记下真正能用的那个
+                            return ids
+                    tried.append(f"{base}/models -> HTTP {r.status} {(await r.text())[:120]}")
+            except Exception as e:
+                tried.append(f"{base}/models -> {type(e).__name__}: {str(e)[:120]}")
+        body = " ｜ ".join(tried)
+        base = self.base_candidates(base_url)[0]
         # Ollama native
         try:
             root = base[:-3] if base.endswith("/v1") else base
-            async with self.http.get(f"{root}/api/tags", timeout=aiohttp.ClientTimeout(total=10)) as r:
+            async with self.http.get(f"{root}/api/tags", timeout=aiohttp.ClientTimeout(total=10), **self.rq()) as r:
                 if r.status == 200:
                     j = await r.json()
                     return sorted(m["name"] for m in j.get("models", []))
         except Exception:
             pass
-        raise RuntimeError(f"拉取模型失败: {body}")
+        px = ((self.cfg.get("net") or {}).get("proxy") or "").strip()
+        hint = ""
+        if any("TimeoutError" in t or "Cannot connect" in t or "ClientConnector" in t for t in tried):
+            hint = ("。连不上对方服务器：国内直连 api.openai.com 一般是通不过的，"
+                    f"去「设置」填一个代理{'（当前填的是 ' + px + '）' if px else ''}，"
+                    "或者换 DeepSeek / 通义 / 本机 Ollama 这类能直连的")
+        elif any("HTTP 401" in t or "HTTP 403" in t for t in tried):
+            hint = "。看着像 Key 不对或没权限"
+        elif any("HTTP 404" in t for t in tried):
+            hint = "。404 一般是 Base URL 写法不对，正确的形如 https://api.deepseek.com/v1"
+        raise RuntimeError(f"拉取模型失败{hint}\n试过：{body}")
 
     async def chat(self, provider_name, model, messages, json_mode=False, max_tokens=800, rule="-"):
         p = self.provider(provider_name) or {}
@@ -514,7 +602,9 @@ class App:
             hdr["Authorization"] = "Bearer " + p["api_key"]
         t0 = now()
         try:
-            async with self.http.post(f"{base}/chat/completions", headers=hdr, json=body,
+            if not base.endswith("/v1") and getattr(self, "models_base", ""):
+                base = self.models_base          # 用拉模型时验证过的那个 base
+            async with self.http.post(f"{base}/chat/completions", headers=hdr, json=body, **self.rq(),
                                       timeout=aiohttp.ClientTimeout(total=120)) as r:
                 txt = await r.text()
                 if r.status != 200:
@@ -540,7 +630,7 @@ class App:
         if cid in self.chan_cache:
             return self.chan_cache[cid]
         try:
-            async with self.http.get(f"{API}/channels/{cid}", headers=self.dc_headers()) as r:
+            async with self.http.get(f"{API}/channels/{cid}", headers=self.dc_headers(), **self.rq()) as r:
                 j = await r.json() if r.status == 200 else {}
         except Exception:
             j = {}
@@ -558,7 +648,7 @@ class App:
         body = {"content": content[:1900]}
         if reply_to:
             body["message_reference"] = {"message_id": reply_to, "fail_if_not_exists": False}
-        async with self.http.post(f"{API}/channels/{channel_id}/messages",
+        async with self.http.post(f"{API}/channels/{channel_id}/messages", **self.rq(),
                                   headers=self.dc_headers(), json=body) as r:
             if r.status not in (200, 201):
                 raise RuntimeError(f"send failed {r.status} {(await r.text())[:200]}")
@@ -571,6 +661,9 @@ class App:
             return False, "source"
         if rule["ignore_bots"] and ev["is_bot"]:
             return False, "bot"
+        acc = rule.get("accounts") or []
+        if acc and (ev.get("account") or "") not in acc:
+            return False, "account"
         if ev["is_dm"]:
             if not rule["dm"]:
                 return False, "dm-off"
@@ -625,7 +718,22 @@ class App:
         return True
 
     async def handle_event(self, ev):
-        """Store + run rules. ev is normalized."""
+        """Store + run rules. ev is normalized。
+        同一条消息可能被多个浏览器的桥各报一次，这里先挡掉重复：
+        否则规则会跑两遍 —— AI 调两次、通知发两遍、命中数加两次。"""
+        mid_key = ev.get("msg_id") or ""
+        if mid_key:
+            if mid_key in self._inflight:
+                return None
+            if self.db.q("SELECT 1 FROM messages WHERE msg_id=? LIMIT 1", (mid_key,)):
+                return None
+            self._inflight.add(mid_key)
+        try:
+            return await self._handle_event(ev)
+        finally:
+            self._inflight.discard(mid_key)
+
+    async def _handle_event(self, ev):
         matched, ai_json, score = [], None, None
         for rule in self.rules():
             ok, _ = self.match(rule, ev)
@@ -655,12 +763,13 @@ class App:
         with contextlib.suppress(sqlite3.IntegrityError):
             mid = self.db.x(
                 """INSERT INTO messages(source,msg_id,guild_id,channel_id,channel_name,parent_id,
-                   is_thread,author_id,author,is_bot,content,ts,matched,ai_json,score)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   is_thread,author_id,author,is_bot,content,ts,matched,ai_json,score,account,bridge)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (ev["source"], ev["msg_id"], ev["guild_id"], ev["channel_id"], ev["channel_name"],
                  ev["parent_id"], int(ev["is_thread"]), ev["author_id"], ev["author"], int(ev["is_bot"]),
                  ev["content"], ev["ts"], ",".join(matched),
-                 json.dumps(ai_json, ensure_ascii=False) if ai_json else None, score))
+                 json.dumps(ai_json, ensure_ascii=False) if ai_json else None, score,
+                 ev.get("account") or "", ev.get("bridge") or ""))
         row = dict(ev, id=mid, matched=",".join(matched), ai=ai_json, score=score)
         alert = bool(matched)
         if score is not None:
@@ -743,7 +852,7 @@ class App:
                              f"要么在规则里填一个，要么把动作改成「只提醒我」——"
                              f"命中的消息本来就会走「通知与转发」里配好的出口")
             return
-        async with self.http.post(url, json={"rule": rule["name"], "event": ev},
+        async with self.http.post(url, json={"rule": rule["name"], "event": ev}, **self.rq(),
                                   timeout=aiohttp.ClientTimeout(total=10)) as r:
             if r.status >= 400:            # 失败要看得见，别默默丢掉
                 raise RuntimeError(f"webhook 返回 {r.status}: {(await r.text())[:120]}")
@@ -843,7 +952,8 @@ class App:
         return await self._req("POST", url, **kw)
 
     async def _req(self, method, url, **kw):
-        async with self.http.request(method, url, timeout=aiohttp.ClientTimeout(total=15), **kw) as r:
+        async with self.http.request(method, url, timeout=aiohttp.ClientTimeout(total=15),
+                                     **self.rq(), **kw) as r:
             t = await r.text()
             if r.status >= 300:
                 raise RuntimeError(f"{r.status} {t[:150]}")
@@ -952,7 +1062,7 @@ class DiscordListener:
         url = (self.resume_url or "wss://gateway.discord.gg") + "/?v=10&encoding=json"
         self.state = "connecting"
         await self.app.bus.push("status", self.status())
-        async with self.app.http.ws_connect(url, heartbeat=None, max_msg_size=0) as ws:
+        async with self.app.http.ws_connect(url, heartbeat=None, max_msg_size=0, **self.app.rq()) as ws:
             self.ws = ws
             hello = json.loads(await ws.receive_str())
             interval = hello["d"]["heartbeat_interval"] / 1000
@@ -1087,13 +1197,17 @@ def routes(app: App):
     @r.get("/api/state")
     async def state(_):
         st = app.dc.status() if app.dc else {"source": "discord", "state": "stopped"}
-        fresh = now() - app.last_ingest < 90
+        bl = app.bridge_list()
+        fresh = any(x["fresh"] for x in bl)
         br = {"source": "browser", "state": "online" if fresh else "stopped",
-              "last": app.last_ingest, "count": app.ingest_count}
+              "last": app.last_ingest, "count": app.ingest_count,
+              "bridges": bl, "live": sum(1 for x in bl if x["fresh"]),
+              "accounts": sorted({x["account"] for x in bl if x.get("account") and x["fresh"]})}
         return web.json_response({
             "config": safe_cfg(app.cfg),
             "status": {"discord": st, "browser": br},
             "env": {"win": IS_WIN, "frozen": FROZEN, "data_dir": str(DATA_DIR), "port": app.port,
+                    "ver": VERSION, "ext_min": EXT_MIN, "ext_have": ext_version(),
                     "autostart": autostart_state(), "pyver": sys.version.split()[0]},
             "rules": app.rules(enabled_only=False),
             "stats": {
@@ -1357,9 +1471,11 @@ def routes(app: App):
         走完全相同的规则引擎，所以规则、AI 动作、通知都不用改。"""
         b = await req.json()
         if b.get("ping"):
-            app.last_ingest = now()
-            return web.json_response({"ok": True, "pong": True}, headers=CORS)
+            br = app.touch_bridge(b)
+            return web.json_response({"ok": True, "pong": True, "bridge": br["id"],
+                                      "server_ver": VERSION}, headers=CORS)
         if not app.cfg["sources"].get("browser", True):
+            app.touch_bridge(b, err="旁听开关是关的，消息被丢弃")
             return web.json_response({"ok": False, "error": "浏览器旁听已关闭"}, headers=CORS)
         items = b.get("messages") or [b]
         n = 0
@@ -1374,12 +1490,16 @@ def routes(app: App):
                   "author_id": str(m.get("author_id") or ""), "author": m.get("author") or "?",
                   "is_bot": bool(m.get("is_bot")), "content": m["content"], "ts": now(),
                   "is_dm": bool(m.get("is_dm")), "mentions_me": bool(m.get("mentions_me")),
-                  "url": m.get("url") or ""}
+                  "url": m.get("url") or "",
+                  # 哪个号收到的：单条上带的优先，否则用这一批的（多号监控靠它区分）
+                  "account": str(m.get("account") or b.get("account") or ""),
+                  "bridge": str(b.get("bridge") or "")}
             await app.handle_event(ev)
             n += 1
-        app.last_ingest = now()
         app.ingest_count += n
-        return web.json_response({"ok": True, "accepted": n}, headers=CORS)
+        br = app.touch_bridge(b, n=n)
+        return web.json_response({"ok": True, "accepted": n, "bridge": br["id"],
+                                  "server_ver": VERSION}, headers=CORS)
 
     @r.post("/api/sinks/test")
     async def sinktest(req):
@@ -1437,11 +1557,10 @@ def routes(app: App):
     async def extzip(_):
         """浏览器扩展打成 zip 给你下载：解压 → chrome://extensions → 加载已解压的扩展程序。"""
         # 源码版在 BASE 下；exe 版优先用打进包里的，没有就找 exe 旁边的（build.bat 会拷一份过去）
-        cands = [BASE / "extension", Path(sys.executable).resolve().parent / "extension",
-                 DATA_DIR / "extension"]
-        src = next((p for p in cands if p.is_dir()), None)
+        src = ext_dir()
         if src is None:
-            raise web.HTTPNotFound(text="找不到 extension 目录：" + " / ".join(str(p) for p in cands))
+            raise web.HTTPNotFound(text="找不到 extension 目录（应该在 server.py 旁边）")
+        v = ext_version() or "unknown"
         import io, zipfile
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -1449,7 +1568,9 @@ def routes(app: App):
                 if p.is_file():
                     z.write(p, f"dcwatch-extension/{p.relative_to(src)}")
         return web.Response(body=buf.getvalue(), content_type="application/zip",
-                            headers={"Content-Disposition": 'attachment; filename="dcwatch-extension.zip"'})
+                            headers={"Content-Disposition":
+                                     f'attachment; filename="dcwatch-extension-v{v}.zip"',
+                                     "X-Dcwatch-Ext-Version": v})
 
     @r.post("/api/sinks/toggle")
     async def sinktoggle(req):
@@ -1557,6 +1678,9 @@ async def housekeeping(app: App):
         days = int(app.cfg.get("retention_days", 14))
         app.db.x("DELETE FROM messages WHERE ts < ?", (now() - days * 86400,))
         app.db.x("DELETE FROM logs WHERE ts < ?", (now() - 3 * 86400,))
+        # 半小时没心跳的桥就不再列出来（浏览器关了/扩展卸了）
+        for bid in [k for k, v in app.bridges.items() if now() - v.get("last", 0) > 1800]:
+            app.bridges.pop(bid, None)
         await asyncio.sleep(3600)
 
 
@@ -1579,7 +1703,7 @@ async def main():
     web_app.add_routes(routes(app))
 
     async def on_start(_):
-        app.http = aiohttp.ClientSession()
+        app.http = aiohttp.ClientSession(trust_env=True)   # 认 HTTP(S)_PROXY / NO_PROXY
         app.dc = DiscordListener(app)
         asyncio.create_task(housekeeping(app))
         if (app.cfg["discord"]["enabled"] and app.cfg["discord"]["token"]

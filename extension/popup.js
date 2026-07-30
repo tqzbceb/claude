@@ -19,7 +19,7 @@ function render(st) {
   else set(1, "bad", `连不上：${st.serverErr || "未知"}`);
 
   // 2 有没有 Discord 标签页在旁听
-  if (st.tabFresh) set(2, "ok", `在旁听${st.where ? "  #" + st.where : ""}，心跳 ${ago(st.lastTabPing)}`);
+  if (st.tabFresh) set(2, "ok", `在旁听${st.account ? "（" + st.account + "）" : ""}${st.where ? "  #" + st.where : ""}，心跳 ${ago(st.lastTabPing)}`);
   else set(2, st.lastTabPing ? "bad" : "warn", st.lastTabPing ? `断了，最后心跳 ${ago(st.lastTabPing)}` : "没有标签页在旁听");
 
   // 3 投递
@@ -32,6 +32,8 @@ function render(st) {
     const bits = [st.srvOnline ? "左下角绿灯亮着" : "左下角还是灰的",
                   `累计收到 ${st.srvCount || 0} 条`,
                   `启用规则 ${st.rules || 0} 条`];
+    if (st.bridges > 1) bits.push(`共 ${st.bridges} 个浏览器在旁听`);
+    if (st.srvVer && st.ver && st.srvVer !== st.ver) bits.push(`⚠ 扩展 v${st.ver} / 程序 v${st.srvVer}`);
     if (!st.srcOn) bits.push("⚠ 浏览器旁听开关是关的");
     set(4, st.srvOnline && st.srcOn ? "ok" : "warn", bits.join("，"));
   } else set(4, "bad", "问不到");
@@ -57,13 +59,20 @@ function render(st) {
     [cls, title] = ["bad", "投递失败"];
     sum = st.sendErr;
     fix = `<b>标签页是活的，但消息发不进去。</b>把这行错误发我，同时看一眼 dcwatch 界面的「日志」页。`;
+  } else if (st.srvVer && st.ver && st.srvVer !== st.ver) {
+    [cls, title] = ["warn", `扩展是旧版 v${st.ver}`];
+    sum = `本机程序是 v${st.srvVer}，两边对不上`;
+    fix = `<b>更新扩展要做两步，少一步都等于没改：</b><ol>
+      <li>地址栏进 <code>chrome://extensions</code>，找到 dcwatch，点卡片上的<b>刷新箭头 ⟳</b></li>
+      <li>回到 Discord 页面<b>按 F5</b></li></ol>
+      卡片上的版本号变成 v${st.srvVer} 才算成功。`;
   } else if (!st.srcOn) {
     [cls, title] = ["warn", "旁听开关被关了"];
     sum = "心跳能通，但消息会被丢弃";
     fix = `去 dcwatch 界面<b>左下角，把「浏览器旁听」的开关打开</b>。`;
   } else {
     [cls, title] = ["ok", "一切正常"];
-    sum = `正在旁听${st.where ? " #" + st.where : ""}，等新消息就行`;
+    sum = `正在旁听${st.account ? "（" + st.account + "）" : ""}${st.where ? " #" + st.where : ""}，等新消息就行`;
     fix = `<b>接下来：</b>让那个频道来一条新消息试试。<br>
       注意只有<b>你打开着的那个频道</b>会被看到，想盯多个频道就开多个标签页，各停在一个频道。
       历史消息不会上报，只报你挂上之后的新消息。`;

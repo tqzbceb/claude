@@ -11,6 +11,31 @@ const DEF_PORT = 8777;
 const FRESH_MS = 90_000;          // 和服务端 /api/state 的 90 秒判定保持一致
 
 const getPort = async () => (await chrome.storage.local.get("port")).port || DEF_PORT;
+
+/* 桥身份：每个浏览器（更准确说每个浏览器 profile）一个稳定 id。
+   多个浏览器都装了这个扩展时，dcwatch 靠它把它们分开列出来。 */
+async function getBridge() {
+  const k = await chrome.storage.local.get("bridge");
+  if (k.bridge) return k.bridge;
+  const id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())).slice(0, 8);
+  await chrome.storage.local.set({ bridge: id });
+  return id;
+}
+function browserName() {
+  const u = navigator.userAgent;
+  if (/Edg\//.test(u)) return "Edge";
+  if (/OPR\//.test(u)) return "Opera";
+  if (/Brave/.test(u)) return "Brave";
+  if (/Chrome\/(\d+)/.test(u)) return "Chrome " + RegExp.$1;
+  return "浏览器";
+}
+/* 每次投递都带上：桥 id、扩展版本、浏览器、当前账号 —— 这样界面上能看清是谁在报 */
+async function stamp(body) {
+  const acc = (await chrome.storage.local.get("acc")).acc || {};
+  return { ...body, bridge: await getBridge(), ver: chrome.runtime.getManifest().version,
+           browser: browserName(),
+           account: body.account || acc.name || "", account_id: body.account_id || acc.id || "" };
+}
 const getSt = async () => (await chrome.storage.local.get("st")).st || {};
 async function setSt(patch) {
   const st = { ...(await getSt()), ...patch };
@@ -23,14 +48,17 @@ async function post(body) {
   const port = await getPort();
   const t0 = Date.now();
   try {
+    const full = await stamp(body);
+    if (full.account) await chrome.storage.local.set({ acc: { name: full.account, id: full.account_id } });
     const r = await fetch(`http://127.0.0.1:${port}/api/ingest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(full),
     });
     const txt = await r.text().catch(() => "");
     if (!r.ok) throw new Error(`dcwatch 返回 ${r.status} ${txt.slice(0, 80)}`);
-    const patch = { lastTabPing: t0, sendErr: "", lastOkAt: t0 };
+    const patch = { lastTabPing: t0, sendErr: "", lastOkAt: t0,
+                    account: full.account || "", bridge: full.bridge, ver: full.ver };
     if (body.ping) patch.where = body.where || "";
     else {
       const n = (body.messages || [body]).length;
@@ -60,16 +88,20 @@ async function health() {
     const j = await r.json();
     await setSt({
       serverOk: true, serverErr: "", checkedAt: Date.now(), port,
+      ver: chrome.runtime.getManifest().version,
       srvLast: j.status?.browser?.last || 0,
       srvCount: j.status?.browser?.count || 0,
       srvOnline: j.status?.browser?.state === "online",
       srcOn: j.config?.sources?.browser !== false,
       mode: j.config?.discord?.mode || "",
+      srvVer: j.env?.ver || "",
+      bridges: (j.status?.browser?.bridges || []).length,
       rules: (j.rules || []).filter(x => x.enabled).length,
     });
   } catch (e) {
     const msg = String((e && e.name) === "AbortError" ? "超时没响应" : (e && e.message) || e);
-    await setSt({ serverOk: false, serverErr: msg, checkedAt: Date.now(), port });
+    await setSt({ serverOk: false, serverErr: msg, checkedAt: Date.now(), port,
+                  ver: chrome.runtime.getManifest().version });
   }
   return badge();
 }
@@ -85,7 +117,8 @@ async function badge() {
   } else if (st.sendErr) {
     [text, color, tip] = ["!", "#c0392b", "投递失败：" + st.sendErr];
   } else {
-    [text, color, tip] = ["ON", "#3f7d58", `正常旁听中${st.where ? "：#" + st.where : ""}，已上报 ${st.sent || 0} 条`];
+    [text, color, tip] = ["ON", "#3f7d58",
+      `正常旁听中${st.account ? "（" + st.account + "）" : ""}${st.where ? "：#" + st.where : ""}，已上报 ${st.sent || 0} 条`];
   }
   await chrome.action.setBadgeText({ text });
   await chrome.action.setBadgeBackgroundColor({ color });
@@ -111,6 +144,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg.type === "dcwatch-test") {               // 弹窗里的「发测试消息」
     post({ messages: [{
       msg_id: "t" + Date.now(), guild_id: "", channel_id: "0", channel_name: "dcwatch-自检",
+      account: msg.account || "",
       author: "dcwatch 自检", author_id: "", is_bot: false,
       content: "这是扩展发的测试消息。看到它就说明「网页 → 扩展 → dcwatch → 规则 → 通知」整条路是通的。",
     }] }).then(reply).catch(e => reply({ ok: false, error: String(e) }));
