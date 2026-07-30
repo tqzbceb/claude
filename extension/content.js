@@ -68,14 +68,26 @@ function parseLi(li) {
   };
 }
 
+/* 交给后台脚本去发：内容脚本自己发会被 Chrome 按「discord.com 访问本地网络」拦。
+   后台脚本不在时（比如你在控制台手动调试）退回直接 fetch。 */
+function send(payload) {
+  try {
+    if (globalThis.chrome && chrome.runtime && chrome.runtime.id) {
+      chrome.runtime.sendMessage({ type: "dcwatch", payload }, () => void chrome.runtime.lastError);
+      return;
+    }
+  } catch (e) { /* 扩展被重载时 sendMessage 会抛，忽略 */ }
+  fetch(ENDPOINT, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch(() => { /* dcwatch 没开着就丢掉，不打扰页面 */ });
+}
+
 function flush() {
   flushTimer = null;
   const messages = queue.splice(0, 50);
   if (!messages.length) return;
-  fetch(ENDPOINT, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages }),
-  }).catch(() => { /* dcwatch 没开着就丢掉，不打扰页面 */ });
+  send({ messages });
 }
 
 function enqueue(msg) {
@@ -112,10 +124,7 @@ document.querySelectorAll('li[id^="chat-messages-"]').forEach(li => seen.add(li.
 observer.observe(document.body, { childList: true, subtree: true });
 
 /* 心跳：让 dcwatch 界面能显示“浏览器旁听 在线” */
-const ping = () => fetch(ENDPOINT, {
-  method: "POST", headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ ping: true }),
-}).catch(() => {});
+const ping = () => send({ ping: true });
 ping();
 setInterval(ping, 45000);
 

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>dcwatch · Discord 监听工作台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23c96442'/><circle cx='21' cy='32' r='6' fill='%23fff'/><path d='M29.4 22.4a15.4 15.4 0 0 1 0 19.2' stroke='%23fff' stroke-width='5.2' fill='none' stroke-linecap='round'/><path d='M38.4 16.8a25.6 25.6 0 0 1 0 30.4' stroke='%23fff' stroke-width='5.2' fill='none' stroke-linecap='round'/></svg>">
 <style>
 /* ============ tokens ============ */
 :root{
@@ -46,7 +47,7 @@ button{cursor:pointer;background:none;border:none}
   font-size:19px;letter-spacing:-.2px}
 .brand .glyph{width:22px;height:22px;border-radius:6px;background:var(--accent);flex:0 0 22px;
   display:grid;place-items:center;color:#fff;font:600 12px/1 var(--sans)}
-.brand small{font:400 11px var(--sans);color:var(--text3);margin-left:auto}
+.brand .glyph svg{width:15px;height:15px;display:block}
 .nav{display:flex;flex-direction:column;gap:1px}
 .nav b{font:500 11px var(--sans);color:var(--text3);letter-spacing:.06em;text-transform:uppercase;
   padding:14px 10px 5px}
@@ -60,6 +61,7 @@ button{cursor:pointer;background:none;border:none}
 .nav a.on .cnt{background:var(--accent)}
 .nav a .cnt.mute{background:var(--line2);color:var(--text2)}
 .sb-foot{margin-top:auto;padding:10px 6px 2px;border-top:1px solid var(--line);display:grid;gap:8px}
+.sechd{font:500 11px var(--sans);color:var(--text3);letter-spacing:.06em;text-transform:uppercase;margin:2px 0 -2px 4px}
 .srcrow{display:flex;align-items:center;gap:8px;padding:4px 4px}
 .srcrow .nm{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text2)}
 .srcrow .nm i{width:7px;height:7px;border-radius:50%;background:var(--line2);display:inline-block}
@@ -267,13 +269,70 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .spin{width:13px;height:13px;border:2px solid var(--line2);border-top-color:var(--accent);border-radius:50%;
   animation:sp .7s linear infinite;display:inline-block}
 @keyframes sp{to{transform:rotate(360deg)}}
-@media(max-width:1080px){.mlist{width:330px;flex-basis:330px}.sb{width:60px;flex-basis:60px}
-  .sb .brand small,.sb .nav a span.lb,.sb .nav b,.sb .srcrow .nm span{display:none}}
+@media(max-width:1080px){.mlist{width:330px;flex-basis:330px}}
+
+/* ---- 侧边栏折叠：手动，点按钮才收，宽度变化不自作主张 ---- */
+.sbtog{position:absolute;top:11px;right:10px;width:26px;height:26px;border-radius:8px;color:var(--text2);
+  font-size:12px;display:grid;place-items:center;background:var(--bg-elev);
+  border:1px solid var(--line2);box-shadow:0 1px 2px rgba(0,0,0,.05);
+  transition:background .12s,color .12s,border-color .12s}
+.sbtog:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.demotag{font:500 11px var(--sans);color:var(--accent);border:1px solid var(--accent);
+  border-radius:999px;padding:2px 9px;letter-spacing:.02em}
+.demotag:empty{display:none}
+.sb{position:relative;transition:width .16s,flex-basis .16s}
+html[data-sb="mini"] .sb{width:56px;flex-basis:56px;padding:14px 6px 10px}
+html[data-sb="mini"] .sb .lb,html[data-sb="mini"] .brand .txt,
+html[data-sb="mini"] .nav b,html[data-sb="mini"] .srcrow .nm span,html[data-sb="mini"] .sw,
+html[data-sb="mini"] .sechd{display:none}
+html[data-sb="mini"] .brand{justify-content:center;padding:30px 0 12px}
+html[data-sb="mini"] .sbtog{right:50%;transform:translateX(50%)}
+html[data-sb="mini"] .nav{gap:3px}
+html[data-sb="mini"] .nav a{justify-content:center;padding:8px 0}
+html[data-sb="mini"] .nav a .ic{width:auto;font-size:15px}
+html[data-sb="mini"] .nav a .cnt{position:absolute;top:1px;right:3px;margin:0;font-size:9.5px;
+  padding:0 4px;min-width:0;line-height:14px}
+html[data-sb="mini"] .sb-foot{padding:10px 0 2px;justify-items:center}
+html[data-sb="mini"] .srcrow{justify-content:center;padding:3px 0}
+html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
+
+/* ---- 密码框右侧小眼睛 ---- */
+.ipw{position:relative;display:block}
+.ipw input{padding-right:34px!important;width:100%}
+.eye{position:absolute;right:1px;top:1px;bottom:1px;width:30px;display:grid;place-items:center;
+  color:var(--text3);font-size:13px;border-radius:0 8px 8px 0}
+.eye:hover{color:var(--text)}
+
+/* ---- 帮助抽屉 ---- */
+.help h3{font:500 14px var(--sans);margin:20px 0 7px;color:var(--text);display:flex;gap:7px;align-items:center}
+.help h3:first-child{margin-top:0}
+.help p,.help li{font-size:13px;color:var(--text2);line-height:1.68}
+.help ul{margin:4px 0 4px 17px}
+.help code{font:12px var(--mono);background:var(--bg-sunk);padding:1px 5px;border-radius:4px;color:var(--text)}
+.help .warn{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:9px 12px;font-size:12.5px}
+.help details{border-top:1px solid var(--line);padding:10px 0}
+.help summary{font:500 13px var(--sans);cursor:pointer;color:var(--text)}
+.snd{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#modal{position:fixed;inset:0;z-index:90;background:rgba(31,30,28,.4);display:none;
+  place-items:center;padding:20px}
+#modal.on{display:grid}
+.mcard{background:var(--bg);border-radius:14px;box-shadow:var(--shadow-lg);width:440px;max-width:94vw;
+  border:1px solid var(--line);overflow:hidden}
+.mcard h2{font:400 16px var(--serif);padding:15px 20px;border-bottom:1px solid var(--line)}
+.mcard .mb{padding:18px 20px}
+.mcard .mf{padding:12px 20px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center;
+  background:var(--bg-sunk)}
+.snd select{flex:1;min-width:150px}
 </style>
 </head>
 <body>
 <aside class="sb">
-  <div class="brand"><span class="glyph">dw</span> dcwatch <small id="modeTag"></small></div>
+  <button class="sbtog" id="btnSb" title="折叠侧边栏">⟨</button>
+  <div class="brand"><span class="glyph" title="dcwatch"><svg viewBox="0 0 40 40" aria-hidden="true"
+    ><circle cx="12" cy="20" r="4.4" fill="#fff"/><path d="M20 12.4a10.6 10.6 0 0 1 0 15.2"
+      stroke="#fff" stroke-width="3.6" fill="none" stroke-linecap="round"/><path
+      d="M27 7.2a18 18 0 0 1 0 25.6" stroke="#fff" stroke-width="3.6" fill="none"
+      stroke-linecap="round"/></svg></span><span class="txt">dcwatch</span></div>
   <nav class="nav">
     <b>收信</b>
     <a href="#" class="on" data-v="inbox"><span class="ic">◍</span><span class="lb">收信箱</span><span class="cnt" id="cInbox">0</span></a>
@@ -286,6 +345,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
     <a href="#" data-v="logs"><span class="ic">≡</span><span class="lb">运行日志</span></a>
   </nav>
   <div class="sb-foot">
+    <div class="sechd">收信</div>
     <div class="srcrow" id="srcBrowser">
       <span class="nm"><i></i><span>浏览器旁听</span></span>
       <button class="sw" data-src="browser" title="开/关 浏览器旁听收信"></button>
@@ -294,10 +354,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
       <span class="nm"><i></i><span>Discord Token</span></span>
       <button class="sw" data-src="discord" title="开/关 Token 直连收信"></button>
     </div>
-    <div class="srcrow">
-      <span class="nm" style="opacity:.5"><i></i><span>Telegram</span></span>
-      <span class="tag" style="margin-left:auto;font-size:10.5px">待接</span>
-    </div>
+    <div id="sinkRows" style="display:grid;gap:8px"></div>
     <button class="pausebtn" id="btnPause"><span>⏸</span><span class="lb">全部暂停</span></button>
   </div>
 </aside>
@@ -307,6 +364,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
     <h1 id="vTitle">收信箱</h1>
     <span class="sub" id="vSub">实时监听命中的消息</span>
     <span class="sp"></span>
+    <span class="demotag" id="modeTag"></span>
+    <button class="btn sm" id="btnHelp" title="帮助 / 这些字段都是什么">帮助</button>
     <button class="icbtn" id="btnTheme" title="浅色/深色">◐</button>
     <button class="icbtn" id="btnReload" title="刷新">⟳</button>
   </div>
@@ -331,6 +390,20 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
   <!-- ============ rules ============ -->
   <section class="view" id="v-rules">
     <div class="pad">
+      <div class="card" style="margin-bottom:16px">
+        <h3>用一句话说你想怎么监听 <em>模型只是帮你填表 · 生成后你确认才生效，不会直接跑</em></h3>
+        <div class="bd">
+          <textarea id="nlText" style="min-height:52px" placeholder="例：老板 Marcus 在任何地方 @我，就打分提醒我（Enter 生成 · Shift+Enter 换行）"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button class="btn pri" id="btnCompose">✧ 生成规则</button>
+            <select id="nlModel" style="width:auto;min-width:200px"></select>
+            <span class="sp" style="flex:1"></span>
+            <span style="font-size:12px;color:var(--text3)">Enter 生成</span>
+          </div>
+          <div class="row" id="nlEg" style="margin-top:10px;flex-wrap:wrap;gap:6px"></div>
+          <div id="nlOut"></div>
+        </div>
+      </div>
       <div class="row" style="margin-bottom:16px">
         <button class="btn pri" id="btnNewRule">＋ 新建规则</button>
         <button class="btn" id="btnPreset">从模板创建</button>
@@ -347,13 +420,22 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
       <div class="wb">
         <div class="row" style="flex-wrap:wrap">
           <select id="wbModel" style="width:auto;min-width:230px"></select>
-          <button class="btn sm" data-quick="summary">总结选中消息</button>
-          <button class="btn sm" data-quick="todo">抽出待办</button>
-          <button class="btn sm" data-quick="draft">起草回复</button>
-          <button class="btn sm" data-quick="translate">翻译成中文</button>
+          <span id="wbQuick" class="row" style="gap:8px;flex-wrap:wrap"></span>
+          <button class="btn ghost sm" id="btnQEdit"
+            title="这些按钮全是你自己配的：改名、改内容、加、删">⚙ 改按钮</button>
           <span class="sp" style="flex:1"></span>
           <span class="tag" id="wbCtx">未带上下文</span>
           <button class="btn ghost sm" id="wbClear">清空</button>
+        </div>
+        <div class="card" id="qEdit" style="display:none;margin:0 0 12px">
+          <h3>快捷按钮 <span class="hint">点一下就把这段话填进输入框并发出去。名字和内容都归你</span></h3>
+          <div class="bd" id="qList"></div>
+          <div class="bd" style="border-top:1px solid var(--line);display:flex;gap:8px;align-items:center">
+            <button class="btn" id="btnQAdd">＋ 添加按钮</button>
+            <span class="sp" style="flex:1"></span>
+            <button class="btn ghost" id="btnQReset">恢复默认</button>
+            <button class="btn pri" id="btnQSave">保存</button>
+          </div>
         </div>
         <div class="chatlog" id="wbLog"></div>
         <div class="composer">
@@ -369,25 +451,48 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
   </section>
 
   <!-- ============ models ============ -->
-  <section class="view" id="v-models">
-    <div class="pad narrow">
-      <div class="card" style="margin-bottom:16px">
-        <h3>接入的模型服务 <span class="hint">任何 OpenAI 兼容端点：OpenAI / DeepSeek / OpenRouter / Ollama / vLLM / 自建</span></h3>
-        <div class="bd" id="provList"></div>
-        <div class="bd" style="border-top:1px solid var(--line)">
-          <button class="btn" id="btnAddProv">＋ 添加服务商</button>
-        </div>
-      </div>
-      <div class="card">
-        <h3>默认模型 <span class="hint">规则里不单独指定时用这个</span></h3>
+   <section class="view" id="v-models">
+     <div class="pad narrow">
+       <div class="card" style="margin-bottom:16px">
+         <h3>默认模型 <span class="hint">规则里不单独指定时，用的就是这个</span></h3>
+         <div class="bd">
+           <div class="grid2">
+             <label class="f"><span>服务商</span><select id="defProv"></select></label>
+             <label class="f"><span>模型 <em id="defCount"></em></span><select id="defModel"></select></label>
+           </div>
+           <div class="row"><button class="btn pri" id="btnSaveDef">保存默认模型</button>
+             <button class="btn" id="btnPing">测试一次调用</button>
+             <span class="hint" id="defNow"></span></div>
+           <div id="pingOut" style="margin-top:10px;font-size:13px;color:var(--text2)"></div>
+         </div>
+       </div>
+       <div class="card">
+         <h3>接入的模型服务 <span class="hint">任何 OpenAI 兼容端点</span>
+           <button class="btn" data-help="models" style="margin-left:auto">怎么填</button></h3>
+         <div class="bd" id="provList"></div>
+         <div class="bd" style="border-top:1px solid var(--line);display:flex;gap:8px;align-items:center">
+           <button class="btn pri" id="btnSaveProv">保存服务商</button>
+           <button class="btn" id="btnAddProv">＋ 添加服务商</button>
+           <span class="hint">改完 Key / 地址要按保存，再拉取模型</span>
+         </div>
+       </div>
+
+
+      <div class="card" style="margin-top:16px">
+        <h3>内置提示词 <span class="hint">规则里单独写了 prompt 就用规则的，这里是兜底</span></h3>
         <div class="bd">
-          <div class="grid2">
-            <label class="f"><span>服务商</span><select id="defProv"></select></label>
-            <label class="f"><span>模型</span><select id="defModel"></select></label>
-          </div>
-          <div class="row"><button class="btn" id="btnSaveDef">保存默认模型</button>
-            <button class="btn" id="btnPing">测试一次调用</button></div>
-          <div id="pingOut" style="margin-top:10px;font-size:13px;color:var(--text2)"></div>
+          <details id="pmBox">
+            <summary style="cursor:pointer;font-size:13px;color:var(--text2)">展开查看 / 修改（4 个动作 + 问答）</summary>
+            <div style="margin-top:14px">
+              <label class="f"><span>打分分流 <em>要求只输出 JSON，字段别乱改</em></span><textarea id="pmTag" rows="4"></textarea></label>
+              <label class="f"><span>自动回复</span><textarea id="pmReply" rows="3"></textarea></label>
+              <label class="f"><span>摘要</span><textarea id="pmSummary" rows="3"></textarea></label>
+              <label class="f"><span>信息抽取</span><textarea id="pmExtract" rows="3"></textarea></label>
+              <label class="f"><span>AI 工作台问答</span><textarea id="pmAsk" rows="3"></textarea></label>
+              <div class="row"><button class="btn pri" id="btnSavePm">保存提示词</button>
+                <button class="btn" id="btnResetPm">恢复默认</button></div>
+            </div>
+          </details>
         </div>
       </div>
     </div>
@@ -398,19 +503,27 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
   <section class="view" id="v-notify">
     <div class="pad narrow">
       <div class="card" style="margin-bottom:16px">
-        <h3>本机提醒 <em id="nfOs"></em></h3>
+        <h3>本机提醒 <span class="hint" id="nfOs"></span>
+          <button class="btn" data-help="notify" style="margin-left:auto">说明</button></h3>
         <div class="bd">
           <div class="grid3">
             <label class="f"><span>Windows 系统通知</span><select id="nfToast"><option value="1">开</option><option value="0">关</option></select></label>
             <label class="f"><span>提示音</span><select id="nfSound"><option value="1">开</option><option value="0">关</option></select></label>
-            <label class="f"><span>网页通知 <em>需开着界面</em></span><select id="nfBrowser"><option value="1">开</option><option value="0">关</option></select></label>
+            <label class="f"><span>网页通知</span><select id="nfBrowser"><option value="1">开</option><option value="0">关</option></select></label>
           </div>
-          <label class="f"><span>自定义提示音 <em>— .wav 绝对路径，留空用系统默认「叮」</em></span>
-            <input id="nfSoundFile" type="text" placeholder="C:\Windows\Media\Alarm02.wav"></label>
+          <label class="f"><span>用哪个提示音</span>
+            <div class="snd">
+              <select id="nfSoundName"></select>
+              <button class="btn" id="btnSndPrev" title="在浏览器里听一下">▶ 试听</button>
+              <button class="btn" id="btnSndPlay" title="用 dcwatch 所在电脑的喇叭放一遍，和真收到消息一样">本机播放</button>
+              <button class="btn" id="btnSndAdd">＋ 导入音频</button>
+              <button class="btn" id="btnSndDel" title="删掉这个导入的提示音">删除</button>
+              <input type="file" id="sndFile" accept="audio/*" style="display:none">
+            </div></label>
           <div class="grid3">
-            <label class="f"><span>免打扰从 <em>只静音本机，不影响转发</em></span><input id="nfQFrom" type="text" placeholder="23:00"></label>
+            <label class="f"><span>免打扰从</span><input id="nfQFrom" type="text" placeholder="23:00"></label>
             <label class="f"><span>到</span><input id="nfQTo" type="text" placeholder="08:00"></label>
-            <label class="f"><span>分数低于多少不往外发 <em>没打分的一律发</em></span><input id="nfMin" type="number" min="0" max="100"></label>
+            <label class="f"><span>分数低于多少不往外发</span><input id="nfMin" type="number" min="0" max="100"></label>
           </div>
           <div class="row"><button class="btn pri" id="btnSaveNf">保存</button>
             <button class="btn" data-test="toast">试一下系统通知</button>
@@ -418,43 +531,31 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:16px">
-        <h3>转发到别的地方 <em>命中的消息会推一份过去</em></h3>
-        <div class="bd">
-          <label class="f"><span>Discord 频道 Webhook <em>— 你自己的服务器：频道设置 → 整合 → 创建 Webhook → 复制链接。零风险，手机 Discord 直接收推送</em></span>
-            <input id="nfDc" type="text" placeholder="https://discord.com/api/webhooks/…"></label>
-          <div class="row" style="margin:-6px 0 14px"><button class="btn" data-test="discord_webhook">测试</button></div>
-
-          <div class="grid2">
-            <label class="f"><span>Telegram Bot Token <em>— @BotFather 要</em></span><input id="nfTgT" type="password" placeholder="123456:AA…"></label>
-            <label class="f"><span>Chat ID <em>— 给 bot 发条消息后看 @userinfobot</em></span><input id="nfTgC" type="text" placeholder="123456789"></label>
-          </div>
-          <div class="row" style="margin:-6px 0 14px"><button class="btn" data-test="telegram">测试</button></div>
-
-          <label class="f"><span>微信：Server酱 SendKey <em>— sct.ftqq.com 扫码绑定，推到微信「服务号」。官方通道，不会封号</em></span>
-            <input id="nfSc" type="password" placeholder="SCT… / sctp…"></label>
-          <div class="row" style="margin:-6px 0 14px"><button class="btn" data-test="serverchan">测试</button></div>
-
-          <label class="f"><span>企业微信群机器人 Webhook <em>— 群设置 → 群机器人 → 添加。也能拉微信用户进群看</em></span>
-            <input id="nfWc" type="text" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…"></label>
-          <div class="row" style="margin:-6px 0 14px"><button class="btn" data-test="wecom">测试</button></div>
-
-          <label class="f"><span>自定义 Webhook <em>— 原始 JSON POST（飞书/钉钉/n8n/自建）</em></span>
-            <input id="nfHook" type="text" placeholder="https://…"></label>
-          <div class="row"><button class="btn pri" id="btnSaveOut">保存全部出口</button>
-            <button class="btn" data-test="webhook">测试</button>
-            <button class="btn" data-test="all">全部测一遍</button></div>
-          <div id="nfResult" style="margin-top:12px"></div>
-        </div>
-      </div>
-
       <div class="card">
-        <h3>不建议的路子</h3>
-        <div class="bd" style="font-size:13px;color:var(--text2);line-height:1.9">
-          <b>个人微信直推</b>（itchat / wechaty 那类网页版协议）：要拿你微信的登录态去模拟客户端，
-          属于非官方协议，<b>封号风险高</b>，而且微信近年封得很狠。所以这里没做，
-          想收到微信上就走上面的 <b>Server酱</b> 或 <b>企业微信机器人</b>，都是官方通道。<br>
-          <b>短信 / 邮件</b>：需要的话说一声，加一个出口大概十几行代码。
+        <h3>转发出口 <span class="hint">命中的消息用 HTTP 推一份出去，能收 webhook 的都行</span>
+          <button class="btn" data-help="sinks" style="margin-left:auto">怎么配</button></h3>
+        <div class="bd">
+          <div id="hookList"></div>
+          <div class="row" style="border-top:1px solid var(--line);padding-top:14px">
+            <button class="btn" id="btnAddHook">＋ 添加出口</button>
+            <select id="hookPreset" title="按格式套个模板，填上地址就能用">
+              <option value="json">通用 JSON</option>
+              <option value="discord">Discord 频道</option>
+              <option value="wecom">企业微信机器人</option>
+              <option value="serverchan">Server酱 → 微信</option>
+              <option value="feishu">飞书机器人</option>
+              <option value="dingtalk">钉钉机器人</option>
+              <option value="telegram">Telegram</option>
+              <option value="text">纯文本</option>
+              <option value="form">表单（key=value）</option>
+              <option value="get">GET 查询串</option>
+              <option value="raw">原始 JSON（整条消息）</option>
+            </select>
+            <span class="sp" style="flex:1"></span>
+            <button class="btn pri" id="btnSaveOut">保存出口</button>
+            <button class="btn" data-test="all">全部测一遍</button>
+          </div>
+          <div id="nfResult" style="margin-top:12px"></div>
         </div>
       </div>
     </div>
@@ -474,33 +575,40 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
           <div class="banner" id="modeHelp" style="background:var(--bg-sunk);color:var(--text2);margin:0 0 14px"></div>
 
           <div id="tokenBox" style="display:none">
-            <label class="f"><span>Token <em>— 存在本机 dcwatch.db，界面只回显掩码</em></span>
-              <input id="dcToken" type="password" placeholder="粘贴 Token"></label>
+            <label class="f"><span>Token <em>存在本机，界面只回显掩码</em></span>
+              <span class="ipw"><input id="dcToken" type="password" placeholder="粘贴 Token"><button class="eye" type="button">👁</button></span></label>
             <div class="chk"><input type="checkbox" id="dcEnabled"><label for="dcEnabled">启用 Token 直连监听</label></div>
             <div class="row" style="margin-top:12px"><button class="btn pri" id="btnSaveDc">保存并连接</button>
               <span id="dcState" style="font-size:12.5px;color:var(--text3)"></span></div>
           </div>
 
           <div id="brBox">
-            <div style="font-size:13px;color:var(--text2);line-height:1.85">
-              1 · 装扩展：Chrome → <code>chrome://extensions</code> → 打开「开发者模式」→「加载已解压的扩展程序」→ 选 <b>dcwatch/extension</b> 文件夹<br>
-              2 · 在 Chrome 里打开 <code>discord.com</code>，用你自己的账号登录，把要盯的频道／子区留在标签页里<br>
-              3 · 该频道来新消息时，扩展只读页面 DOM 转发到本机 <code>127.0.0.1:8777</code>，规则、AI、通知照常跑
-            </div>
-            <div class="row" style="margin-top:12px"><span id="brState" style="font-size:12.5px;color:var(--text3)"></span></div>
+            <div class="row" style="margin-bottom:10px">
+              <a class="btn pri" href="/extension.zip" download>⇣ 下载浏览器扩展</a>
+              <button class="btn" data-help="browser">扩展怎么装</button></div>
+            <div class="row"><span id="brState" style="font-size:12.5px;color:var(--text3)"></span></div>
           </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <h3>开机自启动 <span class="hint">登录 Windows 就在后台开始收信</span></h3>
+        <div class="bd">
+          <div class="srcrow" style="padding:0 0 10px">
+            <span class="nm" style="font-size:14px"><span id="asLbl">跟随开机启动</span></span>
+            <button class="sw" id="asSw" style="margin-left:12px"></button>
+          </div>
+          <div class="hint" id="asHint"></div>
         </div>
       </div>
       <div class="card">
         <h3>收信与用量</h3>
         <div class="bd">
-          <div class="grid3">
+          <div class="grid2">
             <label class="f"><span>消息保留天数</span><input id="setRet" type="number" min="1"></label>
             <label class="f"><span>每日 AI 调用上限</span><input id="setCap" type="number" min="1"></label>
-            <label class="f"><span>桌面通知</span><select id="setNotify"><option value="1">开</option><option value="0">关</option></select></label>
           </div>
-          <label class="f"><span>转发 Webhook <em>— 命中后 POST 出去（飞书/钉钉/n8n/自建）</em></span>
-            <input id="setHook" type="text" placeholder="https://…"></label>
+          <div class="hint" style="margin:-4px 0 12px">通知、提示音、转发都在「通知与转发」页设置。</div>
           <div class="row"><button class="btn pri" id="btnSaveSet">保存</button>
             <button class="btn" id="btnClearMsg">清空历史消息</button></div>
         </div>
@@ -519,6 +627,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 
 <div class="scrim" id="scrim"></div>
 <div class="drawer" id="drawer"></div>
+<div class="drawer" id="helpD"></div>
+<div id="modal"></div>
 <div id="toast"></div>
 <script>
 /* ================= state & utils ================= */
@@ -572,12 +682,32 @@ const DEMO_MSGS=[
 function seedDemo(){S.cfg={discord:{token:'',enabled:false,mode:'browser'},providers:[{name:'openai',base_url:'https://api.openai.com/v1',api_key:''},
    {name:'ollama',base_url:'http://127.0.0.1:11434/v1',api_key:''}],default_model:{provider:'openai',model:'gpt-4o-mini'},
    sources:{discord:true,browser:true},retention_days:14,ai_daily_call_cap:500,
-   sinks:{browser:true,toast:true,sound:true,sound_file:'',quiet_from:'23:00',quiet_to:'08:00',min_score:0,
-     discord_webhook:'https://discord.com/api/webhooks/…示例',telegram:{token:'',chat_id:''},
-     serverchan:'',wecom:'',webhook:''}};
-  S.env={win:true,frozen:false};
+   sinks:{browser:true,toast:true,sound:true,sound_name:'builtin:ding',quiet_from:'23:00',quiet_to:'08:00',min_score:0,
+     hooks:[{id:'demo1',name:'Discord 频道',url:'https://discord.com/api/webhooks/…示例',method:'POST',content:'json',
+       headers:'',body:'{"username": "dcwatch",\n "embeds": [{"title": "{{title}}", "description": "{{body}}", "color": 13198914}]}',
+       enabled:true,verified:true},
+      {id:'demo2',name:'我的接口',url:'https://example.com/hook',method:'POST',content:'json',headers:'',
+       body:'{"content": "{{text}}"}',enabled:false,verified:true}]},
+   hook_vars:['text','title','body','author','channel','server','content','url','score','tags','todo','json'],
+   prompts:{},prompt_defaults:{ai_tag:'你是消息分流助手。判断这条 Discord 消息对我是否重要。只输出 JSON: {"score":0-100,"tags":["..."],"reason":"一句话","todo":"若需我行动则写，否则空"}',
+     ai_reply:'你是该频道的助手，用简洁中文回答，不超过 120 字。',
+     ai_summary:'把这段 Discord 对话压成 3-5 条要点中文摘要，标出待办和结论。',
+     ai_extract:'从消息中抽取结构化信息，只输出 JSON。字段自定，找不到就留空。',
+     ask:'你是我的 Discord 消息助理，用中文简洁回答。'},
+   quick_actions:[
+     {id:'q1',name:'总结选中消息',text:'把这些消息压成 3-5 条要点，标出需要我行动的部分。'},
+     {id:'q2',name:'抽出待办',text:'从这些消息里抽出待办清单，每条含负责人和截止时间，没写就标未定。'},
+     {id:'q3',name:'起草回复',text:'针对最后一条消息起草一条中文回复，语气专业简洁，≤120 字。'},
+     {id:'q4',name:'翻译成中文',text:'把这些消息翻译成中文，保留原作者名。'}],
+   quick_defaults:[
+     {id:'q1',name:'总结选中消息',text:'把这些消息压成 3-5 条要点，标出需要我行动的部分。'},
+     {id:'q2',name:'抽出待办',text:'从这些消息里抽出待办清单，每条含负责人和截止时间，没写就标未定。'},
+     {id:'q3',name:'起草回复',text:'针对最后一条消息起草一条中文回复，语气专业简洁，≤120 字。'},
+     {id:'q4',name:'翻译成中文',text:'把这些消息翻译成中文，保留原作者名。'}],
+   models_cache:{}};
+  S.env={win:true,frozen:false,port:8777,autostart:{supported:true,on:false,cmd:''}};
   S.status={discord:{state:'stopped'},browser:{state:'online',count:37}};S.rules=DEMO_RULES;S.msgs=DEMO_MSGS;
-  S.stats={msgs:1284,matched:96,ai_today:23,ai_cap:500};}
+  S.stats={msgs:1284,matched:96,ai_today:23,ai_cap:500,rss_mb:46.2,db_mb:3.4,uptime:9300};}
 
 /* ================= shell ================= */
 const TITLES={inbox:['收信箱','实时监听命中的消息'],rules:['监听规则','决定“听谁、听哪、听到什么就做什么”'],
@@ -587,7 +717,9 @@ const TITLES={inbox:['收信箱','实时监听命中的消息'],rules:['监听�
 function go(v){S.view=v;$$('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+v));
   $$('.nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
   $('#vTitle').textContent=TITLES[v][0];$('#vSub').textContent=TITLES[v][1];
-  if(v==='logs')loadLogs();if(v==='ai')renderWb();if(v==='notify')renderNotify();}
+  if(v==='logs')loadLogs();if(v==='ai'){renderQuick();renderWb();}
+  if(v==='notify'){renderNotify();renderSinkRows();bindEyes();}
+  if(v==='models'){renderPrompts();bindEyes();}}
 $$('.nav a').forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.v)});
 $('#btnTheme').onclick=()=>{const d=document.documentElement.dataset.theme==='dark'?'light':'dark';
   document.documentElement.dataset.theme=d;localStorage.dcwTheme=d;};
@@ -738,6 +870,55 @@ function renderRules(){
   $$('#rlist [data-tog]').forEach(b=>b.onclick=async()=>{const r=S.rules.find(x=>x.id==b.dataset.tog);
     r.enabled=r.enabled?0:1;await api('/api/rules','POST',r);renderRules()});
 }
+/* ---------- 一句话生成规则 ---------- */
+const NL_EG=['老板 Marcus 在任何地方 @我，就打分提醒我',
+  '#bug-report 和它的子区里有人贴 500 报错，抽成表格',
+  'announcements 里的空投、白名单消息转到飞书',
+  '登录 500 那个子区太吵，攒 25 条给我一次摘要',
+  '有人问怎么装环境，就自动替我回一下'];
+function renderNl(){
+  $('#nlEg').innerHTML=NL_EG.map((t,i)=>`<button class="btn sm" data-eg="${i}">${esc(t)}</button>`).join('');
+  $$('#nlEg [data-eg]').forEach(b=>b.onclick=()=>{$('#nlText').value=NL_EG[+b.dataset.eg];compose()});
+  modelOptions('#nlModel');
+}
+async function compose(){
+  const text=$('#nlText').value.trim();if(!text)return;
+  const [prov,model]=($('#nlModel').value||'|').split('|');
+  const b=$('#btnCompose'),old=b.textContent;
+  b.textContent='生成中…';b.disabled=true;
+  $('#nlOut').innerHTML='';
+  const r=await api('/api/rules/compose','POST',{text,provider:prov,model});
+  b.textContent=old;b.disabled=false;
+  if(!r){                                    // 演示模式：本地按关键词粗略拼一条，让流程能走完
+    const demo=nlDemo(text);
+    showNl(demo.rule,demo.notes.concat('由 演示（未连后端）生成，真实运行时这一步交给你选的模型'));
+    return;}
+  if(!r.ok){$('#nlOut').innerHTML=`<div class="banner">${esc(r.error)}</div>`;return;}
+  showNl(r.rule,r.notes||[]);
+}
+function showNl(rule,notes){
+  $('#nlOut').innerHTML=`<div class="banner" style="background:var(--bg-sunk);color:var(--text2);margin:12px 0 0">
+    <b style="color:var(--text)">模型这样理解你的话</b><br>${ruleDesc({...BLANK,...rule})}
+    ${notes.length?`<div style="margin-top:10px"><b style="color:var(--accent)">注意</b><ul style="margin:4px 0 0 18px;padding:0">
+      ${notes.map(n=>`<li style="margin:2px 0">${esc(n)}</li>`).join('')}</ul></div>`:''}
+    <div style="margin-top:10px;font-size:12px;color:var(--text3)">下面每个字段都能改。改完点「试算」验证，再点「保存规则」才生效。</div></div>`;
+  editRule(rule);
+}
+function nlDemo(t){                          /* 只在没后端时用，纯字符串猜 */
+  const r={name:t.slice(0,14),keywords_any:[],notes:[]};
+  const kw=(t.match(/[「"']([^」"']+)[」"']/g)||[]).map(s=>s.replace(/[「」"']/g,''));
+  if(kw.length)r.keywords_any=kw;
+  if(/@\s*我|艾特我|提到我/.test(t))r.mention_only=true;
+  if(/摘要|总结/.test(t)){r.action='ai_summary';r.summary_every=25;}
+  else if(/回复|答复|回一下/.test(t)){r.action='ai_reply';}
+  else if(/表格|抽|提取|结构/.test(t)){r.action='ai_extract';}
+  else if(/转发|转到|推到/.test(t)){r.action='webhook';}
+  else {r.action='ai_tag';r.notify_min_score=60;}
+  return {rule:r,notes:['要限定在哪个频道？把频道 ID 填进「听哪里」，否则全服务器都会触发']};
+}
+$('#btnCompose').onclick=compose;
+enterToSend($('#nlText'),compose);
+
 $('#btnNewRule').onclick=()=>editRule(null);
 $('#btnPreset').onclick=()=>{
   openDrawer(`<div class="dh"><h2>选一个模板</h2><span class="sp" style="flex:1"></span>
@@ -749,7 +930,7 @@ $('#btnPreset').onclick=()=>{
 /* ---------- drawer ---------- */
 function openDrawer(html){$('#drawer').innerHTML=html;$('#drawer').classList.add('on');$('#scrim').classList.add('on');}
 function closeDrawer(){$('#drawer').classList.remove('on');$('#scrim').classList.remove('on');}
-$('#scrim').onclick=closeDrawer;
+$('#scrim').onclick=()=>{closeDrawer();closeHelp();};
 const chipsHtml=(k,ph,extra='')=>`<div class="chips" data-chips="${k}">
   <span class="cs"></span><input type="text" placeholder="${ph}">${extra}</div>`;
 function paintChips(k){const box=$(`[data-chips="${k}"] .cs`);const arr=S.editing[k]||[];
@@ -894,51 +1075,104 @@ async function openPicker(){
   $('#pkBack').onclick=()=>editRule(S.editing);}
 /* ================= models ================= */
 function renderProviders(){
-  $('#provList').innerHTML=(S.cfg.providers||[]).map((p,i)=>`
+  const d=S.cfg.default_model||{};
+  $('#provList').innerHTML=(S.cfg.providers||[]).map((p,i)=>{
+    const ms=S.models[p.name]||[],masked=(p.api_key||'').startsWith('***');
+    return `
    <div style="padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--line)">
      <div class="grid3">
        <label class="f"><span>名称</span><input type="text" data-p="${i}" data-k="name" value="${esc(p.name)}"></label>
        <label class="f"><span>Base URL <em>要带 /v1</em></span><input type="text" data-p="${i}" data-k="base_url" value="${esc(p.base_url)}" placeholder="https://api.deepseek.com/v1"></label>
-       <label class="f"><span>API Key</span><input type="password" data-p="${i}" data-k="api_key" value="${esc(p.api_key)}" placeholder="sk-…"></label>
+       <label class="f"><span>API Key ${masked?`<em>已存 ${esc(p.api_key)}，要换就重新粘贴</em>`:''}</span>
+         <span class="ipw"><input type="password" data-p="${i}" data-k="api_key" value="${masked?'':esc(p.api_key)}"
+           placeholder="${masked?'留空＝不改':'sk-…'}"><button class="eye" type="button">👁</button></span></label>
      </div>
      <div class="row">
        <button class="btn" data-pull="${i}">⇣ 拉取模型列表</button>
-       <span class="tag" id="pm${i}">${(S.models[p.name]||[]).length?`已拉到 ${(S.models[p.name]||[]).length} 个模型`:'未拉取'}</span>
+       <span class="tag" id="pm${i}">${ms.length?`已拉到 ${ms.length} 个模型`:'未拉取'}</span>
        <span class="sp" style="flex:1"></span>
        <button class="btn ghost sm" data-rmp="${i}">移除</button>
      </div>
-     ${(S.models[p.name]||[]).length?`<div style="margin-top:8px;display:flex;gap:5px;flex-wrap:wrap">
-       ${S.models[p.name].slice(0,14).map(m=>`<span class="tag mono">${esc(m)}</span>`).join('')}
-       ${S.models[p.name].length>14?`<span class="tag">+${S.models[p.name].length-14}</span>`:''}</div>`:''}
-   </div>`).join('');
-  $$('#provList input').forEach(e=>e.onchange=()=>{S.cfg.providers[+e.dataset.p][e.dataset.k]=e.value;});
+      ${ms.length?`<div class="hint" style="margin-top:6px">${d.provider===p.name
+        ? `当前默认：<b class="mono">${esc(d.model)}</b>` : '要用这家的模型，在上面「默认模型」里选'}</div>`:''}
+    </div>`;}).join('');
+  $$('#provList input').forEach(e=>e.oninput=()=>{
+    const p=S.cfg.providers[+e.dataset.p];
+    if(e.dataset.k==='api_key'&&!e.value&&(p.api_key||'').startsWith('***'))return;  // 留空＝不改
+    if(e.dataset.k==='name'){const old=p.name;                                       // 改名字要带上已拉到的模型
+      if(S.models[old]&&!S.models[e.value])S.models[e.value]=S.models[old];}
+    p[e.dataset.k]=e.value;});
   $$('#provList [data-pull]').forEach(b=>b.onclick=async()=>{
     const p=S.cfg.providers[+b.dataset.pull];const tag=$('#pm'+b.dataset.pull);
     tag.innerHTML='<span class="spin"></span> 拉取中';
-    await api('/api/config','POST',{providers:S.cfg.providers});
+    await api('/api/config','POST',{providers:cleanProviders()});
     const r=await api('/api/models','POST',{provider:p.name,base_url:p.base_url,api_key:p.api_key});
     if(!r){S.models[p.name]=['gpt-4o-mini','gpt-4o','o4-mini','claude-sonnet-4','deepseek-chat','qwen2.5:7b'];
       tag.textContent='演示：6 个模型';}
-    else if(r.ok){S.models[p.name]=r.models;tag.textContent=`已拉到 ${r.models.length} 个`;toast('拉取成功');}
-    else{tag.innerHTML=`<span style="color:var(--err)">失败：${esc(r.error).slice(0,60)}</span>`;}
+    else if(r.ok){S.models[p.name]=r.models;tag.textContent=`已拉到 ${r.models.length} 个`;
+      $('#defProv').value=p.name;toast(`拉到 ${r.models.length} 个模型，去上面「默认模型」里挑`);}
+    else{tag.innerHTML=`<span style="color:var(--err)">失败：${esc(r.error).slice(0,80)}</span>`;
+      renderDefaults();return;}
     renderProviders();renderDefaults();});
-  $$('#provList [data-rmp]').forEach(b=>b.onclick=()=>{S.cfg.providers.splice(+b.dataset.rmp,1);renderProviders()});
+  $$('#provList [data-rmp]').forEach(b=>b.onclick=()=>{S.cfg.providers.splice(+b.dataset.rmp,1);
+    renderProviders();renderDefaults();});
+  bindEyes();
+}
+/* 掩码的 key 不回传，避免把真值冲成 "***1234" */
+function cleanProviders(){
+  return (S.cfg.providers||[]).map(p=>({...p,api_key:(p.api_key||'').startsWith('***')?'':p.api_key}));
 }
 function renderDefaults(){
   const d=S.cfg.default_model||{};
-  $('#defProv').innerHTML=(S.cfg.providers||[]).map(p=>`<option ${d.provider===p.name?'selected':''}>${esc(p.name)}</option>`).join('');
-  const ms=S.models[$('#defProv').value]||[d.model].filter(Boolean);
-  $('#defModel').innerHTML=ms.length?ms.map(m=>`<option ${d.model===m?'selected':''}>${esc(m)}</option>`).join('')
-    :'<option value="">先拉取模型列表</option>';
-  $('#wbModel').innerHTML=(S.cfg.providers||[]).flatMap(p=>(S.models[p.name]||[]).map(m=>
-    `<option value="${esc(p.name)}|${esc(m)}" ${d.provider===p.name&&d.model===m?'selected':''}>${esc(p.name)} · ${esc(m)}</option>`)).join('')
+  const curP=$('#defProv').value,curM=$('#defModel').value;      // 别把用户正在选的冲掉
+  const provs=(S.cfg.providers||[]).map(p=>p.name);
+  const wantP=provs.includes(curP)?curP:(provs.includes(d.provider)?d.provider:provs[0]||'');
+  $('#defProv').innerHTML=provs.map(n=>`<option ${n===wantP?'selected':''}>${esc(n)}</option>`).join('');
+  const ms=S.models[wantP]||[d.model].filter(Boolean);
+  const wantM=ms.includes(curM)?curM:(ms.includes(d.model)?d.model:ms[0]||'');
+  $('#defModel').innerHTML=ms.length?ms.map(m=>`<option ${m===wantM?'selected':''}>${esc(m)}</option>`).join('')
+    :`<option value="">先在下面「拉取模型列表」</option>`;
+  $('#defModel').size=1;
+  $('#defCount').textContent=ms.length>1?`${ms.length} 个可选`:'';
+  $('#defNow').textContent=d.model?`现在用的是 ${d.provider} · ${d.model}`:'还没设默认模型';
+  modelOptions('#wbModel');modelOptions('#nlModel');
+}
+/* 别的地方选模型：按服务商分组的下拉，几十个也不刷屏 */
+function modelOptions(sel){
+  const el=$(sel);if(!el)return;const d=S.cfg?.default_model||{};
+  el.innerHTML=(S.cfg?.providers||[]).map(p=>{const list=S.models[p.name]||[];
+    return list.length?`<optgroup label="${esc(p.name)}">`+list.map(m=>
+      `<option value="${esc(p.name)}|${esc(m)}" ${d.provider===p.name&&d.model===m?'selected':''}>${esc(m)}</option>`
+    ).join('')+'</optgroup>':'';}).join('')
     ||`<option value="">${esc(d.provider||'')} · ${esc(d.model||'未设置模型')}</option>`;
 }
 $('#defProv').onchange=renderDefaults;
-$('#btnAddProv').onclick=()=>{S.cfg.providers.push({name:'new',base_url:'',api_key:''});renderProviders()};
+$('#btnAddProv').onclick=()=>{S.cfg.providers.push({name:'new',base_url:'',api_key:''});
+  renderProviders();renderDefaults();};
+$('#btnSaveProv').onclick=async()=>{
+  const r=await api('/api/config','POST',{providers:cleanProviders()});
+  if(r){S.cfg=r.config;S.models={...S.models,...(r.config.models_cache||{})};renderProviders();renderDefaults();}
+  toast(r?'服务商已保存':'演示模式：未保存');};
 $('#btnSaveDef').onclick=async()=>{S.cfg.default_model={provider:$('#defProv').value,model:$('#defModel').value};
-  await api('/api/config','POST',{providers:S.cfg.providers,default_model:S.cfg.default_model});
-  toast('已保存默认模型');renderDefaults();renderRules();};
+  if(!S.cfg.default_model.model)return toast('还没有可选的模型，先拉取模型列表');
+  await api('/api/config','POST',{providers:cleanProviders(),default_model:S.cfg.default_model});
+  toast('已保存默认模型');renderProviders();renderDefaults();renderRules();renderNl();};
+
+/* ---------- 内置提示词 ---------- */
+const PM=[['pmTag','ai_tag'],['pmReply','ai_reply'],['pmSummary','ai_summary'],['pmExtract','ai_extract'],['pmAsk','ask']];
+function renderPrompts(){
+  const p=S.cfg?.prompts||{},d=S.cfg?.prompt_defaults||{};
+  PM.forEach(([el,k])=>{const t=$('#'+el);if(t&&document.activeElement!==t)t.value=p[k]||d[k]||'';});
+}
+$('#btnSavePm').onclick=async()=>{
+  const out={};PM.forEach(([el,k])=>out[k]=$('#'+el).value.trim());
+  const r=await api('/api/config','POST',{prompts:out});
+  if(r)S.cfg=r.config;toast(r?'提示词已保存':'演示模式：未保存');};
+$('#btnResetPm').onclick=async()=>{
+  if(!confirm('把 5 条提示词都恢复成出厂默认？'))return;
+  const r=await api('/api/config','POST',{prompts:{}});
+  if(r){S.cfg=r.config;}renderPrompts();toast('已恢复默认');};
+
 $('#btnPing').onclick=async()=>{$('#pingOut').innerHTML='<span class="spin"></span> 调用中…';
   const r=await api('/api/ask','POST',{prompt:'用一句中文回复：连接正常'});
   $('#pingOut').innerHTML=!r?'演示模式：没有后端，无法真调用'
@@ -958,18 +1192,43 @@ function renderSettings(){
   $('#modeHelp').textContent=MODE_HELP[mode];
   $('#tokenBox').style.display=mode==='browser'?'none':'';
   $('#brBox').style.display=mode==='browser'?'':'none';
-  $('#dcToken').value=S.cfg.discord.token||'';
-  $('#dcToken').placeholder=mode==='user'?'个人账号 token（风险自负）':'MTIz…（Bot Token）';
+  const tk=$('#dcToken');
+  if(document.activeElement!==tk){                       // 正在打字就别覆盖
+    tk.value=(S.cfg.discord.token||'').startsWith('***')?'':S.cfg.discord.token||'';
+    tk.placeholder=(S.cfg.discord.token||'').startsWith('***')
+      ?`已存 ${S.cfg.discord.token}，留空＝不改`
+      :(mode==='user'?'个人账号 token（风险自负）':'MTIz…（Bot Token）');}
   $('#dcEnabled').checked=!!S.cfg.discord.enabled;
   $('#setRet').value=S.cfg.retention_days;$('#setCap').value=S.cfg.ai_daily_call_cap;
-  $('#setHook').value=S.cfg.sinks?.webhook||'';
-  $('#setNotify').value=S.cfg.sinks?.browser?'1':'0';
   const st=S.status.discord||{};
   $('#dcState').textContent=st.state==='online'?`已连接：${st.user||''}（${st.guilds||0} 个服务器）`:`状态：${st.state||'未连接'}`;
   const b=S.status.browser||{};
   $('#brState').textContent=b.state==='online'
     ?`扩展在线 · 已转发 ${b.count||0} 条`:'扩展未连上（装好扩展并打开一个 discord.com 频道标签页）';
+  renderAutostart();
 }
+/* ---------- 开机自启动 ---------- */
+function renderAutostart(){
+  const a=(S.env||{}).autostart||{supported:false,on:false};
+  $('#asSw').classList.toggle('on',!!a.on);
+  $('#asSw').disabled=!a.supported;
+  $('#asSw').style.opacity=a.supported?'':'.4';
+  $('#asLbl').textContent=a.on?'已开启':'未开启';
+  $('#asHint').innerHTML=!a.supported
+    ?'这台机器不是 Windows，自启动没法设（Windows 上写的是当前用户的启动项，不需要管理员）。'
+    :(a.on?`开机后会安静启动：不弹黑窗、不自动开界面。要看界面就自己打开 <code>http://127.0.0.1:${(S.env||{}).port||8777}</code>。
+        <br>启动项：<code class="mono">${esc(a.cmd||'')}</code>`
+        :`打开后会在「当前用户」的启动项里加一条 <code>dcwatch --minimized</code>，登录就后台收信。
+        ${(S.env||{}).frozen?'':'（现在跑的是 python 源码版；打包成 exe 后这条会自动指向 exe）'}`);
+}
+$('#asSw').onclick=async()=>{
+  const a=(S.env||{}).autostart||{};
+  if(a.supported===false)return toast('只有 Windows 能设开机自启动');
+  const r=await api('/api/autostart','POST',{on:!a.on});
+  if(!r)return toast('演示模式：没有后端');
+  if(!r.ok)return toast('设置失败：'+(r.error||''));
+  S.env.autostart={supported:r.supported,on:r.on,cmd:r.cmd};
+  renderAutostart();toast(r.on?'已加入开机启动':'已取消开机启动');};
 $('#dcMode').onchange=async()=>{
   const mode=$('#dcMode').value;S.cfg.discord.mode=mode;
   if(mode==='user'&&!confirm('个人账号 Token 模式违反 Discord ToS，有封号风险。确定继续？')){
@@ -978,13 +1237,16 @@ $('#dcMode').onchange=async()=>{
   await api('/api/config','POST',{discord:{...S.cfg.discord,mode}});
   renderSources();};
 $('#btnSaveDc').onclick=async()=>{
-  const r=await api('/api/config','POST',{discord:{token:$('#dcToken').value.trim(),
-    enabled:$('#dcEnabled').checked,mode:$('#dcMode').value}});
+  const d={enabled:$('#dcEnabled').checked,mode:$('#dcMode').value};
+  const tk=$('#dcToken').value.trim();
+  if(tk)d.token=tk;                                       // 留空＝沿用已存的
+  const r=await api('/api/config','POST',{discord:d});
+  if(r)S.cfg=r.config;renderSettings();
   toast(r?'已保存，正在连接…':'演示模式：未保存');};
 $('#btnSaveSet').onclick=async()=>{
-  if($('#setNotify').value==='1'&&Notification?.permission==='default')Notification.requestPermission();
-  await api('/api/config','POST',{retention_days:+$('#setRet').value,ai_daily_call_cap:+$('#setCap').value,
-    sinks:{browser:$('#setNotify').value==='1',webhook:$('#setHook').value.trim()}});toast('已保存');};
+  const r=await api('/api/config','POST',{retention_days:+$('#setRet').value,
+    ai_daily_call_cap:+$('#setCap').value});
+  if(r)S.cfg=r.config;toast(r?'已保存':'演示模式：未保存');};
 $('#btnClearMsg').onclick=async()=>{if(!confirm('清空全部历史消息？'))return;
   await api('/api/messages/clear','POST',{});S.msgs=[];renderList();$('#detail').innerHTML='';toast('已清空');};
 
@@ -994,44 +1256,358 @@ function renderNotify(){
   $('#nfToast').value=s.toast!==false?'1':'0';
   $('#nfSound').value=s.sound!==false?'1':'0';
   $('#nfBrowser').value=s.browser!==false?'1':'0';
-  $('#nfSoundFile').value=s.sound_file||'';
+  $('#nfSoundName').value=s.sound_name??'builtin:ding';
   $('#nfQFrom').value=s.quiet_from||'';$('#nfQTo').value=s.quiet_to||'';
   $('#nfMin').value=s.min_score??0;
-  $('#nfDc').value=s.discord_webhook||'';
-  $('#nfTgT').value=(s.telegram||{}).token||'';$('#nfTgC').value=(s.telegram||{}).chat_id||'';
-  $('#nfSc').value=s.serverchan||'';$('#nfWc').value=s.wecom||'';$('#nfHook').value=s.webhook||'';
   $('#nfOs').textContent=e.win===false?'— 当前不是 Windows：系统通知/提示音只会写进运行日志'
     :(e.win?'— Windows 原生通知，不用装任何东西':'');
+  renderHooks();
 }
+/* ---------- 转发出口：一条 = 一个 HTTP 请求 ---------- */
+const HOOK_PRESETS={
+  json:{name:'新出口',method:'POST',content:'json',body:'{"content": "{{text}}"}'},
+  discord:{name:'Discord 频道',method:'POST',content:'json',
+    body:'{"username": "dcwatch",\n "embeds": [{"title": "{{title}}", "description": "{{body}}", "color": 13198914}]}'},
+  /* 下面这几个把地址模板也填好了，你只要把中文那段换成自己的 key */
+  wecom:{name:'企业微信',method:'POST',content:'json',
+    url:'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=把群机器人的key填在这里',
+    body:'{"msgtype": "text", "text": {"content": "{{text}}"}}'},
+  serverchan:{name:'微信(Server酱)',method:'POST',content:'form',
+    url:'https://sctapi.ftqq.com/把你的SendKey填在这里.send',
+    body:'title={{title}}&desp={{body}}'},
+  feishu:{name:'飞书',method:'POST',content:'json',
+    url:'https://open.feishu.cn/open-apis/bot/v2/hook/把机器人的token填在这里',
+    body:'{"msg_type": "text", "content": {"text": "{{text}}"}}'},
+  dingtalk:{name:'钉钉',method:'POST',content:'json',
+    url:'https://oapi.dingtalk.com/robot/send?access_token=把access_token填在这里',
+    body:'{"msgtype": "text", "text": {"content": "{{text}}"}}'},
+  telegram:{name:'Telegram',method:'POST',content:'json',
+    url:'https://api.telegram.org/bot把BotToken填在这里/sendMessage',
+    body:'{"chat_id": "把chat_id填在这里", "text": "{{text}}"}'},
+  text:{name:'纯文本',method:'POST',content:'text',body:'{{text}}'},
+  form:{name:'表单',method:'POST',content:'form',body:'title={{title}}&text={{text}}'},
+  get:{name:'GET 出口',method:'GET',content:'json',body:'',url:'https://example.com/notify?text={{text}}'},
+  raw:{name:'整条消息',method:'POST',content:'json',body:'{{json}}'},
+};
+function hooks(){return (S.cfg.sinks=S.cfg.sinks||{}).hooks||(S.cfg.sinks.hooks=[]);}
+function renderHooks(){
+  const vars=(S.cfg.hook_vars||['text','title','body','author','channel','url','score','tags','json'])
+    .map(v=>'{{'+v+'}}').join(' ');
+  $('#hookList').innerHTML=hooks().map((h,i)=>{
+    const get=h.method==='GET';
+    return `<div style="padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--line)">
+      <div class="grid3">
+        <label class="f"><span>名称</span><input type="text" data-h="${i}" data-k="name" value="${esc(h.name||'')}"></label>
+        <label class="f"><span>方式</span><select data-h="${i}" data-k="method">
+          <option ${get?'':'selected'}>POST</option><option ${get?'selected':''}>GET</option></select></label>
+        <label class="f"><span>请求体格式</span><select data-h="${i}" data-k="content" ${get?'disabled':''}>
+          <option value="json" ${h.content==='json'?'selected':''}>JSON</option>
+          <option value="form" ${h.content==='form'?'selected':''}>表单</option>
+          <option value="text" ${h.content==='text'?'selected':''}>纯文本</option></select></label>
+      </div>
+      <label class="f"><span>地址 <em>URL 里也能写占位符</em></span>
+        <span class="ipw"><input type="password" data-h="${i}" data-k="url" value="${esc(h.url||'')}"
+          placeholder="https://…"><button class="eye" type="button">👁</button></span></label>
+      ${get?'':`<label class="f"><span>请求体 <em>可用占位符：${esc(vars)}</em></span>
+        <textarea data-h="${i}" data-k="body" rows="3" class="mono">${esc(h.body||'')}</textarea></label>`}
+      <details><summary style="cursor:pointer;font-size:12.5px;color:var(--text3);margin-bottom:8px">额外请求头（一行一个 <code>名字: 值</code>，比如 Authorization）</summary>
+        <textarea data-h="${i}" data-k="headers" rows="2" class="mono" placeholder="Authorization: Bearer xxx">${esc(h.headers||'')}</textarea></details>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" data-hooktest="${i}">测试</button>
+        <span class="tag${h.verified?' g':''}" title="${h.verified?'左下角状态灯里会列出它':'没测通也照样会转发，只是左下角状态灯里不列它'}"
+          >${h.verified?'✓ 已测通':'还没测通 · 建议先点「测试」'}</span>
+        <span class="sp" style="flex:1"></span>
+        <button class="btn ghost sm" data-hookrm="${i}">移除</button>
+      </div></div>`;}).join('')
+    ||`<div class="hint" style="padding:4px 0 14px">还没有出口。加一条：填个能收 POST 的地址，点「测试」通了就会出现在左下角，
+       可以随时开关。Discord 频道、群机器人、飞书/钉钉、n8n、自建接口都是同一套填法。</div>`;
+  $$('#hookList [data-h]').forEach(e=>{
+    const set=()=>{const h=hooks()[+e.dataset.h];if(!h)return;h[e.dataset.k]=e.value;
+      if(e.dataset.k==='method'){renderHooks();}};
+    if(e.tagName==='SELECT')e.onchange=set;else e.oninput=set;});
+  $$('#hookList [data-hookrm]').forEach(b=>b.onclick=()=>{
+    hooks().splice(+b.dataset.hookrm,1);renderHooks();});
+  $$('#hookList [data-hooktest]').forEach(b=>b.onclick=()=>testSink(b,hooks()[+b.dataset.hooktest]));
+  bindEyes();
+}
+$('#btnAddHook').onclick=()=>{
+  const p=HOOK_PRESETS[$('#hookPreset').value]||HOOK_PRESETS.json;
+  hooks().push({id:'n'+Math.random().toString(16).slice(2,10),url:'',headers:'',enabled:true,verified:false,...p});
+  renderHooks();$('#hookList').lastElementChild?.scrollIntoView({block:'center'});};
 function collectSinks(){
   return {toast:$('#nfToast').value==='1',sound:$('#nfSound').value==='1',
-    browser:$('#nfBrowser').value==='1',sound_file:$('#nfSoundFile').value.trim(),
+    browser:$('#nfBrowser').value==='1',sound_name:$('#nfSoundName').value,
     quiet_from:$('#nfQFrom').value.trim(),quiet_to:$('#nfQTo').value.trim(),
-    min_score:+$('#nfMin').value||0,discord_webhook:$('#nfDc').value.trim(),
-    telegram:{token:$('#nfTgT').value.trim(),chat_id:$('#nfTgC').value.trim()},
-    serverchan:$('#nfSc').value.trim(),wecom:$('#nfWc').value.trim(),webhook:$('#nfHook').value.trim()};
+    min_score:+$('#nfMin').value||0,
+    hooks:hooks().map(h=>({...h,name:(h.name||'').trim(),url:(h.url||'').trim()}))};
 }
 async function saveSinks(msg){
   if($('#nfBrowser').value==='1'&&window.Notification&&Notification.permission==='default')Notification.requestPermission();
   const r=await api('/api/config','POST',{sinks:collectSinks()});
-  if(r){S.cfg=r.config;renderNotify();}
+  if(r){S.cfg=r.config;renderNotify();renderSinkRows();}
   toast(r?(msg||'已保存'):'演示模式：未保存');
 }
 $('#btnSaveNf').onclick=()=>saveSinks();
 $('#btnSaveOut').onclick=()=>saveSinks('出口已保存');
-$$('[data-test]').forEach(b=>b.onclick=async()=>{
-  const which=b.dataset.test,old=b.textContent;
-  b.textContent='测试中…';b.disabled=true;
-  await api('/api/config','POST',{sinks:collectSinks()});    // 先落盘，再用存下来的去测
+/* 测试：先落盘再用存下来的配置去测，通了才记 ✓ */
+async function testSink(btn,hook){
+  const which=hook?'hook:'+hook.id:(btn.dataset.test||'all'),old=btn.textContent;
+  if(hook&&!(hook.url||'').trim())return toast('先填地址');
+  btn.textContent='测试中…';btn.disabled=true;
+  const c=await api('/api/config','POST',{sinks:collectSinks()});
+  if(c)S.cfg=c.config;
   const r=await api('/api/sinks/test','POST',{which});
-  b.textContent=old;b.disabled=false;
+  btn.textContent=old;btn.disabled=false;
   const box=$('#nfResult');
-  if(!r){box.innerHTML='<div class="banner">演示模式：连上本机 dcwatch 之后，这里会逐条显示每个出口通没通</div>';return;}
+  if(!r){box.innerHTML='<div class="banner">演示模式：连上本机 dcwatch 之后，这里逐条显示每个出口通没通</div>';return;}
+  if(r.sinks)S.cfg.sinks=r.sinks;
+  renderHooks();renderSinkRows();
   if(!r.ok){box.innerHTML=`<div class="banner">${esc(r.error||'没填/没开')}</div>`;return;}
   box.innerHTML=Object.entries(r.results).map(([k,v])=>
     `<div class="logline"><span class="l ${v==='ok'?'l-info':'l-error'}">${v==='ok'?'通':'失败'}</span>
      <span><b>${esc(k)}</b> ${v==='ok'?'':esc(v)}</span></div>`).join('');
-});
+}
+$$('[data-test]').forEach(b=>b.onclick=()=>testSink(b));
+
+/* ================= 提示音 ================= */
+function bindEyes(){                            // 密码框右边的小眼睛
+  $$('.eye').forEach(b=>{if(b._b)return;b._b=1;b.onclick=()=>{
+    const i=b.parentElement.querySelector('input');
+    i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'👁':'🙈';};});
+}
+const DEMO_SOUNDS=[{id:'',label:'系统默认提示音',kind:'system'},
+  {id:'builtin:ding',label:'叮（清脆单音）',kind:'builtin'},{id:'builtin:double',label:'双响（两声短促）',kind:'builtin'},
+  {id:'builtin:soft',label:'柔和（和弦木琴）',kind:'builtin'},{id:'builtin:rise',label:'上扬（有事找你）',kind:'builtin'},
+  {id:'builtin:low',label:'低沉（夜里不刺耳）',kind:'builtin'},{id:'builtin:knock',label:'敲击（像敲门）',kind:'builtin'}];
+async function loadSounds(keep){
+  const r=await api('/api/sounds');
+  S.sounds=r?r.sounds:DEMO_SOUNDS;S.sndMax=r?r.max_seconds:6;
+  const cur=keep||(r?r.current:null)||S.cfg?.sinks?.sound_name||'builtin:ding';
+  const g=(k,t)=>{const list=S.sounds.filter(x=>x.kind===k);
+    return list.length?`<optgroup label="${t}">${list.map(x=>
+      `<option value="${esc(x.id)}" ${x.id===cur?'selected':''}>${esc(x.label)}</option>`).join('')}</optgroup>`:''; };
+  $('#nfSoundName').innerHTML=g('system','系统')+g('builtin','内置')+g('custom','我导入的');
+  $('#btnSndDel').style.display=(cur||'').startsWith('custom:')?'':'none';
+}
+$('#nfSoundName').onchange=()=>{
+  $('#btnSndDel').style.display=$('#nfSoundName').value.startsWith('custom:')?'':'none';
+  previewSound();saveSinks('提示音已保存');
+};
+let sndAudio=null;
+function previewSound(){                        // 在浏览器里听
+  const id=$('#nfSoundName').value;
+  if(!id)return toast('系统默认提示音由 Windows 发声，按「本机播放」听');
+  try{sndAudio&&sndAudio.pause();sndAudio=new Audio('/api/sounds/file?id='+encodeURIComponent(id));
+    sndAudio.play().catch(()=>toast(S.demo?'演示模式：没有后端，听不到':'播放失败'));}catch(e){}
+}
+$('#btnSndPrev').onclick=previewSound;
+$('#btnSndPlay').onclick=async()=>{
+  const r=await api('/api/sounds/play','POST',{id:$('#nfSoundName').value});
+  toast(!r?'演示模式：需要本机跑着 dcwatch 才会响'
+    :r.quiet?'已发声，但现在处于免打扰时段（真收信时不会响）':'已在本机放一遍，没听到就检查系统音量');
+};
+$('#btnSndDel').onclick=async()=>{
+  const id=$('#nfSoundName').value;if(!confirm('删除这个导入的提示音？'))return;
+  const r=await api('/api/sounds/delete','POST',{id});
+  if(!r)return toast('演示模式：未删除');
+  await loadSounds(r.current);saveSinks('已删除');
+};
+$('#btnSndAdd').onclick=()=>$('#sndFile').click();
+$('#sndFile').onchange=async e=>{
+  const f=e.target.files[0];e.target.value='';if(!f)return;
+  if(f.size>20*1024*1024)return toast('这个文件太大了（>20MB），挑个短的');
+  toast('正在处理音频…');
+  let buf;
+  try{const ac=new (window.AudioContext||window.webkitAudioContext)();
+    buf=await ac.decodeAudioData(await f.arrayBuffer());}
+  catch(err){return toast('这个格式浏览器解不开，换 mp3 / wav / m4a 试试');}
+  const MAX=S.sndMax||6,name=f.name.replace(/\.[^.]+$/,'').slice(0,30);
+  if(buf.duration<=MAX+0.05)return uploadSound(buf,0,buf.duration,name);
+  pickClip(buf,MAX,name);
+};
+/* 太长了：让你自己挑截哪一段 */
+function pickClip(buf,MAX,name){
+  const max=(buf.duration-MAX).toFixed(1);
+  openModal(`截取片段`,`
+    <p style="font-size:13px;color:var(--text2);line-height:1.7">这段音频 <b>${buf.duration.toFixed(1)} 秒</b>，
+      提示音最长 <b>${MAX} 秒</b>。拖下面的滑块选从哪里开始，听着满意再确定。</p>
+    <div style="margin:16px 0 6px;font:13px var(--mono)">开始：<b id="clipT">0.0</b> s
+      → <b id="clipT2">${MAX.toFixed?MAX.toFixed(1):MAX}</b> s</div>
+    <input id="clipR" type="range" min="0" max="${max}" step="0.1" value="0" style="width:100%">
+    <div class="row" style="margin-top:14px"><button class="btn" id="clipPlay">▶ 试听这段</button></div>`,
+    async()=>{const st=+$('#clipR').value;await uploadSound(buf,st,MAX,name);});
+  const upd=()=>{const v=+$('#clipR').value;$('#clipT').textContent=v.toFixed(1);
+    $('#clipT2').textContent=(v+MAX).toFixed(1);};
+  $('#clipR').oninput=upd;
+  $('#clipPlay').onclick=()=>{
+    const ac=new (window.AudioContext||window.webkitAudioContext)();
+    const src=ac.createBufferSource();src.buffer=buf;src.connect(ac.destination);
+    src.start(0,+$('#clipR').value,MAX);};
+}
+async function uploadSound(buf,start,dur,name){
+  const wav=toWav(buf,start,dur);
+  const r=await fetch('/api/sounds/import?name='+encodeURIComponent(name),
+    {method:'POST',headers:{'Content-Type':'audio/wav'},body:wav}).then(x=>x.json()).catch(()=>null);
+  if(!r)return toast('演示模式：导入需要本机跑着 dcwatch');
+  if(!r.ok)return toast('导入失败：'+r.error);
+  await loadSounds(r.id);
+  saveSinks(`已导入并选用「${name}」`);
+}
+/* AudioBuffer → 单声道 16bit wav（后端只认标准 wav，winsound 才放得出来） */
+function toWav(buf,start,dur){
+  const sr=Math.min(buf.sampleRate,48000),n=Math.floor(dur*sr);
+  const ch=buf.numberOfChannels,src=[];for(let c=0;c<ch;c++)src.push(buf.getChannelData(c));
+  const ratio=buf.sampleRate/sr,off=Math.floor(start*buf.sampleRate);
+  const out=new DataView(new ArrayBuffer(44+n*2));
+  const str=(p,v)=>{for(let i=0;i<v.length;i++)out.setUint8(p+i,v.charCodeAt(i));};
+  str(0,'RIFF');out.setUint32(4,36+n*2,true);str(8,'WAVEfmt ');out.setUint32(16,16,true);
+  out.setUint16(20,1,true);out.setUint16(22,1,true);out.setUint32(24,sr,true);
+  out.setUint32(28,sr*2,true);out.setUint16(32,2,true);out.setUint16(34,16,true);
+  str(36,'data');out.setUint32(40,n*2,true);
+  const fade=Math.min(n,Math.floor(sr*0.01));           // 头尾各 10ms 淡入淡出，去掉"啪"声
+  for(let i=0;i<n;i++){
+    const j=off+Math.floor(i*ratio);let v=0;
+    for(let c=0;c<ch;c++)v+=(src[c][j]||0);
+    v/=ch;
+    if(i<fade)v*=i/fade;else if(i>n-fade)v*=(n-i)/fade;
+    out.setInt16(44+i*2,Math.max(-1,Math.min(1,v))*32767,true);
+  }
+  return out.buffer;
+}
+/* ================= 通用小弹窗 ================= */
+function openModal(title,html,onOk){
+  const m=$('#modal');
+  m.innerHTML=`<div class="mcard"><h2>${esc(title)}</h2><div class="mb">${html}</div>
+    <div class="mf"><span style="flex:1"></span><button class="btn" id="mCancel">取消</button>
+    <button class="btn pri" id="mOk">确定</button></div></div>`;
+  m.classList.add('on');
+  const close=()=>{m.classList.remove('on');m.innerHTML='';};
+  $('#mCancel').onclick=close;
+  $('#mOk').onclick=async()=>{close();await onOk();};
+  m.onclick=e=>{if(e.target===m)close();};
+}
+/* ================= 左下角：开着的出口 ================= */
+function renderSinkRows(){
+  const ok=(S.cfg?.sinks?.hooks||[]).filter(h=>h.verified&&h.url);
+  $('#sinkRows').innerHTML=ok.length
+    ? `<div class="sechd">转发</div>`+ok.map(h=>`
+        <div class="srcrow${h.enabled!==false?' live':''}" title="转发出口「${esc(h.name)}」已测通，开关控制要不要往这里转">
+          <span class="nm"><i></i><span>${esc(h.name)}</span></span>
+          <button class="sw${h.enabled!==false?' on':''}" data-sink="${esc(h.id)}"></button></div>`).join('')
+    : '';
+  $$('#sinkRows [data-sink]').forEach(b=>b.onclick=async()=>{
+    const h=(S.cfg.sinks.hooks||[]).find(x=>x.id===b.dataset.sink);if(!h)return;
+    h.enabled=h.enabled===false;renderSinkRows();renderHooks();
+    const r=await api('/api/sinks/toggle','POST',{id:h.id,on:h.enabled});
+    toast((r?'':'演示模式：')+`${h.name} 转发已${h.enabled?'开启':'关闭'}`);});
+}
+/* ================= 侧边栏折叠 ================= */
+$('#btnSb').onclick=()=>{
+  const mini=document.documentElement.dataset.sb==='mini';
+  document.documentElement.dataset.sb=mini?'':'mini';
+  sbIcon(mini?'':'mini');
+  localStorage.setItem('dcw_sb',mini?'':'mini');
+};
+function sbIcon(v){const b=$('#btnSb'),m=v==='mini';
+  b.textContent=m?'⟩':'⟨';b.title=m?'展开侧边栏':'折叠侧边栏';}
+(()=>{const v=localStorage.getItem('dcw_sb')||'';
+  document.documentElement.dataset.sb=v;sbIcon(v);})();
+
+
+/* ================= 帮助（右上角 ?） ================= */
+const HELP={
+  browser:['浏览器旁听怎么装',`
+    <p>你的账号不是服主、也拿不到 bot 时用这个。扩展只<b>读</b>已经登录的 Discord 网页，不发消息、不碰 token。</p>
+    <ul><li>点「⇣ 下载浏览器扩展」，把 zip <b>解压</b>出来（记住解压到哪，别放临时目录）</li>
+    <li>Chrome 打开 <code>chrome://extensions</code> → 右上角开「开发者模式」→「加载已解压的扩展程序」→ 选刚解压出的文件夹</li>
+    <li>在 Chrome 里打开 <code>discord.com</code> 登录，把要盯的频道／子区留在标签页里（可以最小化，别关）</li></ul>
+    <p>该频道来新消息时，扩展把它转给本机 <code>127.0.0.1:8777</code>，规则、AI、通知照常跑。左下角「浏览器旁听」亮绿就是通了。</p>
+    <p class="warn">标签页关掉就收不到了。Discord 只在标签页里渲染当前打开的频道，所以一个标签页盯一个频道。</p>`],
+  models:['模型怎么接',`
+    <p>任何 <b>OpenAI 兼容</b> 端点都行，填三样：名称随便起、Base URL、API Key。</p>
+    <ul><li>DeepSeek：<code>https://api.deepseek.com/v1</code>（便宜，够用）</li>
+    <li>OpenAI：<code>https://api.openai.com/v1</code></li>
+    <li>OpenRouter：<code>https://openrouter.ai/api/v1</code></li>
+    <li>本机 Ollama：<code>http://127.0.0.1:11434/v1</code>，Key 随便填一个字符</li></ul>
+    <p><b>顺序</b>：填好 → 按「保存服务商」→ 按「⇣ 拉取模型列表」→ 点出来的模型名，就设成默认模型了。</p>
+    <p>Key 存在本机数据库，界面只回显 <code>***后四位</code>；不想改就把 Key 框留空。</p>
+    <p><b>省钱</b>：规则里把「只对提到我的消息打分」勾上，再把每日调用上限设小一点。打分用便宜模型，回复用好模型——每条规则可以单独指定。</p>`],
+  notify:['本机提醒',`
+    <p><b>Windows 系统通知</b>：右下角弹窗，走系统原生接口，不用装东西。防刷屏：4 秒内只弹一条。</p>
+    <p><b>提示音</b>：内置 6 个，也能导入自己的音频（mp3/wav/m4a 都行，浏览器会自动转成 wav 并截到 6 秒内）。
+      「试听」是在你现在看的这个浏览器里放；「本机播放」是让 dcwatch 用电脑喇叭放，和真收到消息一模一样。</p>
+    <p><b>免打扰</b>：只静音本机的弹窗和声音，<b>不影响</b>往外转发。跨午夜（23:00 → 08:00）写法直接支持。</p>
+    <p><b>分数门槛</b>：AI 打分低于这个数就不往外转发。没走 AI、没有分数的消息一律发。</p>
+    <p class="warn">按了测试却没反应？先确认这个界面是从本机 dcwatch 打开的（<code>127.0.0.1:8777</code>）。
+      标题旁写着「演示模式」就说明没连上后端，任何测试都只是走个样子。</p>`],
+  sinks:['转发出口怎么配',`
+    <p>一条出口就是<b>一个 HTTP 请求</b>：填地址、选请求体格式，命中的消息把 <code>{{占位符}}</code> 替换成真值发出去。
+      程序不绑定任何第三方服务——能收 webhook 的东西都能接。</p>
+    <h3>三步</h3>
+    <ul><li>选个模板（通用 JSON / Discord 频道 / 纯文本 / 表单 / GET）→「＋ 添加出口」</li>
+    <li>把对方给你的地址粘进「地址」，需要鉴权就在「额外请求头」写 <code>Authorization: Bearer xxx</code></li>
+    <li>点「测试」。<b>测通了才会真的转发</b>，通过之后它才出现在左下角，那里的开关管开停。</li></ul>
+    <h3>能用的占位符</h3>
+    <p><code>{{text}}</code> 整条（标题+正文+评分）　<code>{{title}}</code> 谁在哪说的　<code>{{body}}</code> 正文+评分标签<br>
+      <code>{{content}}</code> 原始消息　<code>{{author}}</code>　<code>{{channel}}</code>　<code>{{server}}</code>　
+      <code>{{url}}</code> 跳回 Discord　<code>{{score}}</code>　<code>{{tags}}</code>　<code>{{todo}}</code><br>
+      <code>{{json}}</code> = 整条结构化数据，接自建服务/n8n 用这个，模板写成 <code>{{json}}</code> 一个占位符即可。</p>
+    <h3>常见对接</h3>
+    <ul><li><b>自己的 Discord 频道</b>：频道设置 → 整合 → 创建 Webhook → 复制链接，用「Discord 频道」模板。手机装 Discord 就能收推送，零成本。</li>
+    <li><b>各家群机器人</b>（企业 IM、协作工具）：在群设置里拿到机器人 webhook 地址，多数收 <code>{"msgtype":"text","text":{"content":"…"}}</code> 这种结构，照它的文档把请求体改成对应形状。</li>
+    <li><b>需要 token 拼在地址里的服务</b>：地址里直接写死 token，请求体按它的字段名填。</li>
+    <li><b>自建 / 自动化平台</b>：用「原始 JSON」模板，收到的就是完整事件。</li></ul>
+    <p class="warn">地址里常常带着密钥，所以默认按密码框遮住，点右边眼睛才显示。它只存在你本机的数据库里。</p>
+    <details><summary>为什么不内置「推到我的个人微信」这类功能</summary>
+      <p style="margin-top:8px">那类做法要拿你账号的登录态去模拟客户端，属于非官方协议，<b>封号风险很高</b>，所以不做。
+      走官方通道的服务（群机器人、推送服务）都能用上面的通用出口对接，程序里不写死、也不替谁做广告。</p></details>
+    <details><summary>短信 / 邮件</summary><p style="margin-top:8px">这两个要账号密钥和签名，比 webhook 麻烦，需要就说一声。</p></details>`],
+  rules:['规则怎么写',`
+    <p>一条规则 = <b>盯哪里</b> + <b>什么算命中</b> + <b>命中了干什么</b>。</p>
+    <ul><li><b>频道 ID / 子区 ID</b>：Discord 里开「开发者模式」后右键频道 → 复制 ID；或者用旁边的选择器点。
+      填父频道 ID 时，它下面的子区也算命中。</li>
+    <li><b>关键词</b>：任意一个命中就算。留空＝这个频道所有消息都要。</li>
+    <li><b>只要提到我</b>：@我、回复我、@everyone 才算。</li>
+    <li><b>动作</b>：打分分流 / 自动回复 / 摘要 / 抽取。不填 prompt 就用「模型接入」页里的内置提示词。</li></ul>
+    <p>写完按「测一下」，拿最近的真实消息看会不会命中，别等到漏消息才发现。</p>`],
+  general:['dcwatch 是干什么的',`
+    <p>盯住 Discord 上你在意的消息，用 AI 过一遍，然后<b>让你在别的地方也能立刻知道</b>：
+      Windows 弹窗、提示音，或者转到任何能收 webhook 的地方（你自己的 Discord 频道、群机器人、自建接口）。</p>
+    <h3>三条进消息的路</h3>
+    <ul><li><b>浏览器旁听</b>（推荐，普通账号）：Chrome 扩展读你已登录的网页版。</li>
+    <li><b>Bot Token</b>：官方方式，前提是你能把 bot 拉进那个服务器。</li>
+    <li><b>个人账号 Token</b>：违反 Discord 服务条款，有封号风险。能用前两种就别用。</li></ul>
+    <h3>东西都存在哪</h3>
+    <p>全在你自己电脑上：源码运行时是程序旁边的 <code>dcwatch.db</code>，
+      打包成 exe 后在 <code>%LOCALAPPDATA%\dcwatch\</code>。除了你填的模型端点和转发地址，不往任何地方发数据。</p>
+    <h3>打包成 exe</h3>
+    <p>装好 Python 后双击 <code>build.bat</code>，出 <code>dist\dcwatch.exe</code>，双击即用，不用装 Python。
+      交叉编译不行，必须在 Windows 上打。</p>
+    <details><summary>不对劲的时候</summary>
+      <p style="margin-top:8px"><b>标题旁写着「演示模式」</b>：界面没连上后端，去 <code>127.0.0.1:8777</code> 打开。<br>
+      <b>左下角灯不亮</b>：旁听＝扩展没装好或没开着 discord 标签页；Token＝去设置页看状态和运行日志。<br>
+      <b>AI 不动</b>：模型接入页按「测试一次调用」，错误会原样显示出来。<br>
+      <b>端口被占</b>：<code>python server.py --port 8899</code>。<br>
+      <b>通知没弹</b>：Windows「专注助手/免打扰」会吞掉通知；也看看是不是自己设了免打扰时段。</p></details>`],
+};
+function openHelp(k){
+  const [t,body]=HELP[k]||HELP.general;
+  const nav=Object.entries(HELP).map(([id,[title]])=>
+    `<button class="chip${id===k?' on':''}" data-hp="${id}">${esc(title)}</button>`).join('');
+  $('#helpD').innerHTML=`<div class="dh"><h2>${esc(t)}</h2><span style="flex:1"></span>
+      <button class="icbtn" id="hpX">✕</button></div>
+    <div class="db help">${body}</div>
+    <div class="df" style="flex-wrap:wrap;gap:5px">${nav}</div>`;
+  $('#helpD').classList.add('on');$('#scrim').classList.add('on');
+  $('#hpX').onclick=closeHelp;
+  $$('#helpD [data-hp]').forEach(b=>b.onclick=()=>openHelp(b.dataset.hp));
+}
+function closeHelp(){$('#helpD').classList.remove('on');$('#scrim').classList.remove('on');}
+const HELP_FOR={models:'models',notify:'notify',rules:'rules',settings:'browser',inbox:'general',ai:'models',logs:'general'};
+$('#btnHelp').onclick=()=>openHelp(HELP_FOR[S.view]||'general');
+$$('[data-help]').forEach(b=>b.onclick=()=>openHelp(b.dataset.help));
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeHelp();closeDrawer();
+  $('#modal').classList.remove('on');}});
 
 /* ================= sources ================= */
 function renderSources(){
@@ -1074,17 +1650,58 @@ async function wbSend(){
 $('#wbSend').onclick=wbSend;
 $('#wbClear').onclick=()=>{S.chat=[];S.ctx.clear();renderWb();renderList()};
 enterToSend($('#wbInput'),wbSend);
-$$('[data-quick]').forEach(b=>b.onclick=()=>{const q=b.dataset.quick;
-  $('#wbInput').value={summary:'把这些消息压成 3-5 条要点，标出需要我行动的部分。',
-    todo:'从这些消息里抽出待办清单，每条含负责人和截止时间，没写就标未定。',
-    draft:'针对最后一条消息起草一条中文回复，语气专业简洁，≤120 字。',
-    translate:'把这些消息翻译成中文，保留原作者名。'}[q];wbSend();});
+/* ---------- 工作台快捷按钮：全部来自配置，不写死 ---------- */
+function quicks(){const c=S.cfg||{};return Array.isArray(c.quick_actions)?c.quick_actions:[];}
+function renderQuick(){
+  const qs=quicks();
+  $('#wbQuick').innerHTML=qs.map((q,i)=>
+    `<button class="btn sm" data-quick="${i}" title="${esc(q.text||'')}">${esc(q.name||'')}</button>`).join('')
+    ||`<span class="hint">还没有快捷按钮，点右边 ⚙ 加几个</span>`;
+  $$('#wbQuick [data-quick]').forEach(b=>b.onclick=()=>{
+    const q=quicks()[+b.dataset.quick];if(!q)return;
+    $('#wbInput').value=q.text;wbSend();});
+}
+function renderQEdit(){
+  $('#qList').innerHTML=quicks().map((q,i)=>`
+    <div style="padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid var(--line)">
+      <div class="row" style="align-items:flex-end">
+        <label class="f" style="flex:1;margin:0"><span>按钮上的字</span>
+          <input type="text" data-q="${i}" data-qk="name" maxlength="20" value="${esc(q.name||'')}"></label>
+        <button class="btn ghost sm" data-qrm="${i}">移除</button>
+      </div>
+      <label class="f" style="margin:8px 0 0"><span>点了以后发什么给模型</span>
+        <textarea data-q="${i}" data-qk="text" rows="2">${esc(q.text||'')}</textarea></label>
+    </div>`).join('')||`<div class="hint" style="padding:4px 0 12px">一个都没有了。点下面「＋ 添加按钮」，或者「恢复默认」。</div>`;
+  $$('#qList [data-q]').forEach(el=>el.oninput=()=>{
+    const q=quicks()[+el.dataset.q];if(q)q[el.dataset.qk]=el.value;renderQuick();});
+  $$('#qList [data-qrm]').forEach(b=>b.onclick=()=>{
+    quicks().splice(+b.dataset.qrm,1);renderQEdit();renderQuick();});
+}
+$('#btnQEdit').onclick=()=>{
+  const box=$('#qEdit'),open=box.style.display==='none';
+  box.style.display=open?'':'none';$('#btnQEdit').classList.toggle('on',open);
+  if(open)renderQEdit();};
+$('#btnQAdd').onclick=()=>{
+  quicks().push({id:'q'+Math.random().toString(16).slice(2,8),name:'新按钮',text:''});
+  renderQEdit();renderQuick();
+  $('#qList').lastElementChild?.querySelector('input')?.focus();};
+$('#btnQReset').onclick=()=>{
+  S.cfg.quick_actions=JSON.parse(JSON.stringify(S.cfg.quick_defaults||[]));
+  renderQEdit();renderQuick();toast('已恢复默认，记得点保存');};
+$('#btnQSave').onclick=async()=>{
+  const keep=quicks().filter(q=>(q.name||'').trim()&&(q.text||'').trim());
+  if(keep.length!==quicks().length)toast('名字或内容为空的那几条没保存');
+  const r=await api('/api/config','POST',{quick_actions:keep});
+  if(r)S.cfg=r.config;
+  renderQuick();renderQEdit();toast(r?'快捷按钮已保存':'演示模式：未保存');};
 
 /* ================= logs & stats ================= */
 async function loadLogs(){
   const s=S.stats||{};
+  const up=s.uptime?(s.uptime<3600?Math.round(s.uptime/60)+' 分钟':(s.uptime/3600).toFixed(1)+' 小时'):'—';
   $('#stats').innerHTML=[['收到消息',s.msgs??'—'],['命中规则',s.matched??'—'],
-    ['今日 AI 调用',`${s.ai_today??'—'} / ${s.ai_cap??'—'}`],['启用规则',S.rules.filter(r=>r.enabled).length]]
+    ['今日 AI 调用',`${s.ai_today??'—'} / ${s.ai_cap??'—'}`],['启用规则',S.rules.filter(r=>r.enabled).length],
+    ['占用内存',s.rss_mb?s.rss_mb+' MB':'—'],['数据库',s.db_mb!=null?s.db_mb+' MB':'—'],['已运行',up]]
     .map(([k,v])=>`<div class="b"><i>${k}</i><b>${v}</b></div>`).join('');
   const r=await api('/api/logs');
   const logs=r?r.logs:[{ts:Date.now()/1000-20,level:'info',text:'演示模式：这里是真实运行日志（连接、命中、模型调用、报错）'}];
@@ -1099,8 +1716,10 @@ function connectSSE(){
       if(kind==='message'){S.msgs.unshift({...data,unread:1});if(S.msgs.length>400)S.msgs.pop();renderList();
         if(data.alert&&S.cfg?.sinks?.browser&&Notification?.permission==='granted')
           new Notification(`${data.author} · ${data.channel_name}`,{body:(data.content||'').slice(0,120)});}
-      if(kind==='status'){S.status.discord=data;renderSources();renderSettings();}
+      if(kind==='status'){S.status.discord=data;renderSources();
+        if(!$('#v-settings').contains(document.activeElement))renderSettings();}
       if(kind==='log'&&S.view==='logs')loadLogs();
+      if(kind==='sinks'){S.cfg.sinks=data;renderSinkRows();if(S.view==='notify')renderHooks();}
       if(kind==='summary')toast('新摘要：'+data.channel);};
     es.onerror=()=>{};
   }catch(e){}}
@@ -1112,7 +1731,10 @@ async function boot(){
     const ms=await api('/api/messages?limit=300');S.msgs=ms?ms.messages:[];
     $('#modeTag').textContent='';}
   else{seedDemo();}
-  renderSources();renderList();renderRules();renderProviders();renderDefaults();renderSettings();renderCtxHint();
+  S.models={...(S.cfg.models_cache||{})};          // 拉过的模型列表存在配置里，刷新也还在
+  renderSources();renderSinkRows();renderList();renderRules();renderNl();
+  renderProviders();renderDefaults();renderPrompts();renderSettings();renderCtxHint();
+  bindEyes();loadSounds();
   if(S.msgs.length)openMsg(S.msgs[0].id);
   if(!S.demo)connectSSE();
 }

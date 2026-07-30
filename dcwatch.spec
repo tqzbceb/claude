@@ -6,7 +6,10 @@ a = Analysis(
     ["server.py"],
     pathex=[],
     binaries=[],
-    datas=[("ui.html", ".")],          # 界面塞进包里，运行时从 sys._MEIPASS 读
+    datas=[("ui.html", "."),           # 界面塞进包里，运行时从 sys._MEIPASS 读
+           ("sounds", "sounds"),       # 内置提示音
+           ("dcwatch.ico", "."),       # 托盘/窗口偶尔要用到的原始图标
+           ("extension", "extension")],  # 浏览器扩展，界面上「下载浏览器扩展」要打包它
     hiddenimports=["winsound"],        # 提示音用；PyInstaller 有时扫不到
     hookspath=[],
     runtime_hooks=[],
@@ -39,5 +42,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon="dcwatch.ico",   # 有图标就把这行打开
+    icon="dcwatch.ico",     # exe 的图标（任务栏、资源管理器里显示的就是它）
 )

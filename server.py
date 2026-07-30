@@ -26,11 +26,92 @@ else:
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = os.environ.get("DCWATCH_DB", str(DATA_DIR / "dcwatch.db"))
 IS_WIN = os.name == "nt"
+START_TS = time.time()
 API = "https://discord.com/api/v10"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
 # GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT
 INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15)  # 37377
+
+
+# ---------- 自己占多少内存（不装 psutil） ----------
+def rss_mb():
+    try:
+        if IS_WIN:
+            import ctypes
+            from ctypes import wintypes
+
+            class MEM(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                            ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+            m = MEM()
+            m.cb = ctypes.sizeof(m)
+            ctypes.windll.psapi.GetProcessMemoryInfo(
+                ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(m), m.cb)
+            return round(m.WorkingSetSize / 1048576, 1)
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return round(int(line.split()[1]) / 1024, 1)
+    except Exception:
+        pass
+    return 0.0
+
+
+# ---------- 开机自启动（只有 Windows 有；写当前用户的 Run 键，不需要管理员） ----------
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_NAME = "dcwatch"
+
+
+def autostart_cmd(port=None):
+    port = port or 8777
+    if FROZEN:
+        return f'"{sys.executable}" --minimized --port {port}'
+    py = Path(sys.executable)
+    pyw = py.with_name("pythonw.exe")                     # 用 pythonw 才不会弹黑窗
+    exe = pyw if IS_WIN and pyw.exists() else py
+    return f'"{exe}" "{Path(__file__).resolve()}" --minimized --port {port}'
+
+
+def autostart_state():
+    if not IS_WIN:
+        return {"supported": False, "on": False, "cmd": ""}
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            v = winreg.QueryValueEx(k, AUTOSTART_NAME)[0]
+        return {"supported": True, "on": True, "cmd": v}
+    except FileNotFoundError:
+        return {"supported": True, "on": False, "cmd": ""}
+    except Exception as e:
+        return {"supported": True, "on": False, "cmd": "", "error": str(e)[:120]}
+
+
+def autostart_set(on, port=None):
+    if not IS_WIN:
+        raise RuntimeError("开机自启动只在 Windows 上支持")
+    import winreg
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+        if on:
+            winreg.SetValueEx(k, AUTOSTART_NAME, 0, winreg.REG_SZ, autostart_cmd(port))
+        else:
+            with contextlib.suppress(FileNotFoundError):
+                winreg.DeleteValue(k, AUTOSTART_NAME)
+    return autostart_state()
+
+
+def hide_console():
+    """--minimized：把自己的黑窗口藏起来，后台安静收信。"""
+    if not IS_WIN:
+        return
+    with contextlib.suppress(Exception):
+        import ctypes
+        wnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if wnd:
+            ctypes.windll.user32.ShowWindow(wnd, 0)       # SW_HIDE
+
 
 DEFAULT_CONFIG = {
     # mode: "bot"     = Bot Token 走 Gateway（官方、稳、需要能把 bot 拉进服务器）
@@ -48,18 +129,162 @@ DEFAULT_CONFIG = {
         "browser": True,            # 网页通知（要开着界面）
         "toast": True,              # Windows 系统通知
         "sound": True,              # 提示音
-        "sound_file": "",           # 自定义 .wav，留空用系统默认提示音
+        "sound_name": "builtin:ding",  # 提示音；"" = 系统默认，custom:xx.wav = 自己导入的
+        "sound_file": "",           # 老版本遗留：自定义 .wav 绝对路径
         "quiet_from": "", "quiet_to": "",   # 免打扰时段 "23:00"→"08:00"，只静音本机，不影响转发
-        "discord_webhook": "",      # 转发到你自己的 Discord 频道（频道设置→整合→Webhook）
-        "telegram": {"token": "", "chat_id": ""},
-        "serverchan": "",           # Server酱 SendKey → 推到微信服务号（官方通道，不封号）
-        "wecom": "",                # 企业微信群机器人 webhook
-        "webhook": "",              # 自定义 JSON POST（飞书/钉钉/n8n/自建）
         "min_score": 0,             # AI 打分低于这个不往外发；没有分数的一律发
+        # 转发出口：一条一个 HTTP 请求，谁都能接。见 HOOK_FIELDS
+        "hooks": [],
     },
+    # 内置提示词：规则里不单独写 prompt 时用这里的。界面上可改、可一键恢复默认。
+    "prompts": {},
+    # AI 工作台上那排快捷按钮。名字和内容全可改，可删可加可排序；空列表 = 一个按钮都不显示。
+    "quick_actions": [
+        {"id": "q1", "name": "总结选中消息", "text": "把这些消息压成 3-5 条要点，标出需要我行动的部分。"},
+        {"id": "q2", "name": "抽出待办", "text": "从这些消息里抽出待办清单，每条含负责人和截止时间，没写就标未定。"},
+        {"id": "q3", "name": "起草回复", "text": "针对最后一条消息起草一条中文回复，语气专业简洁，≤120 字。"},
+        {"id": "q4", "name": "翻译成中文", "text": "把这些消息翻译成中文，保留原作者名。"},
+    ],
+    "models_cache": {},        # 每个服务商拉到过的模型名，纯缓存
     "retention_days": 14,
     "ai_daily_call_cap": 500,
 }
+
+DEFAULT_PROMPTS = {
+    "ai_tag": ("你是消息分流助手。判断这条 Discord 消息对我是否重要。"
+               "只输出 JSON: {\"score\":0-100,\"tags\":[\"...\"],\"reason\":\"一句话\","
+               "\"todo\":\"若需我行动则写，否则空\"}"),
+    "ai_reply": "你是该频道的助手，用简洁中文回答，不超过 120 字。",
+    "ai_summary": "把这段 Discord 对话压成 3-5 条要点中文摘要，标出待办和结论。",
+    "ai_extract": "从消息中抽取结构化信息，只输出 JSON。字段自定，找不到就留空。",
+    "ask": "你是我的 Discord 消息助理，用中文简洁回答。",
+}
+
+# ---------- 转发出口 ----------
+# 一条出口 = 一个 HTTP 请求。URL / 请求头 / 请求体里写 {{占位符}}，命中时替换成真值。
+# 这样任何能收 webhook 的东西都能对接，程序里不写死任何第三方服务。
+HOOK_FIELDS = {"id": "", "name": "", "url": "", "method": "POST", "content": "json",
+               "headers": "", "body": '{"content": "{{text}}"}',
+               "enabled": True, "verified": False}
+HOOK_SIG = ("url", "method", "content", "headers", "body")   # 这几项一改，测试结果就作废
+HOOK_VARS = ("text", "title", "body", "author", "channel", "server", "content",
+             "url", "score", "tags", "todo", "json")
+
+
+RAW_VARS = ("json",)      # 本身就是一段 JSON，不能再当字符串转义
+
+
+def render_tpl(tpl: str, vals: dict, quote: bool) -> str:
+    """{{name}} → 值。quote=True 时按 JSON 字符串转义，模板整体仍是合法 JSON。"""
+    def sub(m):
+        k = m.group(1)
+        v = vals.get(k, "")
+        v = "" if v is None else str(v)
+        return json.dumps(v)[1:-1] if quote and k not in RAW_VARS else v
+    return re.sub(r"\{\{\s*(\w+)\s*\}\}", sub, tpl)
+
+
+def norm_hook(h: dict) -> dict:
+    out = dict(HOOK_FIELDS)
+    for k, d in HOOK_FIELDS.items():
+        v = h.get(k, d)
+        out[k] = bool(v) if isinstance(d, bool) else str(v if v is not None else d)
+    out["method"] = "GET" if out["method"].upper() == "GET" else "POST"
+    if out["content"] not in ("json", "form", "text"):
+        out["content"] = "json"
+    out["name"] = out["name"].strip()[:40] or "出口"
+    out["id"] = out["id"] or f"h{random.randrange(16**8):08x}"
+    return out
+
+
+def merge_hooks(new, old):
+    """保存出口时：改过关键字段的，测试通过状态作废，得重新测。"""
+    by_id = {h.get("id"): h for h in (old or []) if h.get("id")}
+    out = []
+    for h in new:
+        h = norm_hook(h)
+        o = by_id.get(h["id"])
+        h["verified"] = bool(o and o.get("verified") and all(o.get(k) == h[k] for k in HOOK_SIG))
+        out.append(h)
+    return out[:20]
+
+
+def norm_quick(items) -> list:
+    """工作台快捷按钮：名字和内容都由用户填，这里只做长度和去空。"""
+    out = []
+    for i, q in enumerate(items if isinstance(items, list) else []):
+        if not isinstance(q, dict):
+            continue
+        name, text = str(q.get("name") or "").strip()[:20], str(q.get("text") or "").strip()[:2000]
+        if not name or not text:
+            continue                     # 名字或内容空的直接丢，免得界面上出现空按钮
+        out.append({"id": str(q.get("id") or f"q{i + 1}")[:16], "name": name, "text": text})
+    return out[:12]                      # 一排放不下太多，12 个够了
+
+
+def migrate_sinks(s: dict):
+    """老版本配置里那几个写死的出口字段，搬进统一的 hooks 列表。"""
+    hooks, dc = list(s.get("hooks") or []), s.pop("discord_webhook", "")
+    tg, hook = s.pop("telegram", None) or {}, s.pop("webhook", "")
+    sc, wc = s.pop("serverchan", ""), s.pop("wecom", "")
+    if sc:      # Server酱 SendKey → 微信服务号
+        hooks.append({"name": "微信(Server酱)", "content": "form", "body": "title={{title}}&desp={{body}}",
+                      "url": f"https://sctapi.ftqq.com/{sc}.send"})
+    if wc:      # 企业微信群机器人
+        hooks.append({"name": "企业微信", "url": wc,
+                      "body": '{"msgtype": "text", "text": {"content": "{{text}}"}}'})
+    if dc:
+        hooks.append({"name": "Discord 频道", "url": dc, "body": DISCORD_BODY})
+    if tg.get("token") and tg.get("chat_id"):
+        hooks.append({"name": "Telegram", "body": '{"chat_id": "%s", "text": "{{text}}"}' % tg["chat_id"],
+                      "url": f"https://api.telegram.org/bot{tg['token']}/sendMessage"})
+    if hook:
+        hooks.append({"name": "自定义", "url": hook, "body": "{{json}}"})
+    s["hooks"] = [norm_hook(h) for h in hooks]
+
+
+DISCORD_BODY = ('{"username": "dcwatch",\n'
+                ' "embeds": [{"title": "{{title}}", "description": "{{body}}", "color": 13198914}]}')
+
+# 内置提示音（打包进程序），加上用户导入的（放数据目录）
+SOUND_LABELS = {"ding": "叮（清脆单音）", "double": "双响（两声短促）", "soft": "柔和（和弦木琴）",
+                "rise": "上扬（有事找你）", "low": "低沉（夜里不刺耳）", "knock": "敲击（像敲门）"}
+BUILTIN_SOUNDS = BASE / "sounds"
+USER_SOUNDS = DATA_DIR / "sounds_custom"   # 和内置目录分开，别混在一起
+SOUND_MAX_BYTES = 2 * 1024 * 1024      # 单个提示音最大 2MB
+SOUND_MAX_SECONDS = 6                  # 最长 6 秒，前端超了会让你截片段
+
+
+def sound_path(name):
+    """把 sound_name 解析成真实文件；"" 或找不到 → None（用系统默认提示音）。"""
+    name = (name or "").strip()
+    if not name:
+        return None
+    kind, _, base = name.partition(":")
+    base = Path(base or kind).name                        # 防目录穿越
+    if kind == "custom":
+        p = USER_SOUNDS / base
+    else:
+        p = BUILTIN_SOUNDS / (base if base.endswith(".wav") else base + ".wav")
+    return p if p.exists() else None
+
+
+def list_sounds():
+    out = [{"id": "", "label": "系统默认提示音", "kind": "system"}]
+    for f in sorted(BUILTIN_SOUNDS.glob("*.wav")):
+        out.append({"id": f"builtin:{f.stem}", "label": SOUND_LABELS.get(f.stem, f.stem),
+                    "kind": "builtin", "bytes": f.stat().st_size})
+    for f in sorted(USER_SOUNDS.glob("*.wav")):
+        out.append({"id": f"custom:{f.name}", "label": f.stem, "kind": "custom",
+                    "bytes": f.stat().st_size})
+    return out
+
+
+def wav_seconds(raw):
+    """只用标准库校验这是真 wav，并算出时长。"""
+    import io, wave
+    with wave.open(io.BytesIO(raw)) as w:
+        return w.getnframes() / float(w.getframerate() or 1)
 
 # Windows 原生通知：PowerShell 调 WinRT，不需要装任何库。
 # 标题/正文用环境变量传进去，避免引号转义问题；AppId 借用 PowerShell 的 AUMID 才会真的弹出来。
@@ -147,6 +372,43 @@ DEFAULT_RULE = {
 }
 
 
+ACTIONS = ("notify", "ai_tag", "ai_reply", "ai_summary", "ai_extract", "webhook")
+
+COMPOSE_SYS = """你把用户一句中文需求，翻译成 dcwatch 的监听规则 JSON。只输出 JSON，不要解释。
+
+输出格式：{"rule": {...}, "notes": ["给用户看的中文提醒，可空"]}
+
+rule 里只允许这些字段（不确定的就别写，别编）：
+  name              规则名，短，中文
+  guild_ids         服务器 ID 数组 | channel_ids 频道 ID 数组 | thread_ids 子区 ID 数组
+  include_threads_of_channels  true 时 channel_ids 也匹配这些频道下的所有子区
+  dm                true = 包含私信
+  author_ids        用户 ID 数组 | author_name_contains 昵称包含（字符串）
+  ignore_bots       默认 true；用户说"包括机器人"才 false
+  mention_only      true = 只在 @我 时才算命中
+  keywords_any      含任一即命中 | keywords_all 必须全含 | regex 正则 | min_len 最短字数
+  action            只能是 notify / ai_tag / ai_reply / ai_summary / ai_extract / webhook
+  prompt            要让模型干的活写这里（中文），留空用内置提示词
+  notify_min_score  action=ai_tag 时，低于这个分不提醒（0-100）
+  summary_every     action=ai_summary 时，攒够几条做一次摘要
+  cooldown_sec / max_per_hour   防刷屏，AI 动作建议 15-60 / 20-40
+
+动作怎么选：
+  只想被提醒 → notify
+  想让模型判断重要度、打标签、过滤噪音 → ai_tag（同时给 notify_min_score，一般 60）
+  想自动替我回复 → ai_reply
+  水群频道想定期总结 → ai_summary
+  想把消息抽成结构化字段 → ai_extract
+  想转发到外部系统 → webhook
+
+铁律：
+1. ID 全是 17-20 位纯数字。**只能用下面「已知的频道和人」里给出的 ID**；用户没提供也不在列表里的，
+   就把对应字段留空，并在 notes 里写清楚"要限定哪个频道/谁，请把 ID 填进「听哪里/听谁」"。绝对不许编 ID。
+2. 用户说"某人"但列表里查不到 → 用 author_name_contains 填昵称，并在 notes 里说明用户 ID 更准。
+3. action=ai_reply 时，notes 里必须提醒：这会用他的身份公开发言，建议先观察几天；且浏览器旁听模式发不出去，需要 Bot Token。
+"""
+
+
 def now():
     return time.time()
 
@@ -172,6 +434,7 @@ class App:
     def __init__(self):
         self.db = DB(DB_PATH)
         self.cfg = self.db.get_cfg()
+        migrate_sinks(self.cfg.setdefault("sinks", {}))   # 老配置里的写死出口 → 统一 hooks
         self.bus = Bus()
         self.http: aiohttp.ClientSession | None = None
         self.dc: DiscordListener | None = None
@@ -414,6 +677,10 @@ class App:
                          (ev["channel_id"], n))[::-1]
         return "\n".join(f"{r['author']}: {r['content']}" for r in rows)
 
+    def prompt(self, key):
+        """内置提示词：用户在界面改过就用他的，没改过用出厂值。"""
+        return (self.cfg.get("prompts") or {}).get(key) or DEFAULT_PROMPTS[key]
+
     def pick_model(self, rule):
         prov = rule.get("provider") or self.cfg["default_model"]["provider"]
         model = rule.get("model") or self.cfg["default_model"]["model"]
@@ -421,9 +688,7 @@ class App:
 
     async def act_tag(self, rule, ev):
         prov, model = self.pick_model(rule)
-        sysmsg = rule["prompt"] or (
-            "你是消息分流助手。判断这条 Discord 消息对我是否重要。"
-            "只输出 JSON: {\"score\":0-100,\"tags\":[\"...\"],\"reason\":\"一句话\",\"todo\":\"若需我行动则写，否则空\"}")
+        sysmsg = rule["prompt"] or self.prompt("ai_tag")
         out = await self.chat(prov, model, [
             {"role": "system", "content": sysmsg},
             {"role": "user", "content": f"频道: {ev['channel_name']}\n作者: {ev['author']}\n内容: {ev['content']}"}],
@@ -435,7 +700,7 @@ class App:
 
     async def act_reply(self, rule, ev):
         prov, model = self.pick_model(rule)
-        sysmsg = rule["prompt"] or "你是该频道的助手，用简洁中文回答，不超过 120 字。"
+        sysmsg = rule["prompt"] or self.prompt("ai_reply")
         out = await self.chat(prov, model, [
             {"role": "system", "content": sysmsg},
             {"role": "user", "content": f"最近对话:\n{self.ctx_text(ev)}\n\n请回复 {ev['author']} 的最后一条消息。"}],
@@ -445,7 +710,7 @@ class App:
 
     async def act_extract(self, rule, ev):
         prov, model = self.pick_model(rule)
-        sysmsg = rule["prompt"] or "从消息中抽取结构化信息，只输出 JSON。字段自定，找不到就留空。"
+        sysmsg = rule["prompt"] or self.prompt("ai_extract")
         out = await self.chat(prov, model, [{"role": "system", "content": sysmsg},
                                             {"role": "user", "content": ev["content"]}],
                               json_mode=True, max_tokens=500, rule=rule["name"])
@@ -461,7 +726,7 @@ class App:
         if len(buf) < int(rule["summary_every"] or 20):
             return
         prov, model = self.pick_model(rule)
-        sysmsg = rule["prompt"] or "把这段 Discord 对话压成 3-5 条要点中文摘要，标出待办和结论。"
+        sysmsg = rule["prompt"] or self.prompt("ai_summary")
         out = await self.chat(prov, model, [{"role": "system", "content": sysmsg},
                                             {"role": "user", "content": "\n".join(buf)}],
                               max_tokens=700, rule=rule["name"])
@@ -470,12 +735,18 @@ class App:
         await self.bus.push("summary", {"channel": ev["channel_name"], "text": out, "ts": now()})
 
     async def act_webhook(self, rule, ev):
-        url = rule["webhook_url"] or self.cfg["sinks"].get("webhook")
+        """这条规则专属的 webhook。留空不再悄悄什么都不做——说清楚该去哪儿填。
+        （「通知与转发」里的出口是全局的，命中任何规则都会走，不需要这个动作。）"""
+        url = (rule.get("webhook_url") or "").strip()
         if not url:
+            self.log("warn", f"{rule['name']}: 动作是「转发 Webhook」但规则里没填地址，这条没发出去。"
+                             f"要么在规则里填一个，要么把动作改成「只提醒我」——"
+                             f"命中的消息本来就会走「通知与转发」里配好的出口")
             return
-        with contextlib.suppress(Exception):
-            await self.http.post(url, json={"rule": rule["name"], "event": ev},
-                                 timeout=aiohttp.ClientTimeout(total=10))
+        async with self.http.post(url, json={"rule": rule["name"], "event": ev},
+                                  timeout=aiohttp.ClientTimeout(total=10)) as r:
+            if r.status >= 400:            # 失败要看得见，别默默丢掉
+                raise RuntimeError(f"webhook 返回 {r.status}: {(await r.text())[:120]}")
 
     # ================= 出口：本机通知 + 往外转发 =================
     def in_quiet_hours(self):
@@ -522,72 +793,82 @@ class App:
                 jobs["提示音"] = self.local_sound()
             if s.get("toast"):
                 jobs["系统通知"] = self.local_toast(head, body[:180])
-        if s.get("discord_webhook"):
-            jobs["Discord"] = self.push_discord_webhook(s["discord_webhook"], head, body, extra, url)
-        tg = s.get("telegram") or {}
-        if tg.get("token") and tg.get("chat_id"):
-            jobs["Telegram"] = self.push_telegram(tg, text)
-        if s.get("serverchan"):
-            jobs["微信(Server酱)"] = self.push_serverchan(s["serverchan"], head, f"{body}{extra}\n\n{url}")
-        if s.get("wecom"):
-            jobs["企业微信"] = self.push_wecom(s["wecom"], text)
-        if s.get("webhook"):
-            jobs["自定义"] = self.push_json(s["webhook"], {
-                "event": ev, "score": score, "ai": row.get("ai"), "matched": row.get("matched")})
+        vals = self.hook_vars(ev, row, head, body, extra, url, text)
+        for i, h in enumerate(s.get("hooks") or []):
+            if h.get("enabled", True) and h.get("url"):
+                jobs[h.get("name") or f"出口{i + 1}"] = self.push_hook(h, vals)
         if not jobs:
             return
         for name, res in zip(jobs, await asyncio.gather(*jobs.values(), return_exceptions=True)):
             if isinstance(res, Exception):
                 self.log("error", f"{name} 发送失败: {res}")
 
-    async def _post(self, url, **kw):
-        async with self.http.post(url, timeout=aiohttp.ClientTimeout(total=15), **kw) as r:
+    def hook_vars(self, ev, row, head, body, extra, url, text):
+        ai = row.get("ai") or {}
+        return {"text": text, "title": head, "body": (body + extra).strip(),
+                "content": ev.get("content") or "", "author": ev.get("author") or "",
+                "channel": ev.get("channel_name") or "", "server": ev.get("guild_name") or "",
+                "url": url, "score": "" if row.get("score") is None else row["score"],
+                "tags": "、".join(str(t) for t in (ai.get("tags") or [])),
+                "todo": ai.get("todo") or "",
+                "json": json.dumps({"event": ev, "score": row.get("score"), "ai": row.get("ai"),
+                                    "matched": row.get("matched")}, ensure_ascii=False)}
+
+    async def push_hook(self, h, vals):
+        """一条出口 = 一个 HTTP 请求。URL / 头 / 体里的 {{占位符}} 换成真值。"""
+        h = norm_hook(h)
+        url = render_tpl(h["url"], vals, quote=False)
+        heads = {}
+        for line in h["headers"].splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                heads[k.strip()] = render_tpl(v.strip(), vals, quote=False)
+        kw = {"headers": heads} if heads else {}
+        if h["method"] == "GET":
+            return await self._req("GET", url, **kw)
+        raw = h["body"]
+        if h["content"] == "json":
+            txt = render_tpl(raw, vals, quote=True)
+            try:
+                kw["json"] = json.loads(txt)
+            except Exception as e:
+                raise RuntimeError(f"请求体不是合法 JSON：{e}")
+        elif h["content"] == "form":
+            body = render_tpl(raw, vals, quote=False)
+            kw["data"] = {k: v for k, _, v in (p.partition("=") for p in body.split("&")) if k}
+        else:
+            kw["data"] = render_tpl(raw, vals, quote=False).encode()
+            heads.setdefault("Content-Type", "text/plain; charset=utf-8")
+            kw["headers"] = heads
+        return await self._req("POST", url, **kw)
+
+    async def _req(self, method, url, **kw):
+        async with self.http.request(method, url, timeout=aiohttp.ClientTimeout(total=15), **kw) as r:
             t = await r.text()
             if r.status >= 300:
                 raise RuntimeError(f"{r.status} {t[:150]}")
+            j = None                        # 有些服务永远回 200，错误藏在 body 里
+            with contextlib.suppress(Exception):
+                j = json.loads(t)
+            if isinstance(j, dict):
+                for k in ("errcode", "code", "errCode"):
+                    if str(j.get(k, 0)) not in ("0", "200", "None"):
+                        raise RuntimeError(f"对方返回 {str(j)[:150]}")
             return t
 
-    async def push_discord_webhook(self, url, head, body, extra, link):
-        embed = {"title": head[:250], "description": (body + extra)[:3900], "color": 0xC96442}
-        if link:
-            embed["url"] = link
-        await self._post(url, json={"username": "dcwatch", "embeds": [embed]})
-
-    async def push_telegram(self, tg, text):
-        await self._post(f"https://api.telegram.org/bot{tg['token'].strip()}/sendMessage",
-                         json={"chat_id": tg["chat_id"].strip(), "text": text[:4000],
-                               "disable_web_page_preview": True})
-
-    async def push_serverchan(self, key, title, desp):
-        key = key.strip()
-        m = re.match(r"^sctp(\d+)t", key)      # Server酱³ 的 SendKey 形如 sctp123t...
-        url = f"https://{m.group(1)}.push.ft07.com/send" if m else f"https://sctapi.ftqq.com/{key}.send"
-        out = await self._post(url, data={"title": title[:100], "desp": desp[:2000]})
-        with contextlib.suppress(Exception):
-            j = json.loads(out)
-            if j.get("code") not in (0, None):
-                raise RuntimeError(str(j)[:150])
-
-    async def push_wecom(self, url, text):
-        out = await self._post(url, json={"msgtype": "text", "text": {"content": text[:1900]}})
-        with contextlib.suppress(Exception):
-            j = json.loads(out)
-            if j.get("errcode"):
-                raise RuntimeError(str(j)[:150])
-
-    async def push_json(self, url, payload):
-        await self._post(url, json=payload)
-
-    async def local_sound(self):
-        f = (self.cfg["sinks"].get("sound_file") or "").strip()
+    async def local_sound(self, name=None):
+        f = sound_path(name if name is not None else self.cfg["sinks"].get("sound_name", ""))
+        if f is None:                                    # 兼容老配置里的绝对路径
+            old = (self.cfg["sinks"].get("sound_file") or "").strip()
+            f = Path(old) if old and Path(old).exists() else None
 
         def play():
             if IS_WIN:
                 import winsound
-                if f and Path(f).exists():
-                    winsound.PlaySound(f, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                if f:
+                    winsound.PlaySound(str(f), winsound.SND_FILENAME | winsound.SND_ASYNC)
                 else:
-                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+                    winsound.MessageBeep(winsound.MB_ICONASTERISK)   # 系统默认提示音
             else:
                 sys.stdout.write("\a")
                 sys.stdout.flush()
@@ -783,9 +1064,6 @@ class DiscordListener:
 
 
 # ============================ HTTP API ============================
-SINK_SECRETS = ("discord_webhook", "serverchan", "wecom", "webhook")
-
-
 def safe_cfg(cfg):
     c = json.loads(json.dumps(cfg))
     if c["discord"].get("token"):
@@ -793,27 +1071,10 @@ def safe_cfg(cfg):
     for p in c["providers"]:
         if p.get("api_key"):
             p["api_key"] = "***" + p["api_key"][-4:]
-    s = c.get("sinks") or {}
-    for k in SINK_SECRETS:
-        if s.get(k):
-            s[k] = "***" + str(s[k])[-6:]
-    if (s.get("telegram") or {}).get("token"):
-        s["telegram"]["token"] = "***" + s["telegram"]["token"][-4:]
+    c["prompt_defaults"] = DEFAULT_PROMPTS      # 界面上「恢复默认」要拿它当占位
+    c["quick_defaults"] = DEFAULT_CONFIG["quick_actions"]     # 工作台按钮的「恢复默认」
+    c["hook_vars"] = list(HOOK_VARS)
     return c
-
-
-def unmask_sinks(patch, cur):
-    """界面回传的掩码值不能把真值冲掉。"""
-    s = patch.get("sinks")
-    if not isinstance(s, dict):
-        return
-    old = cur.get("sinks") or {}
-    for k in SINK_SECRETS:
-        if str(s.get(k, "")).startswith("***"):
-            s[k] = old.get(k, "")
-    tg, otg = s.get("telegram") or {}, old.get("telegram") or {}
-    if str(tg.get("token", "")).startswith("***"):
-        tg["token"] = otg.get("token", "")
 
 
 def routes(app: App):
@@ -832,13 +1093,18 @@ def routes(app: App):
         return web.json_response({
             "config": safe_cfg(app.cfg),
             "status": {"discord": st, "browser": br},
-            "env": {"win": IS_WIN, "frozen": FROZEN, "data_dir": str(DATA_DIR), "port": app.port},
+            "env": {"win": IS_WIN, "frozen": FROZEN, "data_dir": str(DATA_DIR), "port": app.port,
+                    "autostart": autostart_state(), "pyver": sys.version.split()[0]},
             "rules": app.rules(enabled_only=False),
             "stats": {
                 "msgs": app.db.q("SELECT COUNT(*) n FROM messages")[0]["n"],
                 "matched": app.db.q("SELECT COUNT(*) n FROM messages WHERE matched<>''")[0]["n"],
                 "ai_today": app.db.q("SELECT COUNT(*) n FROM aiusage WHERE ts>?", (now() - 86400,))[0]["n"],
                 "ai_cap": app.cfg.get("ai_daily_call_cap", 500),
+                "rss_mb": rss_mb(),
+                "db_mb": round(sum(Path(DB_PATH + s).stat().st_size for s in ("", "-wal", "-shm")
+                                   if Path(DB_PATH + s).exists()) / 1048576, 1),
+                "uptime": int(now() - START_TS),
             },
         })
 
@@ -853,11 +1119,14 @@ def routes(app: App):
                 if str(p.get("api_key", "")).startswith("***"):
                     old = app.provider(p["name"]) or {}
                     p["api_key"] = old.get("api_key", "")
-        unmask_sinks(patch, app.cfg)
         if isinstance(patch.get("sinks"), dict):     # 局部更新，别把没传的字段抹掉
             merged = dict(app.cfg.get("sinks") or {})
+            if isinstance(patch["sinks"].get("hooks"), list):
+                patch["sinks"]["hooks"] = merge_hooks(patch["sinks"]["hooks"], merged.get("hooks"))
             merged.update(patch["sinks"])
             patch["sinks"] = merged
+        if "quick_actions" in patch:
+            patch["quick_actions"] = norm_quick(patch["quick_actions"])
         app.cfg.update(patch)
         app.save_cfg()
         if "discord" in patch:
@@ -878,9 +1147,15 @@ def routes(app: App):
         if not key or key.startswith("***"):
             key = p.get("api_key", "")
         try:
-            return web.json_response({"ok": True, "models": await app.list_models(base, key)})
+            ms = await app.list_models(base, key)
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=200)
+        # 拉到的列表存进配置，刷新界面/重启程序后还在，不用每次重拉
+        cache = dict(app.cfg.get("models_cache") or {})
+        cache[b.get("provider", "")] = ms
+        app.cfg["models_cache"] = cache
+        app.db.set_cfg(app.cfg)
+        return web.json_response({"ok": True, "models": ms})
 
     @r.get("/api/messages")
     async def msgs(req):
@@ -960,6 +1235,70 @@ def routes(app: App):
             return web.json_response({"ok": False, "error": str(e)})
         return web.json_response({"ok": True, "guilds": out})
 
+    @r.post("/api/rules/compose")
+    async def compose(req):
+        """一句中文 → 规则草稿。生成完只回给界面，用户确认保存才生效。"""
+        b = await req.json()
+        text = (b.get("text") or "").strip()
+        if not text:
+            return web.json_response({"ok": False, "error": "先说一句你想怎么监听"})
+        prov = b.get("provider") or app.cfg["default_model"]["provider"]
+        model = b.get("model") or app.cfg["default_model"]["model"]
+        # 把本机见过的频道/人喂给模型，它才有真 ID 可用（不给就只能留空）
+        chans = app.db.q("""SELECT channel_id id, channel_name nm, parent_id, MAX(ts) t FROM messages
+                            GROUP BY channel_id ORDER BY t DESC LIMIT 40""")
+        people = app.db.q("""SELECT author_id id, author nm, MAX(ts) t FROM messages
+                             WHERE author_id<>'' GROUP BY author_id ORDER BY t DESC LIMIT 40""")
+        known_ids = {c["id"] for c in chans} | {p["id"] for p in people}
+        known_ids |= {c["parent_id"] for c in chans if c["parent_id"]}
+        known_ids |= set(re.findall(r"\d{15,25}", text))       # 用户自己粘的 ID 也算
+        ctx = "已知的频道和人（只能用这里的 ID）：\n"
+        ctx += "\n".join(f"频道 {c['nm']} = {c['id']}" + (f"（是 {c['parent_id']} 的子区）" if c["parent_id"] else "")
+                         for c in chans) or "（本机还没收到过消息，没有可用 ID）"
+        ctx += "\n" + "\n".join(f"人 {p['nm']} = {p['id']}" for p in people)
+        try:
+            out = await app.chat(prov, model, [{"role": "system", "content": COMPOSE_SYS},
+                                               {"role": "user", "content": f"{ctx}\n\n需求：{text}"}],
+                                 json_mode=True, max_tokens=900, rule="compose")
+            raw = json.loads(re.search(r"\{.*\}", out, re.S).group(0))
+        except Exception as e:
+            return web.json_response({"ok": False, "error": f"生成失败: {e}"})
+
+        draft, notes = raw.get("rule") or raw, list(raw.get("notes") or [])
+        rule = dict(DEFAULT_RULE)
+        for k, v in (draft.items() if isinstance(draft, dict) else []):
+            if k not in DEFAULT_RULE or v is None:
+                continue
+            d = DEFAULT_RULE[k]
+            if isinstance(d, list):
+                vals = [str(x).strip() for x in (v if isinstance(v, list) else [v]) if str(x).strip()]
+                if k.endswith("_ids"):        # 编出来的 ID 一律扔掉，免得规则悄悄匹配不到
+                    bad = [x for x in vals if not (x.isdigit() and x in known_ids)]
+                    vals = [x for x in vals if x.isdigit() and x in known_ids]
+                    if bad:
+                        notes.append(f"模型给的 {k} 里有查不到的 ID（{', '.join(bad[:3])}），已丢掉——"
+                                     f"这个字段请你自己填，或先让那个频道来一条消息")
+                rule[k] = vals
+            elif isinstance(d, bool):
+                rule[k] = bool(v)
+            elif isinstance(d, int):
+                with contextlib.suppress(Exception):
+                    rule[k] = int(v)
+            else:
+                rule[k] = str(v)
+        if rule["action"] not in ACTIONS:
+            notes.append(f"模型给的动作「{rule['action']}」不认识，先按「只提醒我」处理")
+            rule["action"] = "notify"
+        if rule["action"] == "ai_reply":
+            notes.append("自动回复会用你的身份公开发言，建议先默认停用观察几天；"
+                         "另外浏览器旁听模式发不出去，需要 Bot Token")
+        if not (rule["guild_ids"] or rule["channel_ids"] or rule["thread_ids"] or rule["dm"]):
+            notes.append("没限定频道：现在是所有能收到的地方都会触发。要收窄就把频道 ID 填进「听哪里」")
+        if rule["action"].startswith("ai") and not model:
+            notes.append("还没设默认模型，这条规则要先在「模型接入」里选一个模型")
+        rule["provider"], rule["model"] = b.get("provider") or "", b.get("model") or ""
+        return web.json_response({"ok": True, "rule": rule, "notes": notes[:6]})
+
     @r.post("/api/source/toggle")
     async def toggle(req):
         b = await req.json()
@@ -985,7 +1324,7 @@ def routes(app: App):
             qm = ",".join("?" * len(ids))
             rows = app.db.q(f"SELECT author,content,channel_name FROM messages WHERE id IN ({qm}) ORDER BY ts", ids)
             ctx = "\n".join(f"[#{x['channel_name']}] {x['author']}: {x['content']}" for x in rows)
-        msgs = [{"role": "system", "content": b.get("system") or "你是我的 Discord 消息助理，用中文简洁回答。"}]
+        msgs = [{"role": "system", "content": b.get("system") or app.prompt("ask")}]
         msgs.append({"role": "user", "content": (f"消息上下文:\n{ctx}\n\n" if ctx else "") + b.get("prompt", "")})
         try:
             return web.json_response({"ok": True, "text": await app.chat(prov, model, msgs, max_tokens=1200,
@@ -1003,7 +1342,10 @@ def routes(app: App):
             return web.json_response({"ok": False, "error": str(e)})
 
     CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "content-type",
-            "Access-Control-Allow-Methods": "POST, OPTIONS"}
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            # Chrome 拦「公网页面 → 本机地址」的请求，预检得明确放行（少了这个扩展就悄悄发不出来）
+            "Access-Control-Allow-Private-Network": "true",
+            "Access-Control-Max-Age": "600"}      # 别每批消息都预检一次
 
     @r.options("/api/ingest")
     async def ingest_pre(_):
@@ -1041,37 +1383,147 @@ def routes(app: App):
 
     @r.post("/api/sinks/test")
     async def sinktest(req):
-        """按一下就知道哪个出口通了。which=all 或单个出口名。"""
+        """按一下就知道通不通。which = toast / sound / hook:<id> / all。
+        转发出口测通了才会记 verified，界面左下角只列通过的。"""
         b = await req.json()
-        which = b.get("which", "all")
-        s = app.cfg["sinks"]
-        head = "dcwatch 测试通知"
-        body = "看到/听到这条，说明这个出口通了。"
+        which, s = b.get("which", "all"), app.cfg["sinks"]
+        head, body = "dcwatch 测试通知", "看到这条，说明这个出口通了。"
         text = f"{head}\n{body}"
-        jobs = {}
+        vals = app.hook_vars({"content": body, "author": "dcwatch", "channel_name": "测试",
+                              "guild_name": "测试"}, {"score": 99, "ai": {"tags": ["测试"]}},
+                             head, body, "", "", text)
+        jobs, ids = {}, {}
         if which in ("all", "sound"):
             jobs["提示音"] = app.local_sound()
         if which in ("all", "toast"):
             jobs["系统通知"] = app.local_toast(head, body, force=True)
-        if which in ("all", "discord_webhook") and s.get("discord_webhook"):
-            jobs["Discord"] = app.push_discord_webhook(s["discord_webhook"], head, body, "", "")
-        tg = s.get("telegram") or {}
-        if which in ("all", "telegram") and tg.get("token") and tg.get("chat_id"):
-            jobs["Telegram"] = app.push_telegram(tg, text)
-        if which in ("all", "serverchan") and s.get("serverchan"):
-            jobs["微信(Server酱)"] = app.push_serverchan(s["serverchan"], head, body)
-        if which in ("all", "wecom") and s.get("wecom"):
-            jobs["企业微信"] = app.push_wecom(s["wecom"], text)
-        if which in ("all", "webhook") and s.get("webhook"):
-            jobs["自定义"] = app.push_json(s["webhook"], {"test": True, "text": text})
+        for h in s.get("hooks") or []:
+            if not h.get("url") or which not in ("all", f"hook:{h['id']}"):
+                continue
+            nm = h.get("name") or h["id"]
+            jobs[nm], ids[nm] = app.push_hook(h, vals), h["id"]
         if not jobs:
-            return web.json_response({"ok": False, "error": "这个出口还没填/没开"})
-        out = {}
+            return web.json_response({"ok": False, "error": "这条出口还没填地址"})
+        out, changed = {}, False
         for name, res in zip(jobs, await asyncio.gather(*jobs.values(), return_exceptions=True)):
-            out[name] = "ok" if not isinstance(res, Exception) else str(res)[:200]
+            ok = not isinstance(res, Exception)
+            out[name] = "ok" if ok else str(res)[:200]
+            if name in ids:
+                for h in s["hooks"]:
+                    if h["id"] == ids[name] and h.get("verified") != ok:
+                        h["verified"], changed = ok, True
+        if changed:
+            app.save_cfg()
+            await app.bus.push("sinks", s)
         if app.in_quiet_hours() and which in ("all", "sound", "toast"):
             out["注意"] = "当前在免打扰时段，实际收信时本机不会响"
-        return web.json_response({"ok": True, "results": out})
+        return web.json_response({"ok": True, "results": out, "sinks": s})
+
+    @r.get("/api/autostart")
+    async def autoget(_):
+        return web.json_response({"ok": True, **autostart_state()})
+
+    @r.post("/api/autostart")
+    async def autoset(req):
+        b = await req.json()
+        try:
+            st = autostart_set(bool(b.get("on")), app.port)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)[:200]})
+        app.log("info", f"开机自启动：{'已开启' if st['on'] else '已关闭'}")
+        return web.json_response({"ok": True, **st})
+
+    @r.get("/extension.zip")
+    async def extzip(_):
+        """浏览器扩展打成 zip 给你下载：解压 → chrome://extensions → 加载已解压的扩展程序。"""
+        # 源码版在 BASE 下；exe 版优先用打进包里的，没有就找 exe 旁边的（build.bat 会拷一份过去）
+        cands = [BASE / "extension", Path(sys.executable).resolve().parent / "extension",
+                 DATA_DIR / "extension"]
+        src = next((p for p in cands if p.is_dir()), None)
+        if src is None:
+            raise web.HTTPNotFound(text="找不到 extension 目录：" + " / ".join(str(p) for p in cands))
+        import io, zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for p in sorted(src.rglob("*")):
+                if p.is_file():
+                    z.write(p, f"dcwatch-extension/{p.relative_to(src)}")
+        return web.Response(body=buf.getvalue(), content_type="application/zip",
+                            headers={"Content-Disposition": 'attachment; filename="dcwatch-extension.zip"'})
+
+    @r.post("/api/sinks/toggle")
+    async def sinktoggle(req):
+        """左下角那排开关：单独启停某条转发出口。"""
+        b = await req.json()
+        hid, on = str(b.get("id") or ""), b.get("on")
+        for h in app.cfg["sinks"].get("hooks") or []:
+            if h["id"] == hid:
+                h["enabled"] = (not h.get("enabled", True)) if on is None else bool(on)
+                app.save_cfg()
+                return web.json_response({"ok": True, "hook": h})
+        return web.json_response({"ok": False, "error": "没有这条出口"})
+
+    # ---------- 提示音：内置几个 + 自己导入 ----------
+    @r.get("/api/sounds")
+    async def sounds_list(_):
+        return web.json_response({"sounds": list_sounds(),
+                                  "current": app.cfg["sinks"].get("sound_name", ""),
+                                  "max_seconds": SOUND_MAX_SECONDS,
+                                  "max_bytes": SOUND_MAX_BYTES})
+
+    @r.get("/api/sounds/file")
+    async def sounds_file(req):
+        """给网页里试听用。"""
+        f = sound_path(req.query.get("id", ""))
+        if not f:
+            raise web.HTTPNotFound(text="没有这个提示音")
+        return web.Response(body=f.read_bytes(), content_type="audio/wav")
+
+    @r.post("/api/sounds/play")
+    async def sounds_play(req):
+        """在运行 dcwatch 的这台电脑上真放一遍（和收到消息时一模一样）。"""
+        b = await req.json()
+        await app.local_sound(b.get("id", ""))
+        return web.json_response({"ok": True, "quiet": app.in_quiet_hours()})
+
+    @r.post("/api/sounds/import")
+    async def sounds_import(req):
+        """网页已经把音频解码、截好片段、转成 16bit wav 了，这里只收字节。"""
+        name = re.sub(r"[^\w\u4e00-\u9fff.-]", "_", req.query.get("name", "我的提示音"))[:40] or "sound"
+        raw = await req.read()
+        if len(raw) > SOUND_MAX_BYTES:
+            return web.json_response({"ok": False, "error": f"文件太大（{len(raw)//1024}KB），上限 {SOUND_MAX_BYTES//1024}KB"})
+        try:
+            sec = wav_seconds(raw)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": f"这不是能用的 wav：{e}"})
+        if sec > SOUND_MAX_SECONDS + 0.5:
+            return web.json_response({"ok": False, "error": f"太长了（{sec:.1f} 秒），上限 {SOUND_MAX_SECONDS} 秒"})
+        USER_SOUNDS.mkdir(parents=True, exist_ok=True)
+        f = USER_SOUNDS / (name if name.endswith(".wav") else name + ".wav")
+        i = 2
+        while f.exists():
+            f = USER_SOUNDS / f"{name.removesuffix('.wav')}-{i}.wav"
+            i += 1
+        f.write_bytes(raw)
+        app.log("info", f"[提示音] 导入 {f.name}（{sec:.1f}s, {len(raw)//1024}KB）")
+        return web.json_response({"ok": True, "id": f"custom:{f.name}", "seconds": round(sec, 2),
+                                  "sounds": list_sounds()})
+
+    @r.post("/api/sounds/delete")
+    async def sounds_delete(req):
+        b = await req.json()
+        sid = b.get("id", "")
+        if not sid.startswith("custom:"):
+            return web.json_response({"ok": False, "error": "内置提示音删不掉"})
+        f = USER_SOUNDS / Path(sid.split(":", 1)[1]).name
+        if f.exists():
+            f.unlink()
+        if app.cfg["sinks"].get("sound_name") == sid:      # 删掉正在用的就退回内置
+            app.cfg["sinks"]["sound_name"] = "builtin:ding"
+            app.db.set_cfg(app.cfg)
+        return web.json_response({"ok": True, "sounds": list_sounds(),
+                                  "current": app.cfg["sinks"].get("sound_name", "")})
 
     @r.get("/api/logs")
     async def logs(_):
@@ -1114,7 +1566,12 @@ async def main():
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--open", action="store_true", help="启动后自动打开界面（exe 默认就开）")
     ap.add_argument("--no-open", action="store_true")
+    ap.add_argument("--minimized", action="store_true",
+                    help="后台安静启动：藏起窗口、不开浏览器（开机自启动用的就是这个）")
     a = ap.parse_args()
+    if a.minimized:
+        a.no_open = True
+        hide_console()
 
     app = App()
     app.port = a.port
