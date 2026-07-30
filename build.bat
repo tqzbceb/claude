@@ -1,38 +1,67 @@
 @echo off
-chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
+title dcwatch build
 
 echo ============================================
-echo   dcwatch  ->  dist\dcwatch.exe
+echo   dcwatch  =^>  dist\dcwatch.exe
 echo ============================================
 echo.
 
-where python >nul 2>nul
-if errorlevel 1 (
-  echo [x] æ²¡æ‰¾åˆ° pythonã€‚è£…ä¸€ä¸ªå†æ¥ï¼š https://www.python.org/downloads/
-  echo     å®‰è£…æ—¶åŠ¡å¿…å‹¾ä¸Š "Add python.exe to PATH"
-  pause & exit /b 1
-)
+python -c "print(1)" >nul 2>nul
+if errorlevel 1 goto nopython
 
-echo [1/3] è£…ä¾èµ–ï¼ˆaiohttp + pyinstallerï¼‰...
+echo [1/3] ×°ÒÀÀµ aiohttp ºÍ pyinstaller ...
 python -m pip install --disable-pip-version-check -q aiohttp pyinstaller
-if errorlevel 1 (echo [x] è£…ä¾èµ–å¤±è´¥ï¼Œæ£€æŸ¥ç½‘ç»œæˆ–æ¢ä¸ªæº & pause & exit /b 1)
+if errorlevel 1 goto pipfail
 
-echo [2/3] æ‰“åŒ…ï¼ˆç¬¬ä¸€æ¬¡è¦ä¸€ä¸¤åˆ†é’Ÿï¼‰...
+echo [2/3] ´ò°ü£¬µÚÒ»´ÎÒªÒ»Á½·ÖÖÓ ...
 python -m PyInstaller --clean --noconfirm dcwatch.spec
-if errorlevel 1 (echo [x] æ‰“åŒ…å¤±è´¥ï¼ŒæŠŠä¸Šé¢çš„æŠ¥é”™å‘æˆ‘ & pause & exit /b 1)
+if errorlevel 1 goto buildfail
 
-echo [3/3] æ”¶å°¾...
-if not exist "dist\dcwatch.exe" (echo [x] æ²¡ç”Ÿæˆ exe & pause & exit /b 1)
+echo [3/3] ÊÕÎ² ...
+if not exist "dist\dcwatch.exe" goto nofile
 if exist extension xcopy /e /i /y /q extension "dist\extension\" >nul
-copy /y README.md "dist\ä½¿ç”¨è¯´æ˜Ž.md" >nul 2>nul
+copy /y README.md "dist\Ê¹ÓÃËµÃ÷.md" >nul 2>nul
 
 echo.
-echo å¥½äº†ï¼š %cd%\dist\dcwatch.exe
-echo   - åŒå‡»å°±è·‘ï¼Œä¼šè‡ªåŠ¨æ‰“å¼€ç•Œé¢ http://127.0.0.1:8777
-echo   - é‚£ä¸ªé»‘çª—å£åˆ«å…³ï¼Œå…³äº†å°±ç­‰äºŽåœæ­¢ç›‘å¬ï¼ˆå¯ä»¥æœ€å°åŒ–ï¼‰
-echo   - é…ç½®å’Œæ¶ˆæ¯å­˜åœ¨ %%LOCALAPPDATA%%\dcwatch\dcwatch.db
-echo   - dist\extension å°±æ˜¯æµè§ˆå™¨æ—å¬è¦è£…çš„æ‰©å±•
+echo ´òºÃÁË: %cd%\dist\dcwatch.exe
+echo   - Ë«»÷¾ÍÅÜ£¬»á×Ô¶¯´ò¿ª½çÃæ http://127.0.0.1:8777
+echo   - ÄÇ¸öºÚ´°¿Ú±ð¹Ø£¬¹ØÁË¾ÍµÈÓÚÍ£Ö¹¼àÌý£¬¿ÉÒÔ×îÐ¡»¯
+echo   - ÅäÖÃºÍÏûÏ¢´æÔÚ %%LOCALAPPDATA%%\dcwatch\dcwatch.db
+echo   - dist\extension ¾ÍÊÇä¯ÀÀÆ÷ÅÔÌýÒª×°µÄÀ©Õ¹
 echo.
 pause
+exit /b 0
+
+:nopython
+echo.
+echo [x] ÕâÌ¨µçÄÔÉÏÃ»ÓÐ¿ÉÓÃµÄ Python¡£
+echo     È¥ https://www.python.org/downloads/ ÏÂÔØ°²×°£¬
+echo     °²×°µÚÒ»ÆÁÎñ±Ø¹´ÉÏ Add python.exe to PATH ÕâÒ»Ïî£¬
+echo     ×°Íê¹Øµô±¾´°¿Ú£¬ÔÙË«»÷Ò»´Î±¾ÎÄ¼þ¡£
+echo.
+pause
+exit /b 1
+
+:pipfail
+echo.
+echo [x] ×°ÒÀÀµÊ§°Ü£¬¼ì²éÍøÂç£¬»òÕß»»¹úÄÚÔ´ÊÖ¶¯×°Ò»´Î:
+echo     python -m pip install aiohttp pyinstaller -i https://pypi.tuna.tsinghua.edu.cn/simple
+echo.
+pause
+exit /b 1
+
+:buildfail
+echo.
+echo [x] ´ò°üÊ§°Ü£¬°ÑÉÏÃæµÄ±¨´í·¢ÎÒ¡£
+echo.
+pause
+exit /b 1
+
+:nofile
+echo.
+echo [x] Ã»Éú³É exe£¬°ÑÉÏÃæµÄÊä³ö·¢ÎÒ¡£
+echo.
+pause
+exit /b 1

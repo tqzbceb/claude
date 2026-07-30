@@ -11,7 +11,8 @@ python server.py            # 打开 http://127.0.0.1:8777
 文件：`server.py`（后端）· `ui.html`（界面）· `extension/`（Chrome 扩展，免 Token 方案）·
 `build.bat` + `dcwatch.spec`（打包成 exe）· `dcwatch.db`（自动生成，配置+消息都在里面）
 
-**不想装 Python？** Windows 上双击 `build.bat` 打成一个 `dcwatch.exe`，见第八节。
+**Windows 上最省事**：双击 `启动.bat`（自动装依赖 + 启动 + 打开界面）。
+想要单个 exe、以后不依赖 Python，双击 `build.bat`，见第八节。
 
 ---
 
@@ -22,15 +23,22 @@ python server.py            # 打开 http://127.0.0.1:8777
 1. 在聊天界面右侧的**文件面板**里找 `dcwatch.zip`（整包，含扩展），点下载；
    单个文件也可以分别下 `dcwatch/server.py`、`dcwatch/ui.html`、`dcwatch/extension/*`。
 2. 解压到任意文件夹，比如 `D:\dcwatch` 或 `~/dcwatch`。
-3. 装 Python 3.10+，然后：
+3. 装 Python 3.10+（安装时务必勾上 **Add python.exe to PATH**）。
+4. **Windows 最省事：双击 `启动.bat`。** 它自己检查 Python、缺依赖就装（默认源装不上会自动换国内源）、
+   然后启动并打开界面。以后每次开都双击它。
+
+   自己敲命令也行，注意**两条命令分两行敲**——Win11 默认终端是 PowerShell，`&&` 在里面会报错：
 
 ```bash
 cd dcwatch
-pip install aiohttp
-python server.py            # Windows 用 py server.py
+python -m pip install aiohttp
+python server.py --open     # 不加 --open 不会自动开浏览器
 ```
 
-4. 浏览器打开 http://127.0.0.1:8777 。全部数据都在你本机，云端不留任何东西。
+   在文件夹里开命令行的快捷办法：把资源管理器**地址栏**的路径删掉，输入 `cmd` 回车，
+   这样目录就是当前文件夹，不会出现 `can't open file 'server.py'`。
+
+5. 浏览器打开 http://127.0.0.1:8777 。全部数据都在你本机，云端不留任何东西。
    以后我改了代码，你重新下 zip 覆盖 `server.py` / `ui.html` 就行，`dcwatch.db` 不要删（配置和历史在里面）。
 
 ---
