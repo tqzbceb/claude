@@ -123,10 +123,13 @@ const observer = new MutationObserver(muts => {
 document.querySelectorAll('li[id^="chat-messages-"]').forEach(li => seen.add(li.id));
 observer.observe(document.body, { childList: true, subtree: true });
 
-/* 心跳：让 dcwatch 界面能显示“浏览器旁听 在线” */
-const ping = () => send({ ping: true });
+/* 心跳：让 dcwatch 界面左下角亮绿灯（服务端判定是 90 秒内有心跳），
+   顺手把当前频道名带上，扩展图标的提示里会显示「正在旁听 #xxx」。
+   20 秒一次，比 90 秒的判定留足余量，切频道后状态也跟得上。 */
+const ping = () => send({ ping: true, where: titleChannelName() });
 ping();
-setInterval(ping, 45000);
+setInterval(ping, 20000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
 
 globalThis.__dcwatch = { parseLi, seen, queue };    // 调试用：控制台可手动验证解析
 console.log("[dcwatch] bridge 已挂载，转发到", ENDPOINT);
