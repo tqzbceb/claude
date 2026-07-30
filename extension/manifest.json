@@ -1,21 +1,43 @@
 {
   "manifest_version": 3,
   "name": "dcwatch bridge",
-  "version": "1.2.0",
-  "description": "把 Discord 网页版里看到的新消息转发给本机 dcwatch（只读，不发任何东西给 Discord）。点图标可看连接状态和自检。",
-  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
-  "permissions": ["storage", "alarms"],
-  "background": { "service_worker": "background.js" },
+  "version": "1.3.0",
+  "description": "把 Discord 网页版里看到的新消息转发给本机 dcwatch（只读，不发任何东西给 Discord）。Discord 页面右下角有状态显示，点扩展图标也能自检。",
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_title": "dcwatch 桥接",
     "default_popup": "popup.html",
-    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png" }
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
   },
-  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon256.png" },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon256.png"
+  },
   "content_scripts": [
     {
-      "matches": ["https://discord.com/channels/*", "https://ptb.discord.com/channels/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://discord.com/channels/*",
+        "https://ptb.discord.com/channels/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
