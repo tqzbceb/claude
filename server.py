@@ -8,6 +8,7 @@ One process: Discord gateway listener + rule engine + OpenAI-compatible model cl
 Run:  python server.py            -> http://127.0.0.1:8777
 """
 import asyncio, base64, json, os, re, sqlite3, sys, time, argparse, contextlib, random, shutil, webbrowser
+import urllib.parse
 from pathlib import Path
 
 try:
@@ -16,8 +17,8 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.4.0"                               # 服务端版本，界面和扩展都能看到
-EXT_MIN = "1.4.0"                               # 低于这个版本的扩展要提示用户更新
+VERSION = "1.6.0"                               # 服务端版本，界面和扩展都能看到
+EXT_MIN = "1.6.0"                               # 低于这个版本的扩展要提示用户更新
 FROZEN = getattr(sys, "frozen", False)          # True 时 = PyInstaller 打出来的 exe
 # ui.html 在 exe 里是打进包的临时解包目录；数据必须写到真实可写目录
 BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -420,6 +421,139 @@ rule 里只允许这些字段（不确定的就别写，别编）：
 """
 
 
+WIZARD_SYS = """你是 dcwatch 的「规则向导」。用户通常说不清自己要什么，
+你的工作是**先把需求问清楚，再生成规则**——像一个有经验的同事帮他理需求，而不是拿到一句话就闷头输出。
+
+## 只输出下面两种 JSON 之一，前后不要有任何别的文字
+
+信息还不够，要问：
+{"stage":"ask",
+ "understood":"一句话复述你现在的理解，让用户能纠正你",
+ "questions":[
+   {"key":"where","q":"要盯哪里？","why":"不限定范围的话，整个服务器的消息都会进来",
+    "options":["就那一个帖子/子区","这个频道以及它下面所有帖子","整个服务器"],
+    "suggest":"这个频道以及它下面所有帖子","skippable":false}],
+ "assumed":["我先按这些假设：忽略机器人发的、不含私信"]}
+
+信息够了，出规则：
+{"stage":"done",
+ "rule":{...见下方字段表...},
+ "catches":["会命中：有人在 #交易 发『有多余的会员送人』"],
+ "misses":["不会命中：别人只发一张图没有文字"],
+ "notes":["要注意的事"],
+ "verify":"教用户怎么自己验一遍"}
+
+## 提问纪律（很重要）
+- 一轮最多问 3 个，只问最影响结果的。**总共别超过 3 轮**，够用就出规则；用户催就立刻出。
+- 每个问题必须给 options 和 suggest。用户答「都行 / 不确定 / 你决定」时，直接采用 suggest，不要再追问同一件事。
+- 说大白话，不要提字段名。不要问用户答不出的东西。
+- 需要频道/子区 ID 时：先看下面「已知的频道和人」，有就直接用。没有就把这一项设成
+  skippable=true，并在 q 里教他怎么取（在 Discord 里右键那个频道或帖子标题 → 复制频道 ID；
+  或者干脆先在那个频道说一句话，dcwatch 见过它就能自动认出来），同时告诉他跳过的后果。
+- 用户已经说过的，不要再问一遍。别问跟规则无关的（比如用哪个模型）。
+
+## 你必须自己过一遍的维度（缺哪个才问）
+1 范围：哪个服务器 / 频道 / 子区（帖子）？要不要连这个频道下面的帖子一起？私信算不算（默认不算）
+2 人：任何人 / 只某几个人 / 排除机器人（默认排除）/ 要不要连他自己发的也算
+3 触发内容 —— 这里最容易做错：
+   · 明确的词（"发版"、"报错"）→ keywords_any 就够
+   · **模糊意图**（"有人捐用不完的套餐"、"有人在吵架"、"有价值的消息"）→ 千万别只写死关键词。
+     正确做法：keywords_any 放 10~20 个同义词/口语/英文做**粗筛**，action 用 ai_tag，
+     把判定标准写进 prompt，再用 notify_min_score 卡阈值（一般 60）。
+     理由：死关键词漏得多，全交给 AI 又慢又贵，粗筛 + AI 判定才是准的。
+4 强度：要不要 @我 才算？最短字数（滤掉"哈哈""+1""？"）
+5 动作：只提醒 / AI 判重要度打分 / 定期摘要 / 抽成结构化字段 / 转发到外部 / 自动回复
+6 频率：cooldown_sec、max_per_hour、notify_min_score。会刷屏的地方必须给冷却
+7 边界（用户最容易漏，你要主动问）：**什么情况不该提醒？**
+   让他举一个"这种就别烦我"的例子，把它变成更严的条件或写进 notes
+8 时间：免打扰时段是全局设置、不在规则里，只在 notes 里提一句
+
+## 领域经验（用户想不到，你要主动补上）
+- 「捐/送/转让 用不完的套餐、会员、名额、车位」：说法极多——捐、送、白送、出、转、让、
+  分享、有富余、多的、闲置、代、蹲、求、拼、车位、give away, spare, unused, free。
+  粗筛词要列全，再用 ai_tag 判"是不是真的在无偿给出可用资源"。提醒用户：这种帖子开头常是
+  "有人要吗"，别只盯"捐"字。
+- 抢名额 / 限量：时效强 → cooldown_sec 给 5，别把 max_per_hour 设太低，宁可多提醒
+- 报错 / 求助：min_len 给 8 以上，滤掉"救""？""在吗"
+- 老板或客户点名：常见 mention_only=true，但对方也可能不 @ 直接叫名字
+  → 建议在 keywords_any 里补上他平时怎么称呼你
+- 水群频道：用 ai_summary + summary_every 20，别一条条提醒
+- 空投 / 白名单 / 公告：**ignore_bots 必须设成 false**，这类消息基本都是机器人发的——最容易漏的一条
+- 只盯一个已有的帖子 → thread_ids 填那个帖子的 ID
+  想"这个频道以后新开的帖子都算" → channel_ids + include_threads_of_channels=true
+- 多个 Discord 账号在旁听时，可以用 accounts 只听某个号
+
+## rule 允许的字段（不确定就别写，别编）
+  name 规则名（短，中文）
+  guild_ids / channel_ids / thread_ids   服务器 / 频道 / 子区(帖子) ID 数组
+  include_threads_of_channels  true 时 channel_ids 也匹配这些频道下的所有帖子
+  dm  true = 包含私信
+  accounts  只听这些 Discord 账号名（多号旁听时用）
+  author_ids  用户 ID 数组 | author_name_contains  昵称包含
+  ignore_bots  默认 true | mention_only  true = 只在 @我 时命中
+  keywords_any 含任一即命中 | keywords_all 必须全含 | regex 正则 | min_len 最短字数
+  action  只能是 notify / ai_tag / ai_reply / ai_summary / ai_extract / webhook
+  prompt  要模型干的活（中文，判定标准写清楚）
+  notify_min_score  ai_tag 时低于这个分不提醒（0-100）
+  summary_every  ai_summary 时攒够几条做一次
+  cooldown_sec / max_per_hour  防刷屏
+
+## 铁律
+1. ID 只能用「已知的频道和人」里给的，或用户自己在对话里贴出的 17~20 位数字。**绝对不许编 ID**。
+   没有就把字段留空，并在 notes 里写清楚该怎么补。
+2. action 只能是上面那六个。
+3. done 时必须给 catches 和 misses，让用户能判断你有没有理解错。
+4. 生成 ≠ 生效：notes 里要提醒「保存后先用试算验一下，再观察一会儿」。
+5. action=ai_reply 必须警告：这会用他本人的身份公开发言；浏览器旁听模式根本发不出去，需要 Bot Token。
+"""
+
+
+def loose_json(txt):
+    """模型经常给带 ``` 或前后废话的 JSON。尽量捞出来，捞不到就抛。"""
+    t = (txt or "").strip()
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.S)
+    m = re.search(r"\{.*\}", t, re.S)
+    if not m:
+        raise ValueError("模型没有输出 JSON")
+    return json.loads(m.group(0))
+
+
+def sanitize_draft(draft, notes, known_ids, model=""):
+    """把模型给的规则草稿洗成合法规则。编出来的 ID、不认识的动作一律挡掉。"""
+    rule = dict(DEFAULT_RULE)
+    for k, v in (draft.items() if isinstance(draft, dict) else []):
+        if k not in DEFAULT_RULE or v is None:
+            continue
+        d = DEFAULT_RULE[k]
+        if isinstance(d, list):
+            vals = [str(x).strip() for x in (v if isinstance(v, list) else [v]) if str(x).strip()]
+            if k.endswith("_ids"):        # 编出来的 ID 一律扔掉，免得规则悄悄匹配不到
+                bad = [x for x in vals if not (x.isdigit() and x in known_ids)]
+                vals = [x for x in vals if x.isdigit() and x in known_ids]
+                if bad:
+                    notes.append(f"模型给的 {k} 里有查不到的 ID（{', '.join(bad[:3])}），已丢掉——"
+                                 f"这个字段请你自己填，或先让那个频道来一条消息")
+            rule[k] = vals
+        elif isinstance(d, bool):
+            rule[k] = bool(v)
+        elif isinstance(d, int):
+            with contextlib.suppress(Exception):
+                rule[k] = int(v)
+        else:
+            rule[k] = str(v)
+    if rule["action"] not in ACTIONS:
+        notes.append(f"模型给的动作「{rule['action']}」不认识，先按「只提醒我」处理")
+        rule["action"] = "notify"
+    if rule["action"] == "ai_reply":
+        notes.append("自动回复会用你的身份公开发言，建议先默认停用观察几天；"
+                     "另外浏览器旁听模式发不出去，需要 Bot Token")
+    if not (rule["guild_ids"] or rule["channel_ids"] or rule["thread_ids"] or rule["dm"]):
+        notes.append("没限定频道：现在是所有能收到的地方都会触发。要收窄就把频道 ID 填进「听哪里」")
+    if rule["action"].startswith("ai") and not model:
+        notes.append("还没设默认模型，这条规则要先在「模型接入」里选一个模型")
+    return rule, notes
+
+
 def ext_dir():
     """扩展目录：源码版在 BASE 下；exe 版优先打进包里的，其次 exe 旁边，最后数据目录。"""
     for p in (BASE / "extension", Path(sys.executable).resolve().parent / "extension",
@@ -475,9 +609,16 @@ class App:
         self.sum_buf: dict[str, list] = {}
         self.last_ingest = 0.0        # 浏览器旁听最后一次投递时间（所有桥里最新的那次）
         self.ingest_count = 0
+        self.started = now()          # 用于诊断包里的「已跑多久」
         self.bridges = {}             # 每个装了扩展的浏览器 = 一个桥，独立跟踪
         self._inflight = set()        # 正在处理的 msg_id，防两个桥同时报同一条
         self._last_toast = 0.0        # 系统通知防刷屏
+        # 本机提醒合并：涌进来一批消息时攒成一条通知 + 一次提示音。
+        # 以前提示音一条一条播（PlaySound 是异步的），十几条叠在一起就是一片电音；
+        # 通知那边则是 4 秒内直接丢掉多余的，等于漏消息。两个都不对。
+        self._pend = []               # [(head, body)] 等着合并发出去的
+        self._pend_task = None
+        self._pend_sound = False
         self.port = 8777
 
     def touch_bridge(self, b, n=0, err=""):
@@ -491,6 +632,8 @@ class App:
         br["last"] = now()
         br["count"] += n
         br["err"] = err
+        if isinstance(b.get("stats"), dict):      # 扩展侧的实情，导出诊断时要用
+            br["stats"] = b["stats"]
         self.last_ingest = now()
         return br
 
@@ -505,6 +648,32 @@ class App:
         self.db.x("INSERT INTO logs(ts,level,text) VALUES(?,?,?)", (now(), level, str(text)[:800]))
         print(f"[{level}] {text}", flush=True)
         asyncio.create_task(self.bus.push("log", {"ts": now(), "level": level, "text": str(text)[:800]}))
+
+    def rule_ctx(self, extra=""):
+        """喂给建规则模型的现场情况：见过哪些频道/人、什么模式、有哪些出口。
+        只有这里出现过的 ID 才允许写进规则，别的一律当编的。"""
+        chans = self.db.q("""SELECT channel_id id, channel_name nm, parent_id, COUNT(*) n, MAX(ts) t
+                             FROM messages GROUP BY channel_id ORDER BY t DESC LIMIT 40""")
+        people = self.db.q("""SELECT author_id id, author nm, COUNT(*) n, MAX(ts) t FROM messages
+                              WHERE author_id<>'' GROUP BY author_id ORDER BY t DESC LIMIT 40""")
+        known = {c["id"] for c in chans} | {p["id"] for p in people}
+        known |= {c["parent_id"] for c in chans if c["parent_id"]}
+        known |= set(re.findall(r"\d{15,25}", extra or ""))      # 用户自己粘的 ID 也算真的
+        L = ["已知的频道和人（只能用这里的 ID，其它一律留空）："]
+        L += [f"频道 {c['nm']} = {c['id']}"
+              + (f"（是 {c['parent_id']} 的子区/帖子）" if c["parent_id"] else "")
+              + f"，收到过 {c['n']} 条" for c in chans] or ["（本机还没收到过任何消息，没有可用 ID）"]
+        L += [f"人 {p['nm']} = {p['id']}，发过 {p['n']} 条" for p in people]
+        mode = self.cfg["discord"].get("mode", "browser")
+        L.append({"browser": "当前是浏览器旁听模式：能收不能发，action 不要用 ai_reply。",
+                  "bot": "当前是 Bot Token 模式：能收也能发。",
+                  "user": "当前是用户 Token 模式：能收也能发（有风险）。"}.get(mode, ""))
+        accs = sorted({b.get("account") for b in self.bridges.values() if b.get("account")})
+        if accs:
+            L.append("正在旁听的 Discord 账号：" + "、".join(accs))
+        hooks = [h.get("name") or h.get("url", "") for h in self.cfg.get("hooks", []) if h.get("enabled")]
+        L.append("已配好的转发出口：" + ("、".join(hooks) if hooks else "（没有，action=webhook 要先去「通知与转发」加）"))
+        return "\n".join(x for x in L if x), known
 
     def save_cfg(self):
         self.db.set_cfg(self.cfg)
@@ -898,10 +1067,10 @@ class App:
         text = f"{head}\n{body}{extra}" + (f"\n{url}" if url else "")
         jobs = {}
         if not self.in_quiet_hours():
-            if s.get("sound"):
-                jobs["提示音"] = self.local_sound()
-            if s.get("toast"):
-                jobs["系统通知"] = self.local_toast(head, body[:180])
+            # 本机提醒走合并队列（涌入时一条通知 + 一次提示音）；
+            # 转发出口不合并 —— 那是给机器看的，每条都得原样送出去。
+            self.queue_local(head, body[:180], sound=bool(s.get("sound")),
+                             toast=bool(s.get("toast")))
         vals = self.hook_vars(ev, row, head, body, extra, url, text)
         for i, h in enumerate(s.get("hooks") or []):
             if h.get("enabled", True) and h.get("url"):
@@ -966,7 +1135,54 @@ class App:
                         raise RuntimeError(f"对方返回 {str(j)[:150]}")
             return t
 
+    NOTIF_WINDOW = 5.0            # 这么多秒内的提醒攒成一条
+
+    def queue_local(self, head, body, sound=True, toast=True):
+        """把本机提醒放进合并队列。同一波消息只会响一声、弹一条。"""
+        if not (sound or toast):
+            return
+        self._pend.append((head, body, toast))
+        self._pend_sound = self._pend_sound or sound
+        if self._pend_task is None or self._pend_task.done():
+            self._pend_task = asyncio.create_task(self._flush_local())
+
+    async def _flush_local(self):
+        """等一个小窗口，把这段时间攒下的提醒合成一条发出去。"""
+        try:
+            await asyncio.sleep(self.NOTIF_WINDOW)
+            items, sound = self._pend, self._pend_sound
+            self._pend, self._pend_sound = [], False
+            if not items:
+                return
+            if sound:
+                with contextlib.suppress(Exception):
+                    await self.local_sound()          # 一波只响一声
+            shown = [x for x in items if x[2]]
+            if not shown:
+                return
+            if len(shown) == 1:
+                head, body, _ = shown[0]
+            else:
+                head = f"{len(shown)} 条新消息命中规则"
+                lines = [f"{h}：{b.splitlines()[0][:40]}" if b else h for h, b, _ in shown[:4]]
+                if len(shown) > 4:
+                    lines.append(f"…还有 {len(shown) - 4} 条，去 dcwatch 收信箱看")
+                body = "\n".join(lines)
+            with contextlib.suppress(Exception):
+                await self.local_toast(head, body, force=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.log("error", f"本机提醒失败: {e}")
+
+    _last_sound = 0.0
+
     async def local_sound(self, name=None):
+        # 最后一道闸：不管谁来调，2 秒内不重复播 —— 重叠播放就是那片电音
+        if name is None:
+            if now() - self._last_sound < 2:
+                return
+            self._last_sound = now()
         f = sound_path(name if name is not None else self.cfg["sinks"].get("sound_name", ""))
         if f is None:                                    # 兼容老配置里的绝对路径
             old = (self.cfg["sinks"].get("sound_file") or "").strip()
@@ -1229,7 +1445,11 @@ def routes(app: App):
         if "discord" in patch and str(patch["discord"].get("token", "")).startswith("***"):
             patch["discord"]["token"] = app.cfg["discord"]["token"]
         if "providers" in patch:
+            if not isinstance(patch["providers"], list):      # 形状不对就别让它 500
+                return web.json_response({"ok": False, "error": "providers 必须是数组"}, status=400)
             for p in patch["providers"]:
+                if not isinstance(p, dict):
+                    return web.json_response({"ok": False, "error": "providers 里每一项必须是对象"}, status=400)
                 if str(p.get("api_key", "")).startswith("***"):
                     old = app.provider(p["name"]) or {}
                     p["api_key"] = old.get("api_key", "")
@@ -1349,6 +1569,90 @@ def routes(app: App):
             return web.json_response({"ok": False, "error": str(e)})
         return web.json_response({"ok": True, "guilds": out})
 
+    @r.get("/api/prompts")
+    async def prompts(_):
+        """把写死在程序里的提示词原样交出来。你有权看见 AI 是被怎么指挥的。
+        这两条不在界面里改（改坏了向导会直接失效），要改就改 server.py 里的常量。"""
+        return web.json_response({"ok": True, "builtin": [
+            {"key": "wizard", "name": "规则向导（反问你的那个）",
+             "when": "「监听规则」页顶部每问你一轮、每出一次规则，都会带上这段",
+             "why": "把「该问什么、什么最容易漏、模糊需求该怎么拆」这些经验写死在这里，"
+                    "这样换成便宜的模型也不至于乱答",
+             "where": "server.py 里的 WIZARD_SYS", "text": WIZARD_SYS},
+            {"key": "compose", "name": "一句话直接出规则（老路径）",
+             "when": "向导之外的快速通道，现在界面默认走向导，这条留着兼容",
+             "why": "只翻译不反问，适合你已经很清楚要什么的时候",
+             "where": "server.py 里的 COMPOSE_SYS", "text": COMPOSE_SYS},
+        ], "editable_hint": "命中之后那几种动作（打分、摘要、抽取、回复）的提示词是可以改的，"
+                            "在「模型接入」页最下面。这里这两条是建规则用的，属于程序骨架。"})
+
+    @r.post("/api/rules/wizard")
+    async def wizard(req):
+        """引导式建规则：模型先反问、补齐用户想不到的地方，确认没疏漏了才出规则。
+        无状态——整段对话由界面带上来。"""
+        b = await req.json()
+        turns = [m for m in (b.get("messages") or [])
+                 if isinstance(m, dict) and m.get("role") in ("user", "assistant") and str(m.get("content") or "").strip()]
+        if not turns:
+            return web.json_response({"ok": False, "error": "先说一句你想监听什么"})
+        turns = turns[-24:]                                  # 别把上下文撑爆
+        prov = b.get("provider") or app.cfg["default_model"]["provider"]
+        model = b.get("model") or app.cfg["default_model"]["model"]
+        if not model:
+            return web.json_response({"ok": False, "error": "还没选模型：先去「模型接入」填 Key 并选一个模型"})
+        said = "\n".join(str(m["content"]) for m in turns if m["role"] == "user")
+        ctx, known_ids = app.rule_ctx(said)
+        rounds = sum(1 for m in turns if m["role"] == "assistant")
+        push = ("\n\n【注意】已经问过 %d 轮了，这一轮**必须**输出 stage=done，缺的信息就用你的推荐值补上，"
+                "把不确定的地方写进 notes。" % rounds) if rounds >= 3 else ""
+        msgs = ([{"role": "system", "content": WIZARD_SYS},
+                 {"role": "user", "content": f"现场情况：\n{ctx}{push}\n\n下面是我们的对话。"}]
+                + turns)
+        try:
+            out = await app.chat(prov, model, msgs, json_mode=True, max_tokens=1600, rule="wizard")
+        except Exception as e:
+            return web.json_response({"ok": False, "error": f"模型调用失败: {e}"})
+        try:
+            raw = loose_json(out)
+        except Exception:
+            # 弱模型不给 JSON 是常态。把它说的话当追问端上去，别让向导死在这。
+            txt = re.sub(r"\s+", " ", (out or "")).strip()[:400] or "（模型没说话）"
+            return web.json_response({"ok": True, "stage": "ask", "understood": "",
+                                      "questions": [{"q": txt, "why": "这个模型没按格式回答，你可以直接回它，"
+                                                                     "或者换个强一点的模型再来",
+                                                     "options": [], "suggest": "", "skippable": True}],
+                                      "assumed": [], "loose": True})
+        stage = str(raw.get("stage") or ("done" if raw.get("rule") else "ask")).lower()
+        if stage != "done":
+            qs = []
+            for q in (raw.get("questions") or [])[:3]:
+                if isinstance(q, str):
+                    q = {"q": q}
+                if not isinstance(q, dict) or not str(q.get("q") or "").strip():
+                    continue
+                qs.append({"key": str(q.get("key") or "")[:24],
+                           "q": str(q["q"])[:300], "why": str(q.get("why") or "")[:300],
+                           "options": [str(o)[:60] for o in (q.get("options") or [])][:6],
+                           "suggest": str(q.get("suggest") or q.get("default") or "")[:60],
+                           "skippable": bool(q.get("skippable"))})
+            if not qs:      # 说要问却没问出东西 → 别卡住，让用户补一句
+                qs = [{"q": "还想补充点什么吗？没有就说「就这样，出规则」", "why": "", "options": [],
+                       "suggest": "就这样，出规则", "skippable": True}]
+            return web.json_response({"ok": True, "stage": "ask",
+                                      "understood": str(raw.get("understood") or "")[:400],
+                                      "questions": qs,
+                                      "assumed": [str(x)[:200] for x in (raw.get("assumed") or [])][:5]})
+        rule, notes = sanitize_draft(raw.get("rule") or {}, list(raw.get("notes") or []), known_ids, model)
+        rule["provider"], rule["model"] = b.get("provider") or "", b.get("model") or ""
+        if not rule["name"]:
+            rule["name"] = (said.strip().splitlines() or ["新规则"])[0][:20]
+        notes.append("生成不等于生效：保存后先用下面的「试算」拿真消息验一遍，再观察一会儿。")
+        return web.json_response({"ok": True, "stage": "done", "rule": rule,
+                                  "catches": [str(x)[:200] for x in (raw.get("catches") or [])][:6],
+                                  "misses": [str(x)[:200] for x in (raw.get("misses") or [])][:6],
+                                  "verify": str(raw.get("verify") or "")[:400],
+                                  "notes": notes[:8]})
+
     @r.post("/api/rules/compose")
     async def compose(req):
         """一句中文 → 规则草稿。生成完只回给界面，用户确认保存才生效。"""
@@ -1358,18 +1662,7 @@ def routes(app: App):
             return web.json_response({"ok": False, "error": "先说一句你想怎么监听"})
         prov = b.get("provider") or app.cfg["default_model"]["provider"]
         model = b.get("model") or app.cfg["default_model"]["model"]
-        # 把本机见过的频道/人喂给模型，它才有真 ID 可用（不给就只能留空）
-        chans = app.db.q("""SELECT channel_id id, channel_name nm, parent_id, MAX(ts) t FROM messages
-                            GROUP BY channel_id ORDER BY t DESC LIMIT 40""")
-        people = app.db.q("""SELECT author_id id, author nm, MAX(ts) t FROM messages
-                             WHERE author_id<>'' GROUP BY author_id ORDER BY t DESC LIMIT 40""")
-        known_ids = {c["id"] for c in chans} | {p["id"] for p in people}
-        known_ids |= {c["parent_id"] for c in chans if c["parent_id"]}
-        known_ids |= set(re.findall(r"\d{15,25}", text))       # 用户自己粘的 ID 也算
-        ctx = "已知的频道和人（只能用这里的 ID）：\n"
-        ctx += "\n".join(f"频道 {c['nm']} = {c['id']}" + (f"（是 {c['parent_id']} 的子区）" if c["parent_id"] else "")
-                         for c in chans) or "（本机还没收到过消息，没有可用 ID）"
-        ctx += "\n" + "\n".join(f"人 {p['nm']} = {p['id']}" for p in people)
+        ctx, known_ids = app.rule_ctx(text)
         try:
             out = await app.chat(prov, model, [{"role": "system", "content": COMPOSE_SYS},
                                                {"role": "user", "content": f"{ctx}\n\n需求：{text}"}],
@@ -1378,38 +1671,8 @@ def routes(app: App):
         except Exception as e:
             return web.json_response({"ok": False, "error": f"生成失败: {e}"})
 
-        draft, notes = raw.get("rule") or raw, list(raw.get("notes") or [])
-        rule = dict(DEFAULT_RULE)
-        for k, v in (draft.items() if isinstance(draft, dict) else []):
-            if k not in DEFAULT_RULE or v is None:
-                continue
-            d = DEFAULT_RULE[k]
-            if isinstance(d, list):
-                vals = [str(x).strip() for x in (v if isinstance(v, list) else [v]) if str(x).strip()]
-                if k.endswith("_ids"):        # 编出来的 ID 一律扔掉，免得规则悄悄匹配不到
-                    bad = [x for x in vals if not (x.isdigit() and x in known_ids)]
-                    vals = [x for x in vals if x.isdigit() and x in known_ids]
-                    if bad:
-                        notes.append(f"模型给的 {k} 里有查不到的 ID（{', '.join(bad[:3])}），已丢掉——"
-                                     f"这个字段请你自己填，或先让那个频道来一条消息")
-                rule[k] = vals
-            elif isinstance(d, bool):
-                rule[k] = bool(v)
-            elif isinstance(d, int):
-                with contextlib.suppress(Exception):
-                    rule[k] = int(v)
-            else:
-                rule[k] = str(v)
-        if rule["action"] not in ACTIONS:
-            notes.append(f"模型给的动作「{rule['action']}」不认识，先按「只提醒我」处理")
-            rule["action"] = "notify"
-        if rule["action"] == "ai_reply":
-            notes.append("自动回复会用你的身份公开发言，建议先默认停用观察几天；"
-                         "另外浏览器旁听模式发不出去，需要 Bot Token")
-        if not (rule["guild_ids"] or rule["channel_ids"] or rule["thread_ids"] or rule["dm"]):
-            notes.append("没限定频道：现在是所有能收到的地方都会触发。要收窄就把频道 ID 填进「听哪里」")
-        if rule["action"].startswith("ai") and not model:
-            notes.append("还没设默认模型，这条规则要先在「模型接入」里选一个模型")
+        draft = raw.get("rule") or raw
+        rule, notes = sanitize_draft(draft, list(raw.get("notes") or []), known_ids, model)
         rule["provider"], rule["model"] = b.get("provider") or "", b.get("model") or ""
         return web.json_response({"ok": True, "rule": rule, "notes": notes[:6]})
 
@@ -1645,6 +1908,133 @@ def routes(app: App):
             app.db.set_cfg(app.cfg)
         return web.json_response({"ok": True, "sounds": list_sounds(),
                                   "current": app.cfg["sinks"].get("sound_name", "")})
+
+    @r.get("/diagnose.txt")
+    async def diagnose(req):
+        """一键导出诊断包：程序状态 + 扩展状态 + 规则 + 出口 + 日志，全在一个文本文件里。
+        出问题时把这个文件发出去就够了，不用别人猜。
+        默认带上消息正文的前 40 字（排查关键词命中要用）；不想带就加 ?text=0。"""
+        keep_text = req.query.get("text", "1") != "0"
+        L, P = [], lambda *a: L.append(" ".join(str(x) for x in a))
+        mask = lambda u: re.sub(r"(https?://[^/]+).*", r"\1/…", u or "") or "（空）"
+        # 列表别按 Python 语法打印，人要看的
+        def V(v):
+            if isinstance(v, (list, tuple)):
+                return " / ".join(str(x) for x in v) if v else "-"
+            if v is True:
+                return "是"
+            if v is False:
+                return "否"
+            return "-" if v in ("", None) else str(v)
+
+        P("dcwatch 诊断包")
+        P("生成时间", time.strftime("%Y-%m-%d %H:%M:%S"), "（本机时间）")
+        P("=" * 62)
+
+        P("\n[1] 程序")
+        P("  版本            ", VERSION, " / 要求扩展至少", EXT_MIN)
+        P("  磁盘上的扩展版本", ext_version() or "（没找到 extension 文件夹）")
+        P("  打包运行(exe)   ", getattr(sys, "frozen", False))
+        P("  Python          ", sys.version.split()[0], "|", sys.platform)
+        P("  数据库          ", DB_PATH, "(", os.path.getsize(DB_PATH) // 1024 if os.path.exists(DB_PATH) else 0, "KB )")
+        P("  已跑            ", round((now() - app.started) / 60, 1), "分钟")
+        n_msg = (app.db.q("SELECT COUNT(*) c FROM messages") or [{"c": 0}])[0]["c"]
+        n_hit = (app.db.q("SELECT COUNT(*) c FROM messages WHERE matched=1") or [{"c": 0}])[0]["c"]
+        P("  库里消息        ", n_msg, "条，其中命中过规则", n_hit, "条")
+
+        P("\n[2] 出网设置（模型拉不到、转发失败先看这里）")
+        P("  代理            ", app.cfg.get("net", {}).get("proxy") or "（没设，走系统环境变量）")
+        P("  默认模型        ", app.cfg["default_model"].get("provider"), "/", app.cfg["default_model"].get("model"))
+        for pr in app.cfg.get("providers", []):
+            P("  端点            ", pr.get("name"), "→", pr.get("base_url"),
+              "| Key", "已填" if pr.get("api_key") else "空")
+        used = app.db.q("SELECT COUNT(*) n FROM aiusage WHERE ts>?", (now() - 86400,))[0]["n"]
+        P("  近 24 小时调模型", used, "次 / 上限", app.cfg.get("ai_daily_call_cap", 500))
+        errs = app.db.q("SELECT text FROM logs WHERE level='error' ORDER BY id DESC LIMIT 5")
+        P("  最近 5 条报错    ", "（没有）" if not errs else "")
+        for e in errs:
+            P("    -", e["text"][:160])
+
+        P("\n[3] 收信来源")
+        d = app.cfg["discord"]
+        P("  模式            ", d.get("mode"), "| 开关", app.cfg["sources"].get("discord"),
+          "| Token", "已填" if d.get("token") else "空")
+        P("  Discord 直连状态", (app.dc.state if app.dc else "-"))
+        brs = app.bridge_list()
+        P("  浏览器旁听      ", len(brs), "个桥，", sum(1 for b in brs if b["fresh"]), "个还活着")
+        if not brs:
+            P("    （一个都没有 = 扩展没装上，或者装完没在 Discord 页面按 F5）")
+        for b in brs:
+            P("    -", b.get("account") or "未知账号", "|", b.get("browser") or "?",
+              "| 扩展 v" + (b.get("ver") or "?"), "|", "活着" if b["fresh"] else "失联",
+              "（", b["ago"], "秒前）| 报过", b.get("count", 0), "条",
+              ("| 错误: " + b["err"]) if b.get("err") else "")
+            P("      在盯     ", b.get("where") or "（不知道）")
+            st = b.get("stats") or {}
+            if st:
+                sk = st.get("skip") or {}
+                P("      扩展侧   ", "解析", st.get("parsed", 0), "条 → 上报", st.get("sent", 0), "条",
+                  "| 页面上有", st.get("lis", "?"), "条消息 | 路径", st.get("url", "?"))
+                P("      跳过原因 ", "历史", sk.get("history", 0), "· 整批渲染", sk.get("render", 0),
+                  "· 重复", sk.get("dup", 0), "· 无正文", sk.get("notext", 0), "· 静默期", sk.get("quiet", 0))
+                for rc in (st.get("recent") or [])[:6]:
+                    P("        最近   ", (rc.get("what") or "")[:40], "→", rc.get("why") or "")
+            else:
+                P("      扩展侧   （这个桥还没送来诊断数据，扩展可能是旧版）")
+
+        P("\n[4] 规则（自上而下全部匹配）")
+        rules = app.rules(False)
+        if not rules:
+            P("  一条都没有")
+        for j in rules:
+            P("  -", ("[开]" if j.get("enabled") else "[停]"), j.get("name") or "(没名字)",
+              "| 命中", j.get("hits", 0), "次", "| 动作", j.get("action"))
+            P("      听哪里   ", "服务器", V(j.get("guild_ids")), "频道", V(j.get("channel_ids")),
+              "子区", V(j.get("thread_ids")),
+              "| 含子区" if j.get("include_threads_of_channels") else "", "| 私信" if j.get("dm") else "")
+            P("      听谁     ", "用户", V(j.get("author_ids")), "| 昵称含", V(j.get("author_name_contains")),
+              "| 忽略机器人", V(j.get("ignore_bots")), "| 只在@我", V(j.get("mention_only")))
+            P("      听内容   ", "任一", V(j.get("keywords_any")), "| 全含", V(j.get("keywords_all")),
+              "| 正则", V(j.get("regex")), "| 最短", j.get("min_len"))
+            P("      阈值/节流", "分数≥", j.get("notify_min_score"), "| 冷却", j.get("cooldown_sec"), "秒",
+              "| 每小时≤", j.get("max_per_hour"), "| 攒", j.get("summary_every"))
+
+        P("\n[5] 通知与转发")
+        sk = app.cfg.get("sinks", {})
+        P("  本机提醒        ", "弹窗", sk.get("toast"), "| 声音", sk.get("sound"), sk.get("sound_name") or "",
+          "| 免打扰", sk.get("quiet_from"), "-", sk.get("quiet_to"), "| 分数门槛", sk.get("min_score"))
+        for h in sk.get("hooks", []):
+            P("  出口            ", ("[开]" if h.get("enabled") else "[停]"), h.get("name") or "(没名字)",
+              "→", mask(h.get("url")), "| 测过" if h.get("verified") else "| 没测过")
+        if not sk.get("hooks"):
+            P("  出口             （一个都没配）")
+
+        P("\n[6] 最近 200 条运行日志（新的在上）")
+        lgs = app.db.q("SELECT * FROM logs ORDER BY id DESC LIMIT 200")
+        if not lgs:
+            P("  （空的。刚启动就是这样；如果跑了一阵还是空的，说明什么动作都没触发过）")
+        for lg in lgs:
+            P("  ", time.strftime("%m-%d %H:%M:%S", time.localtime(lg["ts"])),
+              (lg["level"] or "").upper().ljust(5), lg["text"])
+
+        P("\n[7] 最近 30 条消息" + ("（含正文前 40 字）" if keep_text else "（不含正文）"))
+        for m in app.db.q("SELECT * FROM messages ORDER BY id DESC LIMIT 30"):
+            P("  ", time.strftime("%m-%d %H:%M:%S", time.localtime(m["ts"])),
+              "#" + (m["channel_name"] or "?"), "|", m["author"] or "?",
+              "| 命中" if str(m["matched"] or "") not in ("", "0", "None") else "|     ",
+              ("| 分 " + str(m["score"])) if m["score"] is not None else "",
+              "| 桥 " + (m["bridge"] or "-"), "| 号 " + (m["account"] or "-"))
+            if keep_text:
+                P("      ", re.sub(r"\s+", " ", m["content"] or "")[:40])
+
+        P("\n" + "=" * 62)
+        P("看不出问题就把整个文件发给对方。里面没有 Token、没有 API Key、URL 只留了域名。")
+        body = "\n".join(L)
+        fn = "dcwatch-诊断-" + time.strftime("%m%d-%H%M") + ".txt"
+        return web.Response(body=body.encode("utf-8"), headers={
+            "Content-Type": "text/plain; charset=utf-8",
+            "Content-Disposition": f'attachment; filename="dcwatch-diagnose.txt"; '
+                                   f"filename*=UTF-8''{urllib.parse.quote(fn)}"})
 
     @r.get("/api/logs")
     async def logs(_):

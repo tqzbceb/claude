@@ -3,7 +3,27 @@
    端口和 dcwatch 的 --port 一致，默认 8777。 */
 const ENDPOINT = "http://127.0.0.1:8777/api/ingest";
 const BOOT_QUIET_MS = 4000;   // 刚打开/刚切频道时已有的历史消息不算“新消息”
-const BURST_SKIP = 25;        // 一次涌入超过这么多条 = 切频道渲染，不上报
+const MSG_MAX_AGE_MS = 3 * 60 * 1000;  // 消息自己的时间戳超过这么久 = 历史，不上报
+const RENDER_BURST = 8;       // 一批就冒出这么多条 = Discord 在渲染/回填，不是真的来了这么多消息
+const DISCORD_EPOCH = 1420070400000;
+
+/* Discord 的消息 ID（snowflake）高位就是毫秒时间戳。
+   这是判断「新消息还是历史」最可靠的依据 —— 比「页面加载后 4 秒」靠谱得多：
+   在侧栏点开子区、往上滚加载旧消息，URL 都不变，光靠时间窗一定会把历史当新消息灌出来。 */
+function snowflakeMs(id) {
+  try {
+    const t = Number(BigInt(id) >> 22n) + DISCORD_EPOCH;
+    return t > DISCORD_EPOCH && t < Date.now() + 60000 ? t : 0;
+  } catch (e) { return 0; }
+}
+
+/* 自诊断计数：出问题时你能直接看到「扩展到底有没有看见这条消息、为什么没上报」 */
+const stats = { parsed: 0, sent: 0, lastSentAt: 0,
+  skip: { history: 0, dup: 0, notext: 0, render: 0, quiet: 0 }, recent: [] };
+function note(what, why) {
+  stats.recent.unshift({ t: Date.now(), what: String(what).slice(0, 60), why });
+  if (stats.recent.length > 12) stats.recent.pop();
+}
 
 const seen = new Set();
 let boot = Date.now();
@@ -78,6 +98,7 @@ function parseLi(li) {
     node = node.previousElementSibling;
   }
 
+  const ms = snowflakeMs(msg_id);
   const u = fromUrl();
   const is_thread = !!(u.channel_id && channel_id !== u.channel_id);
   const name = is_thread ? (threadPanelName() || channel_id) : (titleChannelName() || channel_id);
@@ -87,6 +108,8 @@ function parseLi(li) {
     is_thread, channel_name: name,
     author, author_id, is_bot,
     content,
+    ts: (ms || Date.now()) / 1000,      // 消息真正的时间，不是我们看到它的时间
+    age_ms: ms ? Date.now() - ms : 0,
     is_dm: u.dm,
     mentions_me: /mentioned/i.test(li.className || ""),
     url: `https://discord.com/channels/${u.guild_id || "@me"}/${channel_id}/${msg_id}`,
@@ -133,15 +156,31 @@ const observer = new MutationObserver(muts => {
     }
   }
   if (!lis.length) return;
-  const burst = lis.length > BURST_SKIP;
+
+  /* 一批冒出一大堆 = Discord 在渲染（切频道、点开子区面板、往上滚加载旧消息）。
+     这种情况顺手把静默期重新计时：侧栏点开子区时 URL 不变，只能靠这个认出来。 */
+  const render = lis.length >= RENDER_BURST;
+  if (render) boot = Date.now();
+
   for (const li of lis) {
     const id = li.id;
-    if (seen.has(id)) continue;
+    if (seen.has(id)) { stats.skip.dup++; continue; }
     seen.add(id);
     if (seen.size > 4000) seen.clear();
-    if (!fresh || burst) continue;                  // 只登记、不上报
+
     const msg = parseLi(li);
-    if (msg) enqueue(msg);
+    if (!msg) { stats.skip.notext++; continue; }     // 纯图片/贴纸/嵌入，没文字
+    stats.parsed++;
+
+    if (render) { stats.skip.render++; note(msg.content, "整批渲染（切频道/点开子区/往上滚），当历史跳过"); continue; }
+    if (msg.age_ms > MSG_MAX_AGE_MS) {
+      stats.skip.history++;
+      note(msg.content, `历史消息（${Math.round(msg.age_ms / 60000)} 分钟前发的）`); continue;
+    }
+    if (!fresh) { stats.skip.quiet++; note(msg.content, "刚打开页面的头几秒，当历史跳过"); continue; }
+
+    enqueue(msg); stats.sent++; stats.lastSentAt = Date.now();
+    note(msg.content, "已上报");
   }
 });
 
@@ -154,7 +193,13 @@ observer.observe(document.body, { childList: true, subtree: true });
    20 秒一次，比 90 秒的判定留足余量，切频道后状态也跟得上。 */
 const ping = () => {
   const a = myAccount();
-  send({ ping: true, where: titleChannelName(), account: a.name, account_id: a.id });
+  send({ ping: true, where: titleChannelName(), account: a.name, account_id: a.id,
+    // 扩展这边看到的实情：解析了多少、上报了多少、因为什么跳过。
+    // 服务端存起来，出问题时「导出诊断」里就有，不用你去点药丸截图。
+    stats: { parsed: stats.parsed, sent: stats.sent, skip: stats.skip,
+             recent: stats.recent.slice(0, 6),
+             url: location.pathname, dm: fromUrl().dm,
+             lis: document.querySelectorAll('li[id^="chat-messages-"]').length } });
 };
 ping();
 setInterval(ping, 20000);
@@ -200,6 +245,7 @@ const CSS = `
   .card{width:250px;background:#faf9f5;border:1px solid #d9d4c8;border-radius:10px;
         box-shadow:0 6px 24px rgba(0,0,0,.22);padding:11px 12px;margin-bottom:8px}
   .card h4{margin:0 0 6px;font-size:13px;display:flex;align-items:center;gap:6px}
+  .card{width:330px}
   .row{display:flex;justify-content:space-between;gap:8px;padding:3px 0;color:#4a463f}
   .row b{font-weight:600}
   .hint{margin:7px 0 0;padding:7px 8px;border-radius:6px;background:#fdf3ee;border:1px solid #f0d5c8;
@@ -210,6 +256,13 @@ const CSS = `
          background:#fff;cursor:pointer;color:#1f1e1c}
   button:hover{border-color:#c96442;color:#c96442}
   .x{margin-left:auto;border:0;background:none;color:#6b665d;font-size:14px;padding:0 2px;cursor:pointer}
+  .diag{margin-top:8px;padding-top:7px;border-top:1px solid #eae6dc}
+  .lst{margin-top:5px;display:grid;gap:2px}
+  .ln{display:flex;gap:6px;font-size:11.5px;line-height:1.45}
+  .ln .w{flex:1;color:#4a463f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ln .y{flex:none;color:#9a6a1f}
+  .ln .y.g{color:#3f7d58}
+  .tip{margin-top:6px;font-size:11px;line-height:1.5;color:#6b665d}
 `;
 
 let shadow = null, openPanel = false, lastSt = null;
@@ -234,6 +287,18 @@ function judge(st) {
   return ["ok", "正在旁听", `盯着 #${st.where || titleChannelName() || "?"}，有新消息就会转给 dcwatch。历史消息不上报。`];
 }
 
+const esc2 = t => String(t == null ? "" : t)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function skipText() {
+  const k = stats.skip, out = [];
+  if (k.history) out.push(`历史 ${k.history}`);
+  if (k.render) out.push(`整批渲染 ${k.render}`);
+  if (k.quiet) out.push(`刚打开 ${k.quiet}`);
+  if (k.notext) out.push(`无文字 ${k.notext}`);
+  if (k.dup) out.push(`重复 ${k.dup}`);
+  return out.length ? out.join("，") : "没有";
+}
+
 function paint() {
   if (!shadow) return;
   const st = lastSt;
@@ -252,6 +317,15 @@ function paint() {
       <div class="row"><span>已上报</span><b>${(st && st.sent) || 0} 条${st && st.lastMsgAt ? "（" + ago(st.lastMsgAt) + "）" : ""}</b></div>
       <div class="row"><span>服务端累计</span><b>${(st && st.srvCount) || 0} 条</b></div>
       <div class="hint ${cls === "ok" ? "g" : ""}">${hint}</div>
+      <div class="diag">
+        <div class="row"><span>本页解析到</span><b>${stats.parsed} 条 → 上报 ${stats.sent} 条</b></div>
+        <div class="row"><span>跳过</span><b>${skipText()}</b></div>
+        ${stats.recent.length ? `<div class="lst">${stats.recent.slice(0, 6).map(r =>
+          `<div class="ln"><span class="w">${esc2(r.what) || "（无文字）"}</span>
+            <span class="y ${r.why === "已上报" ? "g" : ""}">${esc2(r.why)}</span></div>`).join("")}</div>` : ""}
+        <div class="tip">发了消息但这里没出现？说明扩展根本没看见它 —— 检查这个标签页是不是正停在那个频道／帖子上。
+        出现了写「已上报」但没提醒你？那是规则没命中，去 dcwatch 界面「监听规则」点试算。</div>
+      </div>
       <div class="btns">
         <button class="t">发测试消息</button>
         <button class="o">打开界面</button>
@@ -278,6 +352,6 @@ mountUI();
 refreshUI();
 setInterval(() => { if (!document.hidden) refreshUI(); }, 10000);
 
-globalThis.__dcwatch = { parseLi, seen, queue, refreshUI,
+globalThis.__dcwatch = { parseLi, seen, queue, refreshUI, stats, snowflakeMs,
   show: () => { localStorage.removeItem(HIDE_KEY); mountUI(); refreshUI(); } };
 console.log("[dcwatch] bridge 已挂载，转发到", ENDPOINT, "，右下角有状态药丸；隐藏了就在控制台跑 __dcwatch.show()");

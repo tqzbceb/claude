@@ -241,12 +241,31 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .tnode:hover .add{opacity:1}
 .wb{display:flex;flex-direction:column;gap:14px;height:100%}
 .chatlog{flex:1;overflow:auto;display:flex;flex-direction:column;gap:14px;padding:4px}
-.bub{max-width:min(72ch,88%);padding:11px 15px;border-radius:14px;font-size:14px;line-height:1.65;
-  white-space:pre-wrap}
+.chatlog.has>:first-child{margin-top:auto}
+.bub{max-width:min(72ch,88%);padding:11px 15px;border-radius:14px;font-size:14px;line-height:1.65}
+.bub .txt{white-space:pre-wrap}
 .bub.u{align-self:flex-end;background:var(--accent-soft);border:1px solid var(--accent-line)}
 .bub.a{align-self:flex-start;background:var(--bg-elev);border:1px solid var(--line);box-shadow:var(--shadow)}
-.bub .lbl{font:500 11px var(--sans);text-transform:uppercase;letter-spacing:.05em;color:var(--text3);
-  margin-bottom:5px}
+.wq{border:1px solid var(--line2);border-radius:var(--r-lg);background:var(--bg-elev);padding:10px 12px;margin:0 0 8px}
+.wq .qh{font-weight:600;font-size:14px}
+.wq .why{font-size:12px;color:var(--text3);margin:3px 0 8px}
+.wq.done{border-color:var(--accent);background:var(--bg-sunk)}
+.chip{border:1px solid var(--line2);background:var(--bg);border-radius:999px;padding:4px 11px;font-size:13px;
+  cursor:pointer;color:var(--text2)}
+.chip:hover{border-color:var(--accent);color:var(--text)}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip.rec::after{content:'推荐';font-size:10px;opacity:.7;margin-left:5px}
+.wsay{font-size:13px;color:var(--text2);background:var(--bg-sunk);border-left:2px solid var(--line2);
+  padding:6px 10px;margin:0 0 8px;border-radius:0 var(--r-sm) var(--r-sm) 0}
+.wsay b{color:var(--text)}
+.wsay.me{border-left-color:var(--accent);background:var(--accent-soft);color:var(--text)}
+.pw{background:var(--bg-sunk);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;
+  margin:0;font:12.5px/1.65 ui-monospace,Consolas,monospace;white-space:pre-wrap;color:var(--text2);
+  max-height:46vh;overflow:auto}
+.wizres{display:block;background:var(--bg-sunk);border:1px solid var(--line2);border-radius:var(--r-lg);
+  padding:12px 14px;margin:12px 0 0;color:var(--text2);font-size:13px;line-height:1.65}
+.wizres ul{margin:4px 0 0 18px;padding:0}
+.wizres li{margin:2px 0}
 .composer{border:1px solid var(--line2);border-radius:var(--r-lg);background:var(--bg-elev);padding:10px 12px;
   box-shadow:var(--shadow)}
 .composer textarea{border:none;box-shadow:none!important;min-height:52px;padding:0}
@@ -404,14 +423,19 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
   <section class="view" id="v-rules">
     <div class="pad">
       <div class="card" style="margin-bottom:16px">
-        <h3>用一句话说你想怎么监听 <em>模型只是帮你填表 · 生成后你确认才生效，不会直接跑</em></h3>
+        <h3>让 AI 帮你把规则问清楚 <em>它会先反问几句、提醒你容易漏的地方，确认没疏漏才生成 · 生成后你确认才生效</em>
+          <button class="btn ghost sm" id="btnSeePrompt" style="margin-left:auto;flex:none"
+            title="看看程序是怎么指挥模型的（只读）">内部提示词</button></h3>
         <div class="bd">
-          <textarea id="nlText" style="min-height:52px" placeholder="例：老板 Marcus 在任何地方 @我，就打分提醒我（Enter 生成 · Shift+Enter 换行）"></textarea>
+          <div id="wizLog"></div>
+          <textarea id="nlText" style="min-height:52px" placeholder="说说你想盯什么，说不清也没关系，它会问你（Enter 继续 · Shift+Enter 换行）"></textarea>
           <div class="row" style="margin-top:10px">
-            <button class="btn pri" id="btnCompose">✧ 生成规则</button>
+            <button class="btn pri" id="btnCompose">✧ 开始</button>
+            <button class="btn" id="btnWizNow" style="display:none">按推荐值直接出规则</button>
+            <button class="btn" id="btnWizReset" style="display:none">重新开始</button>
             <select id="nlModel" style="width:auto;min-width:200px"></select>
             <span class="sp" style="flex:1"></span>
-            <span style="font-size:12px;color:var(--text3)">Enter 生成</span>
+            <span style="font-size:12px;color:var(--text3)" id="wizHint">Enter 继续</span>
           </div>
           <div class="row" id="nlEg" style="margin-top:10px;flex-wrap:wrap;gap:6px"></div>
           <div id="nlOut"></div>
@@ -436,6 +460,8 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
           <span id="wbQuick" class="row" style="gap:8px;flex-wrap:wrap"></span>
           <button class="btn ghost sm" id="btnQEdit"
             title="这些按钮全是你自己配的：改名、改内容、加、删">⚙ 改按钮</button>
+          <button class="btn sm" id="btnToWiz"
+            title="去「监听规则」，让 AI 问清楚再帮你建一条">◆ 帮我建条规则</button>
           <span class="sp" style="flex:1"></span>
           <span class="tag" id="wbCtx">未带上下文</span>
           <button class="btn ghost sm" id="wbClear">清空</button>
@@ -639,6 +665,21 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
   <section class="view" id="v-logs">
     <div class="pad">
       <div class="stat" id="stats"></div>
+      <div class="card" style="margin-bottom:16px">
+        <h3>出问题了？导一份诊断给对方 <em>一个文件说清全部情况，不用别人猜</em></h3>
+        <div class="bd">
+          <div class="row" style="flex-wrap:wrap;gap:10px">
+            <button class="btn pri" id="btnDiag">⬇ 导出诊断包（.txt）</button>
+            <label class="row" style="gap:6px;margin:0;font-size:13px;color:var(--text2)">
+              <input type="checkbox" id="diagText" checked style="width:15px;height:15px">带上消息正文前 40 字</label>
+            <span class="sp" style="flex:1"></span>
+            <button class="btn ghost sm" id="btnDiagPeek">先看看里面有什么</button>
+          </div>
+          <div class="hint" style="margin-top:10px">里面有：程序版本、代理和端点、每个浏览器桥的扩展版本和
+            <b>扩展那边解析/上报/跳过的实数</b>、所有规则和命中数、出口配置、最近 200 条日志、最近 30 条消息。
+            <b>不含</b> Token、API Key，出口地址只留域名。</div>
+        </div>
+      </div>
       <div class="card"><h3>运行日志</h3><div class="bd" id="logs" style="max-height:52vh;overflow:auto"></div></div>
     </div>
   </section>
@@ -749,7 +790,7 @@ const TITLES={inbox:['收信箱','实时监听命中的消息'],rules:['监听�
 function go(v){S.view=v;$$('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+v));
   $$('.nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
   $('#vTitle').textContent=TITLES[v][0];$('#vSub').textContent=TITLES[v][1];
-  if(v==='logs')loadLogs();if(v==='ai'){renderQuick();renderWb();}
+  if(v==='logs')loadLogs();if(v==='ai'){renderQuick();renderWb();}if(v==='rules')renderNl();
   if(v==='notify'){renderNotify();renderSinkRows();bindEyes();}
   if(v==='models'){renderPrompts();bindEyes();}}
 $$('.nav a').forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.v)});
@@ -903,56 +944,162 @@ function renderRules(){
     r.enabled=r.enabled?0:1;await api('/api/rules','POST',r);renderRules()});
 }
 /* ---------- 一句话生成规则 ---------- */
-const NL_EG=['老板 Marcus 在任何地方 @我，就打分提醒我',
-  '#bug-report 和它的子区里有人贴 500 报错，抽成表格',
-  'announcements 里的空投、白名单消息转到飞书',
-  '登录 500 那个子区太吵，攒 25 条给我一次摘要',
-  '有人问怎么装环境，就自动替我回一下'];
+const NL_EG=['有人送用不完的会员套餐，别让我错过',
+  '我在追的那个帖子有新回复就提醒我',
+  '老板 Marcus 在任何地方 @我，就打分提醒我',
+  '有空投或者白名单名额，转到我微信',
+  '这个频道太吵了，攒够 25 条给我一次摘要',
+  '有人贴 500 报错，抽成表格'];
 function renderNl(){
   $('#nlEg').innerHTML=NL_EG.map((t,i)=>`<button class="btn sm" data-eg="${i}">${esc(t)}</button>`).join('');
-  $$('#nlEg [data-eg]').forEach(b=>b.onclick=()=>{$('#nlText').value=NL_EG[+b.dataset.eg];compose()});
+  $$('#nlEg [data-eg]').forEach(b=>b.onclick=()=>{wizReset();$('#nlText').value=NL_EG[+b.dataset.eg];wizStep(false)});
   modelOptions('#nlModel');
 }
-async function compose(){
-  const text=$('#nlText').value.trim();if(!text)return;
+let WIZ=[],WQ=[],WA={},WDEMO=0;      // 对话历史 / 当前问题 / 已选答案 / 演示模式轮数
+
+function wizReset(){
+  WIZ=[];WQ=[];WA={};WDEMO=0;
+  $('#wizLog').innerHTML='';$('#nlOut').innerHTML='';$('#nlText').value='';
+  $('#btnCompose').textContent='✧ 开始';
+  $('#btnWizNow').style.display='none';$('#btnWizReset').style.display='none';
+  $('#nlText').placeholder='说说你想盯什么，说不清也没关系，它会问你（Enter 继续 · Shift+Enter 换行）';
+  $('#wizHint').textContent='Enter 继续';
+}
+function wizSay(role,html){
+  $('#wizLog').insertAdjacentHTML('beforeend', role
+    ? `<div class="wsay"><b>${role}</b>：${html}</div>`
+    : `<div class="wsay me">${html}</div>`);
+}
+/* 把当前这批问题连答案拼成一句话回给模型 */
+function wizAnswer(useSuggest){
+  const lines=[];
+  WQ.forEach((q,i)=>{
+    let a=WA[i];
+    if(!a&&useSuggest)a=q.suggest||'你决定';
+    if(!a&&q.suggest)a=q.suggest+'（我没选，按你的建议）';
+    if(a)lines.push(`${q.q} → ${a}`);
+    else if(!q.skippable)lines.push(`${q.q} → 不确定，你决定`);
+  });
+  const extra=$('#nlText').value.trim();
+  if(extra)lines.push(extra);
+  return lines.join('\n');
+}
+function renderWQ(r){
+  WQ=r.questions||[];WA={};
+  let h='';
+  if(r.understood)h+=`<div class="wsay"><b>它的理解</b>：${esc(r.understood)}</div>`;
+  if((r.assumed||[]).length)h+=`<div class="wsay" style="border-color:var(--accent)"><b>它先替你定的</b>：${
+    r.assumed.map(esc).join('；')}</div>`;
+  h+=WQ.map((q,i)=>`<div class="wq" data-q="${i}">
+    <div class="qh">${i+1}. ${esc(q.q)}</div>
+    ${q.why?`<div class="why">为什么问：${esc(q.why)}</div>`:''}
+    <div class="row" style="flex-wrap:wrap;gap:6px">
+      ${(q.options||[]).map(o=>`<button class="chip${o===q.suggest?' rec':''}" data-q="${i}" data-v="${esc(o)}">${esc(o)}</button>`).join('')}
+      ${q.suggest&&!(q.options||[]).includes(q.suggest)?
+        `<button class="chip rec" data-q="${i}" data-v="${esc(q.suggest)}">${esc(q.suggest)}</button>`:''}
+      ${q.skippable?`<button class="chip" data-q="${i}" data-v="先跳过，这项我以后自己填">先跳过</button>`:''}
+    </div>${(q.options||[]).length||q.suggest||q.skippable?'':
+      '<div class="why" style="margin:0">这题没给选项，直接写在下面的输入框里就行</div>'}</div>`).join('');
+  $('#wizLog').insertAdjacentHTML('beforeend',h);
+  $$('#wizLog .chip').forEach(c=>c.onclick=()=>{
+    const i=c.dataset.q;
+    $$(`#wizLog .chip[data-q="${i}"]`).forEach(x=>x.classList.remove('on'));
+    c.classList.add('on');WA[i]=c.dataset.v;
+    $(`#wizLog .wq[data-q="${i}"]`).classList.add('done');
+  });
+  $('#btnCompose').textContent='回答完了，继续 →';
+  $('#btnWizNow').style.display='';$('#btnWizReset').style.display='';
+  $('#nlText').placeholder='还想补充什么就写在这（可留空，直接点继续）';
+  $('#wizHint').textContent='没点的问题会按它的推荐值处理';
+  const first=$('#wizLog .wq');if(first)first.scrollIntoView({behavior:'smooth',block:'center'});
+}
+async function wizStep(useSuggest){
+  const text=WIZ.length?wizAnswer(useSuggest):$('#nlText').value.trim();
+  if(!text&&!WIZ.length){toast('先说一句你想盯什么');return;}
+  wizSay('',esc(text).replace(/\n/g,'<br>'));
+  WIZ.push({role:'user',content:text});
+  $$('#wizLog .chip').forEach(c=>c.disabled=true);
+  WQ=[];WA={};$('#nlText').value='';$('#nlOut').innerHTML='';
   const [prov,model]=($('#nlModel').value||'|').split('|');
   const b=$('#btnCompose'),old=b.textContent;
-  b.textContent='生成中…';b.disabled=true;
-  $('#nlOut').innerHTML='';
-  const r=await api('/api/rules/compose','POST',{text,provider:prov,model});
+  b.textContent='想一下…';b.disabled=true;
+  const r=await api('/api/rules/wizard','POST',{messages:WIZ,provider:prov,model});
   b.textContent=old;b.disabled=false;
   if(!r){
-    if(S.live){$('#nlOut').innerHTML=
-      `<div class="banner">生成失败：${esc(S.lastErr)}<br>常见原因：没选模型、模型没拉过、API Key 不对或要走代理（设置页可填）。</div>`;
-      return;}
-    const demo=nlDemo(text);                 // 只在完全没连上后端时用本地土办法，让流程能看完
-    showNl(demo.rule,demo.notes.concat('演示模式生成（未连后端），不是模型输出'));
-    return;}
-  if(!r.ok){$('#nlOut').innerHTML=`<div class="banner">${esc(r.error)}</div>`;return;}
-  showNl(r.rule,r.notes||[]);
+    if(S.live){$('#nlOut').innerHTML=`<div class="banner">没问出来：${esc(S.lastErr)}<br>
+      常见原因：没选模型、API Key 不对、要走代理（设置页可填）。</div>`;WIZ.pop();return;}
+    return wizDemoStep(text);}                 // 完全没后端（比如在线演示页）时走本地土办法
+  if(!r.ok){$('#nlOut').innerHTML=`<div class="banner">${esc(r.error)}</div>`;WIZ.pop();return;}
+  WIZ.push({role:'assistant',content:JSON.stringify(r)});
+  if(r.stage==='ask'){
+    if(r.loose)$('#nlOut').innerHTML=`<div class="banner">这个模型不太会按格式回答，你可以直接回它，或换个强一点的模型。</div>`;
+    renderWQ(r);
+  }else wizDone(r);
 }
-function showNl(rule,notes){
-  $('#nlOut').innerHTML=`<div class="banner" style="background:var(--bg-sunk);color:var(--text2);margin:12px 0 0">
-    <b style="color:var(--text)">模型这样理解你的话</b><br>${ruleDesc({...BLANK,...rule})}
-    ${notes.length?`<div style="margin-top:10px"><b style="color:var(--accent)">注意</b><ul style="margin:4px 0 0 18px;padding:0">
-      ${notes.map(n=>`<li style="margin:2px 0">${esc(n)}</li>`).join('')}</ul></div>`:''}
-    <div style="margin-top:10px;font-size:12px;color:var(--text3)">下面每个字段都能改。改完点「试算」验证，再点「保存规则」才生效。</div></div>`;
-  editRule(rule);
+function wizDone(r){
+  $('#btnCompose').textContent='✧ 开始';
+  $('#btnWizNow').style.display='none';$('#btnWizReset').style.display='';
+  $('#nlText').placeholder='想再改点什么就说一句，然后点「开始」重新走一遍';
+  $('#wizHint').textContent='下面每个字段都能手改';
+  const L=(t,arr,color)=>arr&&arr.length?`<div style="margin-top:10px"><b style="color:${color}">${t}</b>
+    <ul>${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:'';
+  $('#nlOut').innerHTML=`<div class="wizres">
+    <b style="color:var(--text)">它最后理解成这样</b><br>${ruleDesc({...BLANK,...r.rule})}
+    ${L('会提醒你的情况',r.catches,'var(--ok,#2f855a)')}
+    ${L('不会提醒的情况（看看有没有漏）',r.misses,'var(--text3)')}
+    ${L('注意',r.notes,'var(--accent)')}
+    ${r.verify?`<div style="margin-top:10px"><b style="color:var(--text)">怎么验一下</b><br>${esc(r.verify)}</div>`:''}
+    <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
+      <button class="btn pri" id="wizOk">就这样 → 去填表保存</button>
+      <button class="btn" id="wizNo">不对，我再补一句</button>
+      <span class="sp" style="flex:1"></span>
+      <span style="font-size:12px;color:var(--text3);white-space:nowrap">填表里每个字段都还能手改</span>
+    </div></div>`;
+  $('#nlOut').scrollIntoView({behavior:'smooth',block:'center'});
+  $('#wizOk').onclick=()=>editRule(r.rule);
+  $('#wizNo').onclick=()=>{
+    $('#nlOut').innerHTML='';
+    $('#btnCompose').textContent='回答完了，继续 →';
+    $('#nlText').placeholder='说说哪里不对，或者还想加什么条件';
+    $('#nlText').focus();
+  };
 }
 function nlDemo(t){                          /* 只在没后端时用，纯字符串猜 */
-  const r={name:t.slice(0,14),keywords_any:[],notes:[]};
+  const r={name:t.slice(0,14),keywords_any:[]},notes=[];
   const kw=(t.match(/[「"']([^」"']+)[」"']/g)||[]).map(s=>s.replace(/[「」"']/g,''));
   if(kw.length)r.keywords_any=kw;
   if(/@\s*我|艾特我|提到我/.test(t))r.mention_only=true;
+  if(/机器人.*算|算.*机器人|空投|白名单|公告/.test(t))r.ignore_bots=false;
+  if(/很短|哈哈|\+1/.test(t))r.min_len=8;
   if(/摘要|总结/.test(t)){r.action='ai_summary';r.summary_every=25;}
   else if(/回复|答复|回一下/.test(t)){r.action='ai_reply';}
   else if(/表格|抽|提取|结构/.test(t)){r.action='ai_extract';}
   else if(/转发|转到|推到/.test(t)){r.action='webhook';}
-  else {r.action='ai_tag';r.notify_min_score=60;}
-  return {rule:r,notes:['要限定在哪个频道？把频道 ID 填进「听哪里」，否则全服务器都会触发']};
+  else {r.action='ai_tag';r.notify_min_score=60;r.prompt='判断这条消息对我是否重要';}
+  notes.push('要限定在哪个频道？把频道 ID 填进「听哪里」，否则全服务器都会触发');
+  return {rule:r,notes};
 }
-$('#btnCompose').onclick=compose;
-enterToSend($('#nlText'),compose);
+/* 没有后端时（在线演示页）也让流程能走完，问两轮再套用本地猜测 */
+function wizDemoStep(text){
+  WDEMO++;
+  const fake=WDEMO<2?{stage:'ask',understood:'（演示）你想盯：'+text.slice(0,40),
+      questions:[{key:'where',q:'要盯哪里？',why:'不限范围的话整个服务器都会进来',
+        options:['就那一个帖子','这个频道和它下面的帖子','整个服务器'],suggest:'这个频道和它下面的帖子'},
+        {key:'bot',q:'机器人发的算吗？',why:'空投、公告基本都是机器人发的',options:['算','不算'],suggest:'不算'},
+        {key:'quiet',q:'什么情况别烦你？',why:'先想清楚不该提醒的，规则才不会变成骚扰',
+          options:['只发图没文字的不算','很短的一句（哈哈、+1）不算','都要'],suggest:'很短的一句（哈哈、+1）不算'}],
+      assumed:['（演示模式，没有连后端，不是模型输出）']}
+    :(()=>{const d=nlDemo(WIZ.filter(m=>m.role==='user').map(m=>m.content).join(' '));
+      return {stage:'done',rule:d.rule,catches:['（演示）符合关键词又被模型判为重要的消息'],
+        misses:['（演示）没有文字的消息'],notes:d.notes.concat('演示模式生成（未连后端），不是模型输出'),
+        verify:'把 dcwatch 跑起来后，在「收信箱」点一条真消息试算'};})();
+  WIZ.push({role:'assistant',content:JSON.stringify(fake)});
+  if(fake.stage==='ask')renderWQ(fake);else wizDone(fake);
+}
+$('#btnCompose').onclick=()=>wizStep(false);
+$('#btnWizNow').onclick=()=>wizStep(true);
+$('#btnWizReset').onclick=wizReset;
+enterToSend($('#nlText'),()=>wizStep(false));
 
 $('#btnNewRule').onclick=()=>editRule(null);
 $('#btnPreset').onclick=()=>{
@@ -1731,8 +1878,9 @@ $('#btnPause').onclick=()=>{const target=$('#btnPause').classList.contains('paus
 
 /* ================= AI workbench ================= */
 function renderWb(){renderCtxHint();
-  $('#wbLog').innerHTML=S.chat.length?S.chat.map(m=>`<div class="bub ${m.r==='u'?'u':'a'}">
-    <div class="lbl">${m.r==='u'?'我':'模型'}</div>${esc(m.t)}</div>`).join('')
+  $('#wbLog').classList.toggle('has',!!S.chat.length);
+  $('#wbLog').innerHTML=S.chat.length?S.chat.map(m=>
+    `<div class="bub ${m.r==='u'?'u':'a'}"><div class="txt">${esc(m.t)}</div></div>`).join('')
     :`<div class="empty"><span class="big">✧</span><div>把消息交给模型处理</div>
       <div style="font-size:12.5px;max-width:330px">在收信箱点消息卡右下的 ✧ 把它加进上下文，再回来问：<br>
       「这几条里有哪些需要我今天回？」「起草一条回复」「抽成表格」</div></div>`;
@@ -1747,6 +1895,60 @@ async function wbSend(){
     :r.ok?r.text:'调用失败：'+r.error});
   renderWb();}
 $('#wbSend').onclick=wbSend;
+async function seePrompts(){
+  const r=await api('/api/prompts');
+  if(!r||!r.ok){toast(S.live?('读不到：'+(S.lastErr||'')):'演示模式看不到，跑起来才有');return;}
+  openDrawer(`<div class="dh"><h2>内置提示词（只读）</h2><span class="sp" style="flex:1"></span>
+      <button class="btn ghost" onclick="closeDrawer()">关闭</button></div>
+    <div class="db">
+      <div class="wizres" style="margin:0 0 14px">这是程序发给模型的原话。写死在里面是为了让便宜的模型也能问对问题；
+        你不用改它，但你有权看见。${esc(r.editable_hint||'')}</div>
+      ${r.builtin.map(p=>`<div class="card" style="margin-bottom:14px">
+        <h3>${esc(p.name)} <em>${esc(p.where||'')}</em></h3>
+        <div class="bd">
+          <div class="hint" style="margin:0 0 4px"><b>什么时候用：</b>${esc(p.when||'')}</div>
+          <div class="hint" style="margin:0 0 10px"><b>为什么这么写：</b>${esc(p.why||'')}</div>
+          <pre class="pw">${esc(p.text||'')}</pre>
+          <div class="row" style="margin-top:8px">
+            <button class="btn sm" data-cp="${esc(p.key)}">复制这段</button>
+            <span class="hint">${(p.text||'').length} 字</span>
+          </div>
+        </div></div>`).join('')}
+    </div>`);
+  $$('[data-cp]').forEach(b=>b.onclick=()=>{
+    const p=r.builtin.find(x=>x.key===b.dataset.cp);
+    navigator.clipboard.writeText(p.text).then(()=>toast('复制好了'),()=>toast('复制失败，手动选中吧'));});
+}
+$('#btnSeePrompt').onclick=seePrompts;
+const diagUrl=()=>'/diagnose.txt?text='+($('#diagText').checked?'1':'0');
+$('#btnDiag').onclick=()=>{
+  if(!S.live){toast('演示模式没有诊断包，跑起来才有');return;}
+  const a=document.createElement('a');a.href=diagUrl();a.download='dcwatch-diagnose.txt';
+  document.body.appendChild(a);a.click();a.remove();toast('已开始下载');
+};
+$('#btnDiagPeek').onclick=async()=>{
+  if(!S.live){toast('演示模式没有诊断包，跑起来才有');return;}
+  let txt='';
+  try{const r=await fetch(diagUrl());txt=await r.text();}catch(e){toast('读不到：'+e);return;}
+  openDrawer(`<div class="dh"><h2>诊断包内容</h2><span class="sp" style="flex:1"></span>
+      <button class="btn" id="dgCopy">复制全文</button>
+      <button class="btn ghost" onclick="closeDrawer()">关闭</button></div>
+    <div class="db"><pre class="pw" style="max-height:76vh">${esc(txt)}</pre></div>`);
+  $('#dgCopy').onclick=()=>navigator.clipboard.writeText(txt)
+    .then(()=>toast('复制好了'),()=>toast('复制失败，手动选中吧'));
+};
+$('#btnToWiz').onclick=()=>{
+  const picked=[...S.ctx].map(id=>(S.msgs||[]).find(m=>String(m.id)===String(id))).filter(Boolean);
+  go('rules');wizReset();
+  if(picked.length){
+    const m=picked[0];
+    $('#nlText').value=`像这条这样的消息就提醒我：#${m.channel_name||'?'} 里 ${m.author||'某人'} 说「`
+      +String(m.content||'').replace(/\s+/g,' ').slice(0,60)+'」';
+    $('#wizLog').innerHTML=`<div class="wsay"><b>带过来的例子</b>：${picked.length} 条你在工作台勾的消息，`
+      +`向导会照着这个样子问你。</div>`;
+  }
+  $('#nlText').focus();
+};
 $('#wbClear').onclick=()=>{S.chat=[];S.ctx.clear();renderWb();renderList()};
 enterToSend($('#wbInput'),wbSend);
 /* ---------- 工作台快捷按钮：全部来自配置，不写死 ---------- */
