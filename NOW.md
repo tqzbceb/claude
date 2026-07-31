@@ -18,14 +18,14 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**v1.9.4 已出包（2026-07-31），等推送 + 用户真机验收**。本窗口做完：
-① 三处版本号 bump（VERSION/EXT_MIN/manifest 全到 1.9.4）✓ → ② README/release/START_HERE
-文档改版 ✓ → ③ 回归 542/542 全绿重跑 ✓ → ④ /version 冒烟印 v1.9.4 ✓ → ⑤ 程序 zip（26 文件）+
-扩展 zip（10 文件）进 release/ 和 outputs/，旧 1.9.3 删了 ✓。
-**没推送**：这个工作区没有 PAT（换工作区丢了），已跟用户要。拿到 PAT 后：
-`git push "https://x-access-token:<PAT>@github.com/tqzbceb/claude.git" HEAD:main`（在 /tmp/dcw；
-/tmp 丢了就从工作区快照 ./claude/ 恢复——本轮所有改动已同步回快照，含两个 zip 在 claude/release/）。
-推完让用户真机验三条（见发版前待办）。
+**v1.9.4 已出包 + 已推送 GitHub（2026-07-31，远端 main = 458e1e6），等用户真机验收**。
+出包窗口做完：① 三处版本号 bump（VERSION/EXT_MIN/manifest 全到 1.9.4）✓ → ② README/release/
+START_HERE 文档改版 ✓ → ③ 回归 542/542 全绿重跑 ✓ → ④ /version 冒烟印 v1.9.4 ✓ →
+⑤ 程序 zip（26 文件）+ 扩展 zip（10 文件）进 release/ 和 outputs/，旧 1.9.3 删了 ✓。
+推送窗口做完：用户给了 PAT，核实 458e1e6 早已在远端（上个窗口其实推成功了）；把远端 .git
+拉回工作区快照 ./claude/（现在它又是活仓库了，PAT 在 .git/config 里，本工作区内推送直接可用）；
+补回换窗口丢的 4 个文件（启动.bat/停止.bat/build.bat/tests/runall.sh）；两个 zip 重新进 outputs/。
+**代码侧没有任何未完事项，下一件全在用户侧**（见发版后待办）。
 
 **review 结论：通过，无返工项。** diff 对照 PLAN_A1C1.md 逐行核过：服务端两表/五接口/
 wb_save_pair/落库点位/[5.6] 段与 PLAN 一致；前端会话栏/wbSend 带 sid/新话题/boot 装载一致；
@@ -55,8 +55,8 @@ wb_save_pair/落库点位/[5.6] 段与 PLAN 一致；前端会话栏/wbSend 带 
 - 顺嘴要一份诊断包（运行日志页 → 导出诊断 → txt 原样发来），到现在还没人见过他机器上的规则。
 
 ## 最后更新
-2026-07-31 · v1.9.4 出包完成（542/542 全绿、双 zip 进 release/+outputs/）。**卡在推送等 PAT**。
-推完之后下一件：等用户真机验三条 + 要诊断包；再往后是 BACKLOG 的 B3+B4+B2（模型接入大轮）。
+2026-07-31 · v1.9.4 出包 + 推送全部完成（远端 main = 458e1e6）。下一件：等用户真机验三条 +
+要诊断包；再往后是 BACKLOG 的 B3+B4+B2（模型接入大轮）。
 
 ## 上一轮（v1.9.3）做完了什么
 批量提取的模板 + 整包导出 / 导入，全流程收尾：
