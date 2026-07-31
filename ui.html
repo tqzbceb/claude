@@ -627,8 +627,8 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
         <div class="bd">
           <div id="hookList"></div>
           <div class="row" style="border-top:1px solid var(--line);padding-top:14px">
-            <button class="btn" id="btnAddHook">＋ 添加出口</button>
-            <select id="hookPreset" title="按格式套个模板，填上地址就能用">
+            <span class="hint">加一条出口，先选类型：</span>
+            <select id="hookPreset" title="选好类型再点「＋ 添加」，按该服务的格式套好模板">
               <option value="json">通用 JSON</option>
               <option value="discord">Discord 频道</option>
               <option value="wecom">企业微信机器人</option>
@@ -641,6 +641,7 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
               <option value="get">GET 查询串</option>
               <option value="raw">原始 JSON（整条消息）</option>
             </select>
+            <button class="btn" id="btnAddHook">＋ 添加</button>
             <span class="sp" style="flex:1"></span>
             <button class="btn pri" id="btnSaveOut">保存出口</button>
             <button class="btn" data-test="all">全部测一遍</button>
@@ -1920,6 +1921,17 @@ const HOOK_PRESETS={
   get:{name:'GET 出口',method:'GET',content:'json',body:'',url:'https://example.com/notify?text={{text}}'},
   raw:{name:'整条消息',method:'POST',content:'json',body:'{{json}}'},
 };
+const HOOK_PRESET_LABELS={json:'通用 JSON',discord:'Discord 频道',wecom:'企业微信机器人',
+  serverchan:'Server酱 → 微信',feishu:'飞书机器人',dingtalk:'钉钉机器人',telegram:'Telegram',
+  text:'纯文本',form:'表单（key=value）',get:'GET 查询串',raw:'原始 JSON（整条消息）'};
+const TPL_URL=/把.+?填在这里|example\.com/;   // 地址还是模板占位、没填真值
+function applyPreset(h,k){
+  const p=HOOK_PRESETS[k];if(!p)return;
+  h.name=p.name;h.method=p.method||'POST';h.content=p.content||'json';h.body=p.body||'';
+  if(p.url!==undefined)h.url=p.url;                 // 该服务有地址模板 → 换上
+  else if(TPL_URL.test(h.url||''))h.url='';         // 旧地址还是别家的模板 → 清掉
+  h.verified=false;                                 // 换了类型，测通状态作废
+}
 function hooks(){return (S.cfg.sinks=S.cfg.sinks||{}).hooks||(S.cfg.sinks.hooks=[]);}
 function renderHooks(){
   const vars=(S.cfg.hook_vars||['text','title','body','author','channel','url','score','tags','json'])
@@ -1928,6 +1940,10 @@ function renderHooks(){
     const get=h.method==='GET';
     return `<div style="padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--line)">
       <div class="grid3">
+        <label class="f"><span>类型 <em>换类型会按模板重填</em></span><select data-htpl="${i}">
+          <option value="">${esc(HOOK_PRESET_LABELS[h.tpl]||'自定义')}</option>
+          ${Object.entries(HOOK_PRESET_LABELS).map(([k,n])=>`<option value="${k}">${n}</option>`).join('')}
+        </select></label>
         <label class="f"><span>名称</span><input type="text" data-h="${i}" data-k="name" value="${esc(h.name||'')}"></label>
         <label class="f"><span>方式</span><select data-h="${i}" data-k="method">
           <option ${get?'':'selected'}>POST</option><option ${get?'selected':''}>GET</option></select></label>
@@ -1937,8 +1953,8 @@ function renderHooks(){
           <option value="text" ${h.content==='text'?'selected':''}>纯文本</option></select></label>
       </div>
       <label class="f"><span>地址 <em>URL 里也能写占位符</em></span>
-        <span class="ipw"><input type="password" data-h="${i}" data-k="url" value="${esc(h.url||'')}"
-          placeholder="https://…"><button class="eye" type="button">👁</button></span></label>
+        <span class="ipw"><input type="${TPL_URL.test(h.url||'')?'text':'password'}" data-h="${i}" data-k="url" value="${esc(h.url||'')}"
+          placeholder="https://…"><button class="eye" type="button">${TPL_URL.test(h.url||'')?'🙈':'👁'}</button></span></label>
       ${get?'':`<label class="f"><span>请求体 <em>可用占位符：${esc(vars)}</em></span>
         <textarea data-h="${i}" data-k="body" rows="3" class="mono">${esc(h.body||'')}</textarea></label>`}
       <details><summary style="cursor:pointer;font-size:12.5px;color:var(--text3);margin-bottom:8px">额外请求头（一行一个 <code>名字: 值</code>，比如 Authorization）</summary>
@@ -1956,6 +1972,12 @@ function renderHooks(){
     const set=()=>{const h=hooks()[+e.dataset.h];if(!h)return;h[e.dataset.k]=e.value;
       if(e.dataset.k==='method'){renderHooks();}};
     if(e.tagName==='SELECT')e.onchange=set;else e.oninput=set;});
+  $$('#hookList [data-htpl]').forEach(e=>e.onchange=()=>{
+    const k=e.value,h=hooks()[+e.dataset.htpl];if(!k||!h)return;
+    if(!confirm(`把这条出口按「${HOOK_PRESET_LABELS[k]}」模板重填？名称和请求体会被替换。`)){renderHooks();return;}
+    applyPreset(h,k);h.tpl=k;renderHooks();
+    toast('已按模板重填，检查地址后点「测试」');
+  });
   $$('#hookList [data-hookrm]').forEach(b=>b.onclick=()=>{
     hooks().splice(+b.dataset.hookrm,1);renderHooks();});
   $$('#hookList [data-hooktest]').forEach(b=>b.onclick=()=>testSink(b,hooks()[+b.dataset.hooktest]));
@@ -1963,7 +1985,7 @@ function renderHooks(){
 }
 $('#btnAddHook').onclick=()=>{
   const p=HOOK_PRESETS[$('#hookPreset').value]||HOOK_PRESETS.json;
-  hooks().push({id:'n'+Math.random().toString(16).slice(2,10),url:'',headers:'',enabled:true,verified:false,...p});
+  hooks().push({id:'n'+Math.random().toString(16).slice(2,10),url:'',headers:'',enabled:true,verified:false,...p,tpl:$('#hookPreset').value});
   renderHooks();$('#hookList').lastElementChild?.scrollIntoView({block:'center'});};
 function collectSinks(){
   return {toast:$('#nfToast').value==='1',sound:$('#nfSound').value==='1',
@@ -2186,7 +2208,7 @@ const HELP={
     <p>一条出口就是<b>一个 HTTP 请求</b>：填地址、选请求体格式，命中的消息把 <code>{{占位符}}</code> 替换成真值发出去。
       程序不绑定任何第三方服务——能收 webhook 的东西都能接。</p>
     <h3>三步</h3>
-    <ul><li>选个模板（通用 JSON / Discord 频道 / 纯文本 / 表单 / GET）→「＋ 添加出口」</li>
+    <ul><li>底部先选类型（Discord / 企业微信 / 飞书 / Telegram…）→「＋ 添加」；已加的出口想换服务，用行内「类型」下拉按模板重填</li>
     <li>把对方给你的地址粘进「地址」，需要鉴权就在「额外请求头」写 <code>Authorization: Bearer xxx</code></li>
     <li>点「测试」。<b>测通了才会真的转发</b>，通过之后它才出现在左下角，那里的开关管开停。</li></ul>
     <h3>能用的占位符</h3>
