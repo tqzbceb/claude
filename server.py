@@ -7,7 +7,7 @@ One process: Discord gateway listener + rule engine + OpenAI-compatible model cl
 
 Run:  python server.py            -> http://127.0.0.1:8777
 """
-import asyncio, base64, json, os, re, sqlite3, sys, time, argparse, contextlib, random, shutil, webbrowser
+import asyncio, base64, hashlib, json, os, re, sqlite3, sys, time, argparse, contextlib, random, shutil, webbrowser
 import urllib.parse
 import html as html_mod
 from pathlib import Path
@@ -153,12 +153,26 @@ DEFAULT_CONFIG = {
     "sources": {"discord": True, "browser": True},   # master switch per source
     # 出网设置。proxy 留空＝跟随系统环境变量；填了就强制走它（形如 http://127.0.0.1:7890）
     "net": {"proxy": ""},
-    # AI 工作台的两个开关。
-    #   stream = 边想边显示（不然模型思考十几秒，界面上只有一个「…」，看着像卡死）
-    #   tools  = 允许模型自己动手改规则（关掉就退回只会讲步骤的老样子）
-    "ai": {"stream": True, "tools": True},
+    # AI 工作台的开关。
+    #   stream  = 边想边显示（不然模型思考十几秒，界面上只有一个「…」，看着像卡死）
+    #   tools   = 允许模型自己动手改规则（关掉就退回只会讲步骤的老样子）
+    #   strict  = 提示词严格后处理：要 JSON 的地方多钉一段格式纪律，回来先洗（去 <think>、
+    #             去 ```json、取最外层大括号），洗不出来再退回去让它只重发 JSON。
+    #             便宜模型「不太会按格式回答」十次有九次是这一步没做，不是模型不行。
+    #   history_turns = 工作台每次带上前几轮对话
+    "ai": {"stream": True, "tools": True, "strict": True, "history_turns": 8},
+    # 模型采样参数。这是让模型「老实」的根本，不是玄学：judge 类任务温度必须压低。
+    # extra 是一段原始 JSON，原样并进请求体 —— 各家私有参数（top_k、repetition_penalty、
+    # enable_thinking…）不用等我加字段，你自己写进去就行。
+    "model_params": {
+        "temperature": 0.2, "top_p": 1.0, "max_tokens": 1024,
+        "presence_penalty": 0.0, "frequency_penalty": 0.0,
+        "stop": [], "seed": None, "extra": "",
+        "wb_max_tokens": 2048,      # AI 工作台单独给的输出上限（对话要比判分宽得多）
+    },
     # 出口：命中并达到 min_score 的消息往哪儿送
     "sinks": {
+        "enabled": True,            # 本机提醒总开关。关掉＝弹窗/提示音/网页通知一个都不出
         "browser": True,            # 网页通知（要开着界面）
         "toast": True,              # Windows 系统通知
         "sound": True,              # 提示音
@@ -166,8 +180,18 @@ DEFAULT_CONFIG = {
         "sound_file": "",           # 老版本遗留：自定义 .wav 绝对路径
         "quiet_from": "", "quiet_to": "",   # 免打扰时段 "23:00"→"08:00"，只静音本机，不影响转发
         "min_score": 0,             # AI 打分低于这个不往外发；没有分数的一律发
+        "merge_sec": 8,             # 这么多秒内的本机提醒攒成一条（0=不合并，每条都弹）
+        "same_author_sec": 30,      # 同一个人这么多秒内只弹一条（0=关）。刷屏的人不该刷你的通知中心
         # 转发出口：一条一个 HTTP 请求，谁都能接。见 HOOK_FIELDS
         "hooks": [],
+    },
+    # 论坛频道的新帖：网页版不点开就渲染不出帖子里的消息，扩展也就看不见。
+    # 开了这个，扩展会自己在后台标签页打开新帖，帖子安静够久再自己关掉。
+    "threads": {
+        "auto_open": False,     # 默认关：会真的开标签页，得用户自己点头
+        "max_tabs": 5,          # 同时最多自动开这么多个（超了就不再开，不会把浏览器撑爆）
+        "idle_close_min": 30,   # 帖子这么多分钟没有新消息就自动关掉，腾出位置
+        "only_matching": True,  # 只开「有规则在盯这个父频道」的新帖，不是见帖就开
     },
     # 内置提示词：规则里不单独写 prompt 时用这里的。界面上可改、可一键恢复默认。
     "prompts": {},
@@ -184,15 +208,96 @@ DEFAULT_CONFIG = {
 }
 
 DEFAULT_PROMPTS = {
-    "ai_tag": ("你是消息分流助手。判断这条 Discord 消息对我是否重要。"
-               "只输出 JSON: {\"score\":0-100,\"tags\":[\"...\"],\"reason\":\"一句话\","
-               "\"todo\":\"若需我行动则写，否则空\"}"),
+    "ai_tag": (
+        "你是消息分流助手，判断这条 Discord 消息对我是否重要。\n"
+        "评分口径：0-30 闲聊灌水；31-60 有点关系但不用马上看；61-85 我大概率想知道；"
+        "86-100 现在就得看（限时名额、密钥、封禁通知、点名找我）。\n"
+        "只输出一个 JSON 对象，不要解释、不要 Markdown 代码块：\n"
+        '{"score":0-100,"tags":["短标签"],"reason":"一句话","todo":"要我做什么，没有就空字符串"}'),
+    # ai_filter 是「让模型当过滤器」，跟 ai_tag 的区别：它说不命中就真的不提醒。
+    # 默认这版是照用户的实际场景写的：白嫖 API key 的社群，发码的人会想办法躲脚本。
+    "ai_filter": (
+        "你是密钥/名额监控助手。别人用脚本抢，所以发的人会故意躲开关键字匹配。\n"
+        "你的任务：判断这条 Discord 消息里到底有没有「我能用上的东西」，并把它原样挑出来。\n"
+        "\n"
+        "算命中的：API key / token / 邀请码 / 兑换码 / 车票 / 号池地址 / 限时名额 / 开放注册 / "
+        "白嫖入口。别人只是在讨论、抱怨、道谢、问怎么用，都不算。\n"
+        "\n"
+        "这些花招要认出来，别被绕过去：\n"
+        "1. 中间插字符：sk-ab@@cd、sk_ab cd、s k - a b、全角字符、零宽空格 → 去掉杂质后写进 secrets，"
+        "   同时把原文片段写进 raw。\n"
+        "2. 尾部话术：「删掉后面的xxx才是真的」「去掉末尾三位」「倒过来读」→ 照他说的还原，"
+        "   还原结果写 secrets，并在 reason 里说明你怎么还原的。\n"
+        "3. 分几条发、分行发、藏在代码块或引用里 → 只要这一条里能看出片段就照实报，"
+        "   拼不全就 needs_human=true。\n"
+        "4. 内容在附件里（[文件 xxx.txt]、[图片]、/下载、网盘链接、pastebin、要跳转才看得到）→ "
+        "   你看不到里面，一律 needs_human=true，并在 human_reason 写清楚要我点哪儿。\n"
+        "\n"
+        "铁律：secrets 里只能放你真看见或按他自己给的规则还原出来的字符串，"
+        "**一个字都不许编、不许补全、不许猜**。不确定就留空并 needs_human=true。\n"
+        "\n"
+        "只输出一个 JSON 对象，不要解释、不要 Markdown 代码块：\n"
+        '{"hit":true/false,"score":0-100,"kind":"key|invite|quota|other","secrets":["还原后的完整串"],'
+        '"raw":"原文里对应的片段","needs_human":true/false,"human_reason":"要我自己去看什么",'
+        '"reason":"一句话为什么","todo":"要我做什么，没有就空字符串"}'),
     "ai_reply": "你是该频道的助手，用简洁中文回答，不超过 120 字。",
     "ai_summary": "把这段 Discord 对话压成 3-5 条要点中文摘要，标出待办和结论。",
     "ai_extract": "从消息中抽取结构化信息，只输出 JSON。字段自定，找不到就留空。",
     # 工作台的身份和边界在 WORKBENCH_SYS 里（写死，不让改）。这条只是用户想追加的偏好，默认空。
     "ask": "",
 }
+
+# 严格后处理的那段「格式纪律」。要 JSON 的调用都会把它钉在系统提示词末尾。
+# 为什么单独拎出来而不是写进每条提示词：用户会改提示词，一改就容易把这段删掉，
+# 于是模型又开始输出「好的，这是您要的 JSON：```json …```」。
+STRICT_TAIL = (
+    "\n\n## 输出纪律（必须遵守）\n"
+    "1. 整个回答**只能**是一个 JSON 对象，以 { 开头、以 } 结尾。\n"
+    "2. 不要 Markdown 代码块，不要 ```json，不要「好的」「以下是」这类开场白，不要任何解释。\n"
+    "3. 不要输出思考过程。字段名照抄上面给的，别改名、别加字段、别少字段。\n"
+    "4. 值里如果要换行，用 \\n 转义，不要真的换行。\n"
+    "5. 不知道的字段给空字符串或空数组，**不要编内容**。")
+
+# 提示词预设：整套提示词 + 采样参数打包，一键换。
+# 用户可以在界面上看见全文、改、导出成文件、也可以导入别人的。参考酒馆那套做法。
+BUILTIN_PRESETS = [
+    {
+        "id": "default", "name": "出厂默认",
+        "note": "平衡口径。第一次用、或者改乱了想回到原点，选它。",
+        "prompts": {},                     # 空 = 用 DEFAULT_PROMPTS
+        "params": {"temperature": 0.2, "top_p": 1.0, "max_tokens": 1024},
+        "strict": True,
+    },
+    {
+        "id": "keyhunter", "name": "白嫖 key 猎手（严格）",
+        "note": "盯发码/发 key 的频道。温度压到 0，专治「中间插字、尾部话术、藏附件」这三招；"
+                "拿不准就叫你自己看，绝不编一个假 key 给你。配「AI 判定」动作用。",
+        "prompts": {
+            "ai_filter": DEFAULT_PROMPTS["ai_filter"] + (
+                "\n\n## 额外收紧\n"
+                "- 宁可漏报也不许编。编出来的 key 会让我白跑一趟，比漏掉更糟。\n"
+                "- 只要还原过程有任何一步是你「猜」的，needs_human 就必须是 true。\n"
+                "- 同一条消息里多个 key 全部列进 secrets，不要只给第一个。"),
+            "ai_tag": DEFAULT_PROMPTS["ai_tag"],
+        },
+        "params": {"temperature": 0.0, "top_p": 1.0, "max_tokens": 1200},
+        "strict": True,
+    },
+    {
+        "id": "cheap", "name": "省钱粗筛",
+        "note": "只做一句话判断，输出短、token 少。适合消息量大、模型按量计费的时候先过一道。",
+        "prompts": {
+            "ai_filter": (
+                "判断这条 Discord 消息里有没有可以直接拿来用的密钥/邀请码/名额。\n"
+                "别人会故意插字符、加尾巴话术、塞进附件来躲脚本，注意识别。\n"
+                "看不到附件内容时 needs_human=true。不许编。\n"
+                '只输出 JSON：{"hit":bool,"score":0-100,"secrets":[],"needs_human":bool,"reason":"≤20字"}'),
+        },
+        "params": {"temperature": 0.0, "top_p": 1.0, "max_tokens": 300},
+        "strict": True,
+    },
+]
+PRESET_KIND = "dcwatch.preset/1"
 
 # ---------- 转发出口 ----------
 # 一条出口 = 一个 HTTP 请求。URL / 请求头 / 请求体里写 {{占位符}}，命中时替换成真值。
@@ -241,6 +346,36 @@ def merge_hooks(new, old):
         h["verified"] = bool(o and o.get("verified") and all(o.get(k) == h[k] for k in HOOK_SIG))
         out.append(h)
     return out[:20]
+
+
+PARAM_RANGE = {"temperature": (0, 2), "top_p": (0, 1), "max_tokens": (16, 200000),
+               "presence_penalty": (-2, 2), "frequency_penalty": (-2, 2),
+               "wb_max_tokens": (64, 200000)}
+
+
+def check_params(p) -> str:
+    """采样参数落库前先验一遍，返回一句人话的错误（空字符串＝没问题）。
+    为什么要拦：填了 temperature=5，OpenAI 兼容接口只会回一句英文 400，
+    用户看到的是「调用失败」，根本不会想到是自己在另一页填的数字。"""
+    for k, (lo, hi) in PARAM_RANGE.items():
+        if p.get(k) in (None, ""):
+            continue
+        try:
+            v = float(p[k])
+        except Exception:
+            return f"{k} 要填数字，现在填的是「{p[k]}」"
+        if not lo <= v <= hi:
+            return f"{k} 只能在 {lo} 到 {hi} 之间，现在填的是 {p[k]}"
+    raw = str(p.get("extra") or "").strip()
+    if raw:
+        try:
+            if not isinstance(json.loads(raw), dict):
+                return "附加参数要是一个 JSON 对象，形如 {\"top_k\": 20}"
+        except Exception as e:
+            return f"附加参数不是合法 JSON：{e}"
+    if p.get("stop") is not None and not isinstance(p["stop"], list):
+        return "停止词要是一个数组"
+    return ""
 
 
 def norm_quick(items) -> list:
@@ -353,7 +488,17 @@ CREATE TABLE IF NOT EXISTS rules(
 CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, level TEXT, text TEXT);
 CREATE TABLE IF NOT EXISTS aiusage(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, rule TEXT,
   model TEXT, in_tok INT, out_tok INT, ok INT, err TEXT);
+-- AI 工作台的对话。以前只活在网页的内存里，按一下 F5 就全没了 —— 而这个界面
+-- 恰恰是「装了新版要刷新」「改了设置要刷新」最频繁的地方。存进库里还顺带解决多开：
+-- 一个 id 一条会话，切换、改名、删除都是这张表上的事。
+CREATE TABLE IF NOT EXISTS chats(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, created REAL, updated REAL,
+  provider TEXT DEFAULT '', model TEXT DEFAULT '', msgs TEXT, ctx TEXT DEFAULT '[]');
+CREATE INDEX IF NOT EXISTS idx_chat_up ON chats(updated DESC);
 """
+
+CHAT_MAX = 40          # 最多留这么多条会话，超了删最旧的（按更新时间）
+CHAT_MSG_MAX = 400     # 单条会话最多留这么多轮，超了砍掉最老的
 
 
 class DB:
@@ -392,6 +537,39 @@ class DB:
         self.x("INSERT INTO kv(k,v) VALUES('config',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
                (json.dumps(cfg, ensure_ascii=False),))
 
+    # ---------- AI 工作台的会话 ----------
+    def chat_list(self):
+        return self.q("SELECT id,title,created,updated,provider,model,"
+                      "length(msgs) AS size FROM chats ORDER BY updated DESC")
+
+    def chat_get(self, cid):
+        r = self.q("SELECT * FROM chats WHERE id=?", (cid,))
+        if not r:
+            return None
+        c = r[0]
+        for k, d in (("msgs", []), ("ctx", [])):
+            try:
+                c[k] = json.loads(c[k] or "[]")
+            except Exception:
+                c[k] = d
+        return c
+
+    def chat_save(self, cid, title, msgs, provider="", model="", ctx=None):
+        msgs = (msgs or [])[-CHAT_MSG_MAX:]
+        j = json.dumps(msgs, ensure_ascii=False)
+        jc = json.dumps(ctx or [], ensure_ascii=False)
+        t = time.time()
+        if cid and self.q("SELECT 1 FROM chats WHERE id=?", (cid,)):
+            self.x("UPDATE chats SET title=?,updated=?,provider=?,model=?,msgs=?,ctx=? WHERE id=?",
+                   (title, t, provider, model, j, jc, cid))
+        else:
+            cid = self.x("INSERT INTO chats(title,created,updated,provider,model,msgs,ctx)"
+                         " VALUES(?,?,?,?,?,?,?)", (title, t, t, provider, model, j, jc))
+            # 只在新建时修剪：不然用户正在用的老会话可能被自己的一次保存挤掉
+            self.x("DELETE FROM chats WHERE id NOT IN "
+                   "(SELECT id FROM chats ORDER BY updated DESC LIMIT ?)", (CHAT_MAX,))
+        return cid
+
 
 DEFAULT_RULE = {
     "name": "新规则",
@@ -409,7 +587,8 @@ DEFAULT_RULE = {
     # ---- WHAT ----
     "keywords_any": [], "keywords_all": [], "regex": "", "min_len": 0,
     # ---- ACTION ----
-    "action": "notify",   # notify | ai_tag | ai_reply | ai_summary | ai_extract | webhook
+    # notify | ai_filter | ai_tag | ai_reply | ai_summary | ai_extract | webhook
+    "action": "notify",
     "model": "", "provider": "",
     "prompt": "",
     "reply_in_thread": True,
@@ -418,10 +597,16 @@ DEFAULT_RULE = {
     "cooldown_sec": 20,
     "max_per_hour": 30,
     "webhook_url": "",
+    # ---- ai_filter 专用 ----
+    # 上面那些关键词/正则在 ai_filter 里的角色变了：它们是**粗筛**（省 token），
+    # 粗筛过了才轮到模型看。想让模型看频道里每一条，就把关键词全留空。
+    "gate_min": 0,        # 模型给的分低于这个，当没命中（0 = 只看 hit）
+    "human_always": True,  # 模型说「这个得你自己看」（附件/看不全）时一定提醒
+    "gate_fail_open": True,  # 模型调不通/限流时：True=照样提醒（宁可多响），False=当没命中
 }
 
 
-ACTIONS = ("notify", "ai_tag", "ai_reply", "ai_summary", "ai_extract", "webhook")
+ACTIONS = ("notify", "ai_filter", "ai_tag", "ai_reply", "ai_summary", "ai_extract", "webhook")
 
 COMPOSE_SYS = """你把用户一句中文需求，翻译成 dcwatch 的监听规则 JSON。只输出 JSON，不要解释。
 
@@ -632,14 +817,64 @@ def parse_discord_links(text):
     return out
 
 
+def strip_think(t):
+    """推理模型会把思考过程原样吐出来。<think>…</think>、<reasoning>…</reasoning>、
+    以及只有开标签没有闭标签（被 max_tokens 截断）的情况都得清掉，
+    否则后面找 JSON 时会先撞上思考里随手写的花括号。"""
+    t = re.sub(r"<(think|thinking|reasoning|analysis)>.*?</\1>", "", t, flags=re.S | re.I)
+    t = re.sub(r"^.*?</(?:think|thinking|reasoning|analysis)>", "", t, flags=re.S | re.I)
+    return re.sub(r"<(?:think|thinking|reasoning|analysis)>.*$", "", t, flags=re.S | re.I).strip()
+
+
+def balanced_json(t):
+    """从一段废话里抠出最外层那个完整的 JSON 对象。
+    不能用 `\\{.*\\}` 贪婪匹配：模型爱在 JSON 后面再补一句「希望对你有帮助」，
+    里面要是也有花括号（比如举例 {{text}}），贪婪匹配就把两坨括起来了，一定解析失败。
+    这里按括号配对扫，并且跳过字符串里的括号。"""
+    for start in (i for i, ch in enumerate(t) if ch == "{"):
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(t)):
+            ch = t[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    with contextlib.suppress(Exception):
+                        return json.loads(t[start:i + 1])
+                    break
+    return None
+
+
 def loose_json(txt):
-    """模型经常给带 ``` 或前后废话的 JSON。尽量捞出来，捞不到就抛。"""
-    t = (txt or "").strip()
-    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.S)
-    m = re.search(r"\{.*\}", t, re.S)
-    if not m:
-        raise ValueError("模型没有输出 JSON")
-    return json.loads(m.group(0))
+    """模型经常给带 ``` 或前后废话的 JSON。尽量捞出来，捞不到就抛。
+    这是「提示词严格后处理」的收尾一步：便宜模型答不对格式，多半死在这儿而不是脑子不行。"""
+    t = strip_think(txt or "")
+    t = re.sub(r"^\s*```(?:json|JSON)?\s*", "", t)
+    t = re.sub(r"\s*```\s*$", "", t)
+    t = t.strip()
+    with contextlib.suppress(Exception):
+        return json.loads(t)
+    got = balanced_json(t)
+    if got is not None:
+        return got
+    # 最后一招：单引号 / 尾逗号 / 中文引号这类小毛病，修一遍再试
+    fixed = (t.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'"))
+    fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
+    got = balanced_json(fixed)
+    if got is not None:
+        return got
+    raise ValueError("模型没有输出 JSON")
 
 
 def sanitize_draft(draft, notes, known_ids, model=""):
@@ -1319,6 +1554,7 @@ class App:
         self._pend = []               # [(head, body)] 等着合并发出去的
         self._pend_task = None
         self._pend_sound = False
+        self._seen_notif = {}         # 提醒去重：作者 / 正文指纹 → 上次弹的时间
         self.no_tools = set()         # 试过一次不支持函数调用的 provider|model，别反复白试
         self.port = 8777
 
@@ -1659,6 +1895,50 @@ class App:
             hint = "。404 一般是 Base URL 写法不对，正确的形如 https://api.deepseek.com/v1"
         raise RuntimeError(f"拉取模型失败{hint}\n试过：{body}")
 
+    def ai_cfg(self):
+        """AI 开关。库里存的那份可能是老版本写的，缺字段就用默认值补齐。"""
+        return dict(DEFAULT_CONFIG["ai"], **(self.cfg.get("ai") or {}))
+
+    def params(self):
+        """模型采样参数。同样按默认值补齐，缺哪个补哪个。"""
+        return dict(DEFAULT_CONFIG["model_params"], **(self.cfg.get("model_params") or {}))
+
+    def strict(self):
+        return bool(self.ai_cfg().get("strict", True))
+
+    def apply_params(self, body, max_tokens=None):
+        """把用户在「模型接入 → 采样参数」里填的东西并进请求体。
+        这些才是让模型老实的根本 —— 判分/判定类任务温度不压下来，同一条消息能给出三个分数。
+        extra 是原始 JSON，最后合并，所以用户永远能覆盖上面任何一项（含 model 之外的私有参数）。"""
+        p = self.params()
+        num = lambda k, lo, hi: None if p.get(k) is None else max(lo, min(hi, float(p[k])))
+        body["temperature"] = num("temperature", 0, 2)
+        tp = num("top_p", 0, 1)
+        if tp is not None and tp < 1:
+            body["top_p"] = tp
+        for k, lo, hi in (("presence_penalty", -2, 2), ("frequency_penalty", -2, 2)):
+            v = num(k, lo, hi)
+            if v:
+                body[k] = v
+        if p.get("seed") not in (None, "", 0):
+            with contextlib.suppress(Exception):
+                body["seed"] = int(p["seed"])
+        stops = [str(x) for x in (p.get("stop") or []) if str(x).strip()][:4]
+        if stops:
+            body["stop"] = stops
+        body["max_tokens"] = int(max_tokens or p.get("max_tokens") or 1024)
+        raw = (p.get("extra") or "").strip()
+        if raw:
+            try:
+                ex = json.loads(raw)
+                if isinstance(ex, dict):
+                    body.update(ex)
+                else:
+                    self.log("warn", "附加参数不是一个 JSON 对象（要形如 {\"top_k\": 20}），这次没生效")
+            except Exception as e:
+                self.log("warn", f"附加参数不是合法 JSON，这次没生效：{e}")
+        return body
+
     def chat_prep(self, provider_name, model, messages, json_mode=False, max_tokens=800,
                   tools=None, stream=False):
         """一次 chat 请求的公共部分。非流式和流式共用，免得两边的代理/base 修正走岔。"""
@@ -1670,7 +1950,15 @@ class App:
         used = self.db.q("SELECT COUNT(*) n FROM aiusage WHERE ts>?", (now() - 86400,))[0]["n"]
         if used >= cap:
             raise RuntimeError(f"已达今日调用上限 {cap}")
-        body = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.3}
+        if json_mode and self.strict():
+            # 格式纪律钉在系统提示词末尾，而不是塞进用户那条 —— 用户改提示词时删不掉它
+            messages = list(messages)
+            if messages and messages[0].get("role") == "system":
+                messages[0] = dict(messages[0], content=messages[0]["content"] + STRICT_TAIL)
+            else:
+                messages.insert(0, {"role": "system", "content": STRICT_TAIL.strip()})
+        body = {"model": model, "messages": messages}
+        self.apply_params(body, max_tokens)
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         if tools:
@@ -1728,6 +2016,33 @@ class App:
         except Exception as e:
             self.ai_used(t0, rule, model, err=str(e))
             raise
+
+    async def chat_json(self, provider_name, model, messages, max_tokens=800, rule="-"):
+        """要 JSON 的调用都走这里。返回 (dict|None, 原始文本)。
+
+        「这个模型不太会按格式回答」十次有九次不是模型笨，是这三步没做：
+          1) 系统提示词末尾钉一段格式纪律（chat_prep 里做，STRICT_TAIL）；
+          2) 回来先洗：去思考标签、去 ```json、按括号配对抠最外层对象（loose_json）；
+          3) 还是解不出来，就把它自己那段原样退回去，只让它重发 JSON 本身 —— 一次就够。
+        这三步是抄「提示词后处理严格」那套的，做完之后便宜模型的成功率完全是另一回事。"""
+        out = await self.chat(provider_name, model, messages, json_mode=True,
+                              max_tokens=max_tokens, rule=rule)
+        with contextlib.suppress(Exception):
+            return loose_json(out), out
+        if not self.strict():
+            return None, out
+        fix = list(messages) + [
+            {"role": "assistant", "content": (out or "")[:2000]},
+            {"role": "user", "content":
+                "上一条回答不是合法 JSON，我的程序解析失败了。现在把同样的内容**只**用一个 JSON 对象重发一次："
+                "以 { 开头、以 } 结尾，不要代码块、不要任何解释、不要思考过程。"}]
+        out2 = await self.chat(provider_name, model, fix, json_mode=True,
+                               max_tokens=max_tokens, rule=rule + "(重试)")
+        with contextlib.suppress(Exception):
+            return loose_json(out2), out2
+        self.log("warn", f"{rule}: 模型两次都没给出合法 JSON。到「模型接入」把温度调到 0-0.2，"
+                         f"或换一个模型。它说的是：{(out or '')[:120]}")
+        return None, out2 or out
 
     async def chat_stream(self, provider_name, model, messages, max_tokens=1200, rule="-", tools=None):
         """流式。产出 ("delta", 文本片段) 若干，最后一个是 ("msg", 完整 message)。
@@ -1894,6 +2209,8 @@ class App:
 
     async def _handle_event(self, ev):
         matched, ai_json, score = [], None, None
+        # 提醒是「有规则想让你看见」，不是「有规则匹配上了」。ai_filter 会说不。
+        wants_alert, human = [], None
         for rule in self.rules():
             ok, _ = self.match(rule, ev)
             if not ok:
@@ -1901,23 +2218,58 @@ class App:
             matched.append(rule["name"])
             self.db.x("UPDATE rules SET hits=hits+1 WHERE id=?", (rule["id"],))
             act = rule["action"]
-            if act in ("ai_tag", "ai_reply", "ai_extract", "ai_summary") and not self.rate_ok(rule):
-                self.log("warn", f"{rule['name']}: 冷却/限流跳过 AI")
+            if act in ("ai_filter", "ai_tag", "ai_reply", "ai_extract", "ai_summary") and not self.rate_ok(rule):
+                if act == "ai_filter":
+                    # 限流时把这条静音掉，就等于「因为前面刷屏，所以真 key 反而没提醒」。
+                    # 默认宁可多响一次（fail open），并且在日志里说清是限流不是模型判的。
+                    keep = bool(rule.get("gate_fail_open", True))
+                    self.log("warn", f"{rule['name']}: 冷却/限流，这条没让模型看"
+                                     + ("，按设置照样提醒你" if keep else "，按设置当没命中"))
+                    if keep:
+                        wants_alert.append(rule["name"])
+                else:
+                    self.log("warn", f"{rule['name']}: 冷却/限流跳过 AI")
                 continue
             try:
-                if act == "ai_tag":
+                if act == "ai_filter":
+                    g = await self.act_filter(rule, ev)
+                    ai_json = dict(ai_json or {}, **g)
+                    if g.get("score") is not None:
+                        score = g.get("score")
+                    passed = g["hit"] and int(g.get("score") or 0) >= int(rule.get("gate_min") or 0)
+                    if g["needs_human"] and rule.get("human_always", True):
+                        passed = True
+                        human = g.get("human_reason") or "这条得你自己点进去看"
+                    if passed:
+                        wants_alert.append(rule["name"])
+                    else:
+                        self.log("info", f"{rule['name']}: AI 判定不命中 —— {str(g.get('reason'))[:80]}")
+                elif act == "ai_tag":
                     ai_json = await self.act_tag(rule, ev)
                     score = (ai_json or {}).get("score")
+                    wants_alert.append(rule["name"])
                 elif act == "ai_reply":
                     await self.act_reply(rule, ev)
                 elif act == "ai_extract":
                     ai_json = await self.act_extract(rule, ev)
+                    wants_alert.append(rule["name"])
                 elif act == "ai_summary":
                     await self.act_summary(rule, ev)
-                elif act == "webhook":
-                    await self.act_webhook(rule, ev)
+                    wants_alert.append(rule["name"])
+                else:
+                    if act == "webhook":
+                        await self.act_webhook(rule, ev)
+                    wants_alert.append(rule["name"])       # notify / webhook：命中就提醒
             except Exception as e:
                 self.log("error", f"{rule['name']} 执行失败: {e}")
+                if act == "ai_filter" and rule.get("gate_fail_open", True):
+                    # 模型挂了不该等于「没事发生」。宁可多响一次，并在通知里说清楚
+                    wants_alert.append(rule["name"])
+                    human = human or f"AI 判定这条时出错（{str(e)[:60]}），没判就提醒你了"
+                elif act != "ai_filter":
+                    wants_alert.append(rule["name"])
+        if human:
+            ai_json = dict(ai_json or {}, needs_human=True, human_reason=human)
         mid = None
         with contextlib.suppress(sqlite3.IntegrityError):
             mid = self.db.x(
@@ -1932,10 +2284,15 @@ class App:
                  ev.get("account") or "", ev.get("bridge") or "",
                  ev.get("kind") or "msg", int(bool(ev.get("scanned")))))
         row = dict(ev, id=mid, matched=",".join(matched), ai=ai_json, score=score)
-        alert = bool(matched)
-        if score is not None:
-            mins = [r["notify_min_score"] for r in self.rules() if r["name"] in matched]
+        alert = bool(wants_alert)
+        if alert and score is not None:
+            # notify_min_score 只由「想提醒」的那几条规则说了算。
+            # 之前是拿全部命中规则算，于是一条 ai_filter 已经判了不命中，
+            # 旁边一条门槛 0 的规则又把它拉回来提醒 —— 那个门就等于没有
+            mins = [r["notify_min_score"] for r in self.rules() if r["name"] in wants_alert]
             alert = score >= min(mins or [0])
+        if (ai_json or {}).get("needs_human"):
+            alert = True                    # 「你自己看一眼」永远要说出口，不受分数门槛管
         row["alert"] = alert
         await self.bus.push("message", row)
         if alert:
@@ -1971,17 +2328,60 @@ class App:
         model = rule.get("model") or self.cfg["default_model"]["model"]
         return prov, model
 
+    def ev_for_model(self, ev):
+        """喂给模型的那段消息原文。附件类型必须带上 —— 密钥藏在 txt 附件里的时候，
+        模型只有看见 `[文件 keys.txt]` 才知道该叫人工去点。"""
+        where = ("#" + (ev.get("channel_name") or "?")
+                 + ("（帖子/子区）" if ev.get("is_thread") else ""))
+        lines = [f"频道: {where}", f"作者: {ev.get('author') or '?'}"]
+        if ev.get("kind") == "thread":
+            lines.append("类型: 这是一个新开的帖子（只有标题，帖子里的正文还没看到）")
+        if ev.get("media"):
+            lines.append("附件类型: " + "、".join(str(x) for x in ev["media"][:6]))
+        lines.append("内容:\n" + (ev.get("content") or ""))
+        return "\n".join(lines)
+
     async def act_tag(self, rule, ev):
         prov, model = self.pick_model(rule)
         sysmsg = rule["prompt"] or self.prompt("ai_tag")
-        out = await self.chat(prov, model, [
+        got, out = await self.chat_json(prov, model, [
             {"role": "system", "content": sysmsg},
-            {"role": "user", "content": f"频道: {ev['channel_name']}\n作者: {ev['author']}\n内容: {ev['content']}"}],
-            json_mode=True, max_tokens=300, rule=rule["name"])
-        try:
-            return json.loads(re.search(r"\{.*\}", out, re.S).group(0))
-        except Exception:
-            return {"score": 50, "tags": [], "reason": out[:200]}
+            {"role": "user", "content": self.ev_for_model(ev)}],
+            max_tokens=min(600, self.params().get("max_tokens") or 600), rule=rule["name"])
+        if not isinstance(got, dict):
+            # 解析不出来时给 50 分而不是丢掉：宁可多提醒一次，也不能因为格式问题把消息吞了
+            return {"score": 50, "tags": [], "reason": "模型没按格式回答：" + (out or "")[:160],
+                    "format_error": True}
+        return got
+
+    async def act_filter(self, rule, ev):
+        """AI 判定：让模型当过滤器，它说不命中就真的不提醒。
+
+        跟 ai_tag 的区别是这一条 —— ai_tag 无论如何都会提醒（只是带个分数），
+        ai_filter 不命中就静音。这才是用户要的「让模型来看」：
+        脚本判不了「sk-ab@@cd 去掉 @@ 才是真 key」「删掉后面那句才是真的」「key 在附件 txt 里」，
+        模型判得了；判不了的（附件、要点进去才看得到的）它会举手说「你自己看一眼」。"""
+        prov, model = self.pick_model(rule)
+        sysmsg = rule["prompt"] or self.prompt("ai_filter")
+        got, out = await self.chat_json(prov, model, [
+            {"role": "system", "content": sysmsg},
+            {"role": "user", "content": self.ev_for_model(ev)}],
+            max_tokens=self.params().get("max_tokens") or 1024, rule=rule["name"])
+        if not isinstance(got, dict):
+            # 格式坏掉时按「拿不准」处理：照 gate_fail_open 决定是提醒还是静音，
+            # 但无论如何都在结果里写清楚原因，别让用户以为是模型说了不重要
+            return {"hit": bool(rule.get("gate_fail_open", True)), "score": 50, "secrets": [],
+                    "needs_human": True, "format_error": True,
+                    "human_reason": "模型没按格式回答，这条我判不了，你自己看一眼",
+                    "reason": (out or "")[:160]}
+        got.setdefault("hit", False)
+        got["hit"] = bool(got["hit"])
+        got["needs_human"] = bool(got.get("needs_human"))
+        sec = got.get("secrets")
+        got["secrets"] = [str(x).strip() for x in sec if str(x).strip()][:8] if isinstance(sec, list) else []
+        with contextlib.suppress(Exception):
+            got["score"] = max(0, min(100, int(float(got.get("score", 0)))))
+        return got
 
     async def act_reply(self, rule, ev):
         prov, model = self.pick_model(rule)
@@ -1996,13 +2396,11 @@ class App:
     async def act_extract(self, rule, ev):
         prov, model = self.pick_model(rule)
         sysmsg = rule["prompt"] or self.prompt("ai_extract")
-        out = await self.chat(prov, model, [{"role": "system", "content": sysmsg},
-                                            {"role": "user", "content": ev["content"]}],
-                              json_mode=True, max_tokens=500, rule=rule["name"])
-        try:
-            return json.loads(re.search(r"\{.*\}", out, re.S).group(0))
-        except Exception:
-            return {"raw": out[:300]}
+        got, out = await self.chat_json(prov, model, [{"role": "system", "content": sysmsg},
+                                                      {"role": "user", "content": self.ev_for_model(ev)}],
+                                        max_tokens=self.params().get("max_tokens") or 800,
+                                        rule=rule["name"])
+        return got if isinstance(got, dict) else {"raw": (out or "")[:300], "format_error": True}
 
     async def act_summary(self, rule, ev):
         key = f"{rule['id']}:{ev['channel_id']}"
@@ -2052,15 +2450,23 @@ class App:
         return lo <= cur < hi if lo <= hi else (cur >= lo or cur < hi)
 
     def fmt_msg(self, ev, score=None, ai=None):
-        where = "#" + (ev.get("channel_name") or "?") + ("（子区）" if ev.get("is_thread") else "")
+        where = "#" + (ev.get("channel_name") or "?") + ("（帖子）" if ev.get("is_thread") else "")
         head = f"{ev.get('author') or '?'} 在 {where}"
+        if (ai or {}).get("needs_human"):
+            head = "⚠ 要你自己看 · " + head        # 一眼能跟普通提醒分开
         body = (ev.get("content") or "(无文字)")[:600]
         extra = ""
+        ai = ai or {}
+        # AI 判定挑出来的东西放最前面：用户要的就是这个，别让他还得点进去翻原文
+        if ai.get("secrets"):
+            extra += "\n挑出来：" + "  ".join(str(s) for s in ai["secrets"][:4])
+        if ai.get("needs_human") and ai.get("human_reason"):
+            extra += f"\n{ai['human_reason']}"
         if score is not None:
             extra += f"\n重要度 {score}"
-        if ai and ai.get("tags"):
+        if ai.get("tags"):
             extra += ("　" if extra else "\n") + "、".join(str(t) for t in ai["tags"][:4])
-        if ai and ai.get("todo"):
+        if ai.get("todo"):
             extra += f"\n待办：{ai['todo']}"
         return head, body, extra, ev.get("url") or ""
 
@@ -2073,7 +2479,16 @@ class App:
         head, body, extra, url = self.fmt_msg(ev, score, row.get("ai"))
         text = f"{head}\n{body}{extra}" + (f"\n{url}" if url else "")
         jobs = {}
-        if not self.in_quiet_hours():
+        # 本机提醒的三道闸，缺一不可，而且每一道关掉都必须真的没声音没弹窗：
+        #   总开关 → 免打扰时段 → 单项开关（弹窗 / 提示音）
+        # 用户关了还在弹，是这个程序最容易让人失去信任的 bug，所以这里写得啰嗦一点。
+        if not s.get("enabled", True):
+            self.log("info", "本机提醒总开关是关的，这条不弹窗不响（转发出口不受影响）")
+        elif self.in_quiet_hours():
+            self.log("info", "免打扰时段内，这条不弹窗不响（转发出口不受影响）")
+        elif self.dupe_recent(ev, s):
+            pass                       # dupe_recent 自己会记日志
+        else:
             # 本机提醒走合并队列（涌入时一条通知 + 一次提示音）；
             # 转发出口不合并 —— 那是给机器看的，每条都得原样送出去。
             self.queue_local(head, body[:180], sound=bool(s.get("sound")),
@@ -2142,7 +2557,40 @@ class App:
                         raise RuntimeError(f"对方返回 {str(j)[:150]}")
             return t
 
-    NOTIF_WINDOW = 5.0            # 这么多秒内的提醒攒成一条
+    NOTIF_WINDOW = 5.0            # 合并窗口的出厂值，用户可在「通知与转发」里改
+
+    def merge_window(self):
+        w = (self.cfg.get("sinks") or {}).get("merge_sec")
+        try:
+            return max(0.0, min(120.0, float(self.NOTIF_WINDOW if w is None else w)))
+        except Exception:
+            return self.NOTIF_WINDOW
+
+    def dupe_recent(self, ev, s):
+        """挡掉「一个人连发三条，你收到三条 Windows 通知」。
+
+        合并窗口只能合并**同一波**（默认 8 秒内）的消息；有人隔十几秒发一条、连发三条，
+        窗口就合并不到，于是弹三次。所以再加一道：同一个作者在 same_author_sec 内只弹一条，
+        后面的照常入库、照常走转发出口，只是不再打扰你。
+        完全相同的正文（多个桥、编辑后重发）永远只弹一条。"""
+        who = (ev.get("author_id") or ev.get("author") or "?")[:64]
+        sig = hashlib.md5(((ev.get("content") or "")[:300]).encode("utf-8", "ignore")).hexdigest()[:12]
+        t = now()
+        self._seen_notif = {k: v for k, v in getattr(self, "_seen_notif", {}).items() if t - v < 3600}
+        if t - self._seen_notif.get("c:" + sig, 0) < 600:
+            self.log("info", f"同样的内容 10 分钟内已经提醒过了，这条不再弹（{who}）")
+            return True
+        try:
+            gap = float(s.get("same_author_sec", 30) or 0)
+        except Exception:
+            gap = 30.0
+        if gap > 0 and t - self._seen_notif.get("a:" + who, 0) < gap:
+            self.log("info", f"{who} 在 {int(gap)} 秒内已经提醒过了，这条不再弹"
+                             f"（要每条都弹，把「同一个人多久内只提醒一次」改成 0）")
+            return True
+        self._seen_notif["c:" + sig] = t
+        self._seen_notif["a:" + who] = t
+        return False
 
     def queue_local(self, head, body, sound=True, toast=True):
         """把本机提醒放进合并队列。同一波消息只会响一声、弹一条。"""
@@ -2156,7 +2604,7 @@ class App:
     async def _flush_local(self):
         """等一个小窗口，把这段时间攒下的提醒合成一条发出去。"""
         try:
-            await asyncio.sleep(self.NOTIF_WINDOW)
+            await asyncio.sleep(self.merge_window())
             items, sound = self._pend, self._pend_sound
             self._pend, self._pend_sound = [], False
             if not items:
@@ -2176,7 +2624,7 @@ class App:
                     lines.append(f"…还有 {len(shown) - 4} 条，去 dcwatch 收信箱看")
                 body = "\n".join(lines)
             with contextlib.suppress(Exception):
-                await self.local_toast(head, body, force=True)
+                await self.local_toast(head, body, force=True, why="命中规则")
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -2207,11 +2655,17 @@ class App:
                 sys.stdout.flush()
         await asyncio.get_running_loop().run_in_executor(None, play)
 
-    async def local_toast(self, title, body, force=False):
-        """Win10/11 原生通知。不装任何库：走 PowerShell 的 WinRT 接口。"""
+    async def local_toast(self, title, body, force=False, why="命中规则"):
+        """Win10/11 原生通知。不装任何库：走 PowerShell 的 WinRT 接口。
+
+        每弹一次都记一行日志，写清是谁让它弹的。理由：用户报过「三个开关都关了还在弹」，
+        而这个程序总共只有两处会弹（命中提醒 / 你自己点的测试），
+        剩下的可能性是浏览器的网页通知（Chrome 在 Windows 上也画成系统通知，长得一模一样）
+        或者你开着**另一个** dcwatch。有了这行日志，导出诊断就能一句话分清是哪种。"""
         if not force and now() - self._last_toast < 4:
             return                                  # 防刷屏：4 秒内只弹一条
         self._last_toast = now()
+        self.log("info", f"弹了一条系统通知（{why}）：{str(title)[:40]}")
         if not IS_WIN:
             self.log("info", f"[通知] {title} — {body[:60]}")   # 非 Windows 只记日志
             return
@@ -2535,6 +2989,19 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                 patch["sinks"]["hooks"] = merge_hooks(patch["sinks"]["hooks"], merged.get("hooks"))
             merged.update(patch["sinks"])
             patch["sinks"] = merged
+        # 下面这几段同理：都是嵌套字典，前端往往只提交自己那一页的字段。
+        # 不合并的话，保存「采样参数」会把「工作台开关」抹掉，用户看到的是「设置自己变回去了」
+        for key, base in (("ai", app.ai_cfg()), ("model_params", app.params()),
+                          ("threads", dict(DEFAULT_CONFIG["threads"], **(app.cfg.get("threads") or {})))):
+            if isinstance(patch.get(key), dict):
+                patch[key] = dict(base, **patch[key])
+        if isinstance(patch.get("model_params"), dict):
+            bad = check_params(patch["model_params"])
+            if bad:
+                return web.json_response({"ok": False, "error": bad}, status=400)
+        if isinstance(patch.get("prompts"), dict):
+            patch["prompts"] = {k: str(v or "")[:12000]
+                                for k, v in patch["prompts"].items() if k in DEFAULT_PROMPTS}
         if "quick_actions" in patch:
             patch["quick_actions"] = norm_quick(patch["quick_actions"])
         app.cfg.update(patch)
@@ -2581,6 +3048,52 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
     async def clr(_):
         app.db.x("DELETE FROM messages")
         return web.json_response({"ok": True})
+
+    @r.get("/api/authors")
+    async def authors(req):
+        """库里出现过的人。规则里「只听这些人」以前只能手打 ID —— 用户根本拿不到 ID，
+        于是这个功能对他等于不存在。现在界面直接列出见过的人让他勾。
+        按最近说话时间排，同名不同 ID 分开列（Discord 改名很随意，ID 才是准的）。"""
+        lim = max(1, min(int(req.query.get("limit", 200)), 1000))
+        rows = app.db.q(
+            "SELECT author, author_id, COUNT(*) n, MAX(ts) last, "
+            "       MAX(channel_name) chan, MAX(is_bot) bot "
+            "FROM messages WHERE author<>'' AND author<>'?' "
+            "GROUP BY author, author_id ORDER BY last DESC LIMIT ?", (lim,))
+        return web.json_response({"ok": True, "authors": rows})
+
+    # ---------- AI 工作台的会话（刷新不丢 + 多开） ----------
+    @r.get("/api/chats")
+    async def chats_list(_):
+        return web.json_response({"ok": True, "chats": app.db.chat_list(), "max": CHAT_MAX})
+
+    @r.get("/api/chats/{cid}")
+    async def chats_get(req):
+        c = app.db.chat_get(int(req.match_info["cid"]))
+        if not c:
+            return web.json_response({"ok": False, "error": "这条会话不在了"}, status=404)
+        return web.json_response({"ok": True, "chat": c})
+
+    @r.post("/api/chats")
+    async def chats_save(req):
+        b = await req.json()
+        msgs = b.get("msgs")
+        if not isinstance(msgs, list):
+            return web.json_response({"ok": False, "error": "msgs 必须是数组"}, status=400)
+        title = str(b.get("title") or "").strip()[:60]
+        if not title:
+            # 拿第一句用户说的话当标题，跟所有聊天软件一个套路
+            first = next((str(m.get("t") or "") for m in msgs if isinstance(m, dict) and m.get("r") == "u"), "")
+            title = (first.replace("\n", " ").strip()[:24] or "新对话")
+        cid = app.db.chat_save(b.get("id"), title, msgs, str(b.get("provider") or ""),
+                               str(b.get("model") or ""), b.get("ctx") or [])
+        return web.json_response({"ok": True, "id": cid, "title": title,
+                                  "chats": app.db.chat_list()})
+
+    @r.post("/api/chats/{cid}/delete")
+    async def chats_del(req):
+        app.db.x("DELETE FROM chats WHERE id=?", (int(req.match_info["cid"]),))
+        return web.json_response({"ok": True, "chats": app.db.chat_list()})
 
     @r.post("/api/rules")
     async def saverule(req):
@@ -2812,9 +3325,130 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
              "where": "server.py 里的 WB_TOOLS_HOWTO / WB_TEXT_PROTO / WB_HANDS_OFF，工具定义在 WB_TOOLS",
              "text": WB_TOOLS_HOWTO + "\n\n（不支持函数调用时换成：）\n\n" + WB_TEXT_PROTO
                      + "\n\n（把那个勾关掉之后换成：）\n\n" + WB_HANDS_OFF},
-        ], "editable_hint": "命中之后那几种动作（打分、摘要、抽取、回复）的提示词是可以改的，"
-                            "在「模型接入」页最下面，工作台的「额外要求」也在那儿（prompts.ask）。"
-                            "这里这三条是骨架，写死在程序里：改坏了向导和工作台会直接失效。"})
+        ], "editable_hint": "命中之后那几种动作（AI 判定、打分、摘要、抽取、回复）的提示词是可以改的，"
+                            "在「模型接入」页的「提示词预设」里，工作台的「额外要求」也在那儿（prompts.ask）。"
+                            "这里这三条是骨架，写死在程序里：改坏了向导和工作台会直接失效。",
+            "strict_tail": STRICT_TAIL,
+            "strict_on": app.strict()})
+
+    # ---------- 提示词预设：看得见、改得动、带得走 ----------
+    PROMPT_KEYS = [
+        ("ai_filter", "AI 判定（让模型决定要不要提醒你）",
+         "规则动作选「AI 判定」时用。模型说不命中就真的不提醒 —— 这是唯一能对付"
+         "「key 中间插字」「删掉后面才是真的」「key 在附件 txt 里」这三招的路子。"),
+        ("ai_tag", "打分分流", "规则动作选「AI 打分」时用。它总会提醒你，只是带一个分数。"),
+        ("ai_reply", "自动回复", "规则动作选「自动回复」时用。要 Bot Token 才发得出去。"),
+        ("ai_summary", "摘要", "规则动作选「定期摘要」时用。"),
+        ("ai_extract", "信息抽取", "规则动作选「抽取字段」时用。"),
+        ("ask", "AI 工作台：额外要求", "附在工作台内置身份之后。留空就只用内置那份。"),
+    ]
+
+    def preset_now():
+        """当前生效的这一套 = 用户改过的提示词 + 采样参数 + 严格开关。"""
+        cur = app.cfg.get("prompts") or {}
+        return {"kind": PRESET_KIND, "app": "dcwatch", "version": VERSION,
+                "name": "我现在用的这套", "note": "",
+                "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "prompts": {k: (cur.get(k) if cur.get(k) is not None else DEFAULT_PROMPTS[k])
+                            for k, _, _ in PROMPT_KEYS},
+                "params": app.params(), "strict": app.strict()}
+
+    @r.get("/api/prompts/presets")
+    async def presets(_):
+        """界面拿这份画「提示词预设」那一页：有哪些格子、每个格子出厂长什么样、
+        现在是什么、以及可以一键套用的几套。全文都给出来 —— 用户有权看见并改。"""
+        cur = app.cfg.get("prompts") or {}
+        return web.json_response({
+            "ok": True,
+            "fields": [{"key": k, "name": n, "when": w,
+                        "default": DEFAULT_PROMPTS[k],
+                        "value": cur.get(k) if cur.get(k) is not None else DEFAULT_PROMPTS[k],
+                        "changed": bool(cur.get(k)) and cur.get(k) != DEFAULT_PROMPTS[k]}
+                       for k, n, w in PROMPT_KEYS],
+            "presets": [dict(p, prompts={k: p["prompts"].get(k, DEFAULT_PROMPTS[k])
+                                         for k, _, _ in PROMPT_KEYS}) for p in BUILTIN_PRESETS],
+            "params": app.params(), "strict": app.strict(),
+            "strict_tail": STRICT_TAIL,
+            "current": preset_now(),
+        })
+
+    @r.get("/api/prompts/export")
+    async def prompts_export(_):
+        pack = preset_now()
+        fn = f"dcwatch-提示词预设-v{VERSION}-{time.strftime('%m%d-%H%M')}.json"
+        return web.Response(body=json.dumps(pack, ensure_ascii=False, indent=1).encode(),
+                            headers={"Content-Type": "application/json; charset=utf-8",
+                                     "Cache-Control": "no-store",
+                                     "Content-Disposition":
+                                     'attachment; filename="dcwatch-preset.json"; '
+                                     f"filename*=UTF-8''{urllib.parse.quote(fn)}"})
+
+    @r.post("/api/prompts/import")
+    async def prompts_import(req):
+        """套用一套预设（文件导入 或 点内置的那几套）。
+
+        **默认只预览不写库**（硬规矩 10：任何会覆盖用户手填内容的操作，先预览再落库）。
+        提示词是他一个字一个字调出来的，不能被一个文件默默盖掉。
+        载荷：{data: 预设(对象或原始文本) | preset_id: "keyhunter", dry_run: true, params: true}
+        """
+        b = await req.json()
+        data = b.get("data")
+        if b.get("preset_id"):
+            data = next((p for p in BUILTIN_PRESETS if p["id"] == b["preset_id"]), None)
+            if not data:
+                return web.json_response({"ok": False, "error": "没有这套内置预设"}, status=400)
+            data = dict(data, kind=PRESET_KIND,
+                        prompts={k: data["prompts"].get(k, DEFAULT_PROMPTS[k]) for k, _, _ in PROMPT_KEYS})
+        if isinstance(data, str):
+            try:
+                data = loose_json(data)
+            except Exception as e:
+                return web.json_response({"ok": False, "error": f"这不是一个预设文件：{e}"}, status=400)
+        if not isinstance(data, dict) or not isinstance(data.get("prompts"), dict):
+            return web.json_response({"ok": False, "error": "预设文件里没有 prompts 这一段"}, status=400)
+        if data.get("kind") and data["kind"] != PRESET_KIND:
+            return web.json_response({"ok": False,
+                                      "error": f"这个文件写的是 {data['kind']}，不是 dcwatch 的提示词预设"},
+                                     status=400)
+        cur = app.cfg.get("prompts") or {}
+        diff, newp = [], dict(cur)
+        for k, name, _ in PROMPT_KEYS:
+            if k not in data["prompts"]:
+                continue
+            v = str(data["prompts"][k] or "")
+            old = cur.get(k) if cur.get(k) is not None else DEFAULT_PROMPTS[k]
+            if v == old:
+                diff.append({"key": k, "name": name, "state": "没变"})
+            else:
+                diff.append({"key": k, "name": name, "state": "会覆盖",
+                             "old": old[:400], "new": v[:400],
+                             "old_len": len(old), "new_len": len(v)})
+                newp[k] = v
+        want_params = b.get("params", True) and isinstance(data.get("params"), dict)
+        pdiff = []
+        if want_params:
+            oldp = app.params()
+            for k, v in data["params"].items():
+                if k in DEFAULT_CONFIG["model_params"] and oldp.get(k) != v:
+                    pdiff.append({"key": k, "old": oldp.get(k), "new": v})
+        strict_new = data.get("strict")
+        if b.get("dry_run", True):
+            return web.json_response({"ok": True, "dry_run": True, "name": data.get("name") or "这套预设",
+                                      "note": data.get("note") or "", "diff": diff, "params": pdiff,
+                                      "strict": strict_new,
+                                      "changes": sum(1 for d in diff if d["state"] == "会覆盖") + len(pdiff)})
+        app.cfg["prompts"] = newp
+        if want_params:
+            app.cfg["model_params"] = dict(app.params(),
+                                           **{k: v for k, v in data["params"].items()
+                                              if k in DEFAULT_CONFIG["model_params"]})
+        if strict_new is not None:
+            app.cfg["ai"] = dict(app.ai_cfg(), strict=bool(strict_new))
+        app.save_cfg()
+        app.log("info", f"套用了提示词预设「{data.get('name') or '未命名'}」，"
+                        f"改了 {sum(1 for d in diff if d['state'] == '会覆盖')} 段提示词、{len(pdiff)} 个参数")
+        return web.json_response({"ok": True, "dry_run": False, "config": safe_cfg(app.cfg),
+                                  "diff": diff, "params": pdiff})
 
     @r.post("/api/rules/wizard")
     async def wizard(req):
@@ -3095,8 +3729,11 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         b = await req.json()
         if b.get("ping"):
             br = app.touch_bridge(b)
+            # 心跳的回信里带上「新帖自动打开」的设置。扩展没有自己的设置页，
+            # 也不该有第二个地方能改同一件事 —— 开关只在 dcwatch 界面里，扩展照着做
             return web.json_response({"ok": True, "pong": True, "bridge": br["id"],
-                                      "server_ver": VERSION}, headers=CORS)
+                                      "server_ver": VERSION, "threads": app.thread_opts()},
+                                     headers=CORS)
         if not app.cfg["sources"].get("browser", True):
             app.touch_bridge(b, err="旁听开关是关的，消息被丢弃")
             return web.json_response({"ok": False, "error": "浏览器旁听已关闭"}, headers=CORS)
@@ -3149,7 +3786,7 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         if which in ("all", "sound"):
             jobs["提示音"] = app.local_sound()
         if which in ("all", "toast"):
-            jobs["系统通知"] = app.local_toast(head, body, force=True)
+            jobs["系统通知"] = app.local_toast(head, body, force=True, why="你自己点了「试一下系统通知」")
         for h in s.get("hooks") or []:
             if not h.get("url") or which not in ("all", f"hook:{h['id']}"):
                 continue
