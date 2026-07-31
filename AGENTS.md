@@ -3,8 +3,15 @@
 这个文件是**项目记忆**。`AGENTS.md` 这个名字会被 Claude Code / BrowserCode / Cursor 之类的
 工具自动读取，所以你现在大概是被动读到的 —— 很好，这就是它存在的目的。
 
-顺序：先读这份（项目怎么运作、哪些坑别再踩），再读 `HANDOFF.md`（上一轮做到哪、下一步做什么），
-`CLAUDE.md` 是用户定的工作协议（会话开始/结束要做什么），照着执行。
+**刚被换到新账号 / 新窗口的，先读 `START_HERE.md`**（5 分钟，写清了头四件事该干什么、
+凭据怎么要、这个运行环境有哪些坑）。然后：先读这份（项目怎么运作、哪些坑别再踩），
+再读 `HANDOFF.md`（上一轮做到哪、下一步做什么），`CLAUDE.md` 是用户定的工作协议
+（会话开始/结束要做什么），照着执行。
+
+**仓库里的每一份东西都是为了「不需要聊天记录也能接上」而存在的**：
+`START_HERE.md` 换号第一页 · 这份 项目记忆 · `HANDOFF.md` 进度与坑 · `CLAUDE.md` 协议 ·
+`tests/` 401→416 条回归（代码说不了谎的那部分）· `release/` 一份现成的成品 zip
+（用户没有 AI 也能自己下）。发现有什么只存在于聊天里，立刻补进来。
 
 ## 这是什么
 
@@ -26,6 +33,8 @@ dcwatch：盯 Discord 指定频道的消息，按规则筛，命中了本机弹�
 ## 文件地图
 
 ```
+START_HERE.md  换号 / 换窗口后第一个读的东西（给 AI 的 5 分钟上手页）
+release/       最新一个打好的交付 zip，供用户直接从 GitHub 网页下载（只留最新一个）
 server.py      单进程后端。Gateway 监听 / 规则引擎 / 模型调用 / SQLite / 所有 HTTP 接口
 ui.html        整个界面就这一个文件（收信箱、AI 工作台、批量提取、监听规则、模型接入、
                通知与转发、设置、运行日志）。没有构建步骤，改完刷新即可
@@ -68,20 +77,21 @@ await m.runFresh(session)   // 16 条：靠消息 ID 里的时间戳判新旧，
 
 用户拿到的是一个 zip，他解压后双击 `启动.bat`。**交付包里不含 `tests/`、`AGENTS.md`、
 `CLAUDE.md`、`HANDOFF.md` 和两个点文件** —— 那些是给你和给 git 的，塞进去只会让他困惑。
-干净的 26 个文件，345 KB 左右：
+干净的 26 个文件，355 KB 左右（`README.md` 要留下，那是给用户看的说明书）：
 
 ```bash
 V=$(grep -oP 'VERSION = "\K[^"]+' server.py)          # 版本号只有一个来源：server.py
 rm -rf /tmp/pack && mkdir -p /tmp/pack/dcwatch
 cp -r ./. /tmp/pack/dcwatch/
-cd /tmp/pack/dcwatch && rm -rf .git tests AGENTS.md CLAUDE.md HANDOFF.md \
-    .gitignore .gitattributes __pycache__
+cd /tmp/pack/dcwatch && rm -rf .git tests release .gitignore .gitattributes __pycache__ \
+    AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md
 find . -type f | wc -l                                # 必须是 26，少了就是同步把 .bat 弄丢了
 cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch   # 环境里没有 zip 命令
 ```
 
 扩展单独还有一个包（10 个文件）：`cd extension && python3 -m zipfile -c ../dcwatch-extension-v$V.zip .`，
-**只在扩展真改了的时候才出**（见硬规矩 2）。两个包都放进 `outputs/`，把旧版本的 zip 删掉。
+**只在扩展真改了的时候才出**（见硬规矩 2）。两个包都放进 `outputs/`，把旧版本的 zip 删掉。**顺手把 `release/` 里那份也换成新的**
+（那是用户在没有 AI 的时候唯一的下载入口，见 `release/README.md`）。
 
 打包前必做两件事：`rm -rf __pycache__`（`py_compile` 会留 .pyc，混进过交付包），
 以及确认 `.bat` 还是 **GBK + CRLF**：
@@ -136,6 +146,7 @@ python3 -c "d=open('启动.bat','rb').read(); print(b'\r\n' in d, d.decode('gbk'
 ## 交接给下一个人之前
 
 `CLAUDE.md` 要求：会话结束前用固定结构覆盖写 `HANDOFF.md`，然后连代码一起提交推送。
-**推送凭据不在仓库里，也不该在**（用户手上的 GitHub PAT，让他现给）。
+**推送凭据不在仓库里，也不该在**（用户手上的 GitHub PAT，让他现给 —— 换账号后老的一定拿不到，
+别翻工作区找，直接要）。
 `.gitignore` 排除了 `*.db` —— 配置和 API key 全在 `dcwatch.db` 里，别让它进仓库。
 已经核对过：全仓库历史零密钥泄露（`git rev-list --all` 上 grep 过 `sk-` / `Bearer` / `api_key`）。

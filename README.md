@@ -1,10 +1,12 @@
 # dcwatch · 轻量 Discord 监听 + 模型工作台
 
 > **你是被叫来接手这个项目的 AI？别从这份 README 开始。**
-> 按顺序读根目录的 `AGENTS.md`（项目记忆、用户是谁、十一条硬规矩、排查固定顺序）→
+> 换了账号 / 新窗口第一次来，先读 `START_HERE.md`（5 分钟上手页），
+> 再按顺序读根目录的 `AGENTS.md`（项目记忆、用户是谁、十一条硬规矩、排查固定顺序）→
 > `HANDOFF.md`（上一轮做到哪、下一步做什么）→ `CLAUDE.md`（用户定的工作协议）。
 > 回归套件在 `tests/`，`cd tests && ./runall.sh e2e.py e2e_ai.py`。
-> **这三份文件 + `tests/` 就是全部交接内容，不需要任何聊天记录**（干净 clone 已实测能跑回归）。
+> **这四份文件 + `tests/` 就是全部交接内容，不需要任何聊天记录**（干净 clone 已实测能跑回归）。
+> 想直接拿成品：`release/` 里有一份打好的 zip，用户不需要 AI 也能从 GitHub 网页下载。
 > 这份 README 是写给使用者的说明书，你要改代码的话它只用来查「某个功能对用户的承诺是什么」。
 > 人类用户想知道怎么换账号接手，见最后一节「十一、换个账号 / 换个 AI 接手」。
 
@@ -680,16 +682,23 @@ dist\extension\         浏览器旁听要装的扩展（exe 内部也带了一�
 | A · 只是换设备/换人 | 把新号邀请进同一个 project（设置 → Project），开会话时选**同一个工作区** | 文件、记忆、历史会话全在，无缝。但额度是按 project 算的，换号不给新额度 |
 | B · 就是要换 project 拿新额度 | 新号是新工作区，我这边的记忆一个字都过不去 —— **让新的 AI 从这个仓库接手** | 要它自己 clone、读三份文件；聊天记录不过去，但项目状态全在 |
 
-**走 B 的话，新会话第一句话复制这段：**
+**走 B 的话，新会话第一句话复制这段就够了**（别的都不用说，它自己会去读）：
 
 ```text
-接手一个已有项目：https://github.com/tqzbceb/claude
-先 clone 下来，按顺序读根目录的 AGENTS.md、HANDOFF.md、CLAUDE.md 三份文件，
-然后按 HANDOFF.md 里「未完成」的第一项继续做，不要重新规划已经做完的东西。
-回归套件在 tests/，改代码前后都要跑：cd tests && ./runall.sh e2e.py e2e_ai.py
-交付包按 AGENTS.md「怎么出交付包」那节打（26 个文件，不含 tests/ 和这三份交接文件）。
-做完更新 HANDOFF.md，我给你 GitHub token 你推回 main。
+接手一个进行中的项目。所有上下文都在这个 GitHub 仓库里，聊天记录不用管：
+https://github.com/tqzbceb/claude
+
+第一步照做，别问我：
+git clone https://github.com/tqzbceb/claude.git ./claude
+然后按顺序读 claude/START_HERE.md → AGENTS.md → HANDOFF.md → CLAUDE.md，照里面写的做。
+
+我是 Windows 11 用户，不写代码不用命令行。做完直接提交推送，不要停下来问我。
+要推送凭据时跟我要 GitHub PAT。
 ```
+
+粘完它会自己做四件事：跑一次回归确认环境、读完交接、跟你要一份诊断包、然后按
+`HANDOFF.md` 的「未完成」第一项接着做。**这段话也存在仓库里**
+（`START_HERE.md` 第 6 节），以后再换号就不用回来翻这份 README。
 
 **你要自己带过去的三样东西**（仓库里故意没有）
 
@@ -699,3 +708,7 @@ dist\extension\         浏览器旁听要装的扩展（exe 内部也带了一�
 3. **你手上程序的版本号** —— 打开 `http://127.0.0.1:8777/version` 那页，截图或念给它。
 
 **别让新 AI 拿你手上那个 zip**：zip 是给你运行的，里面故意不含 `tests/` 和交接文件。让它从 GitHub clone。
+
+**如果你连 AI 都不想麻烦，只想拿到最新的程序**：打开
+<https://github.com/tqzbceb/claude/tree/main/release>，点里面那个 `dcwatch-v1.9.1.zip`，
+页面右上角 **Download raw file**，下载解压后双击 `启动.bat` —— 和 AI 给你的是同一个包。
