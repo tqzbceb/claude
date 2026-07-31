@@ -24,7 +24,8 @@ ai.params / ai.post 三档 / ai_tag 补格式标尺 / 诊断包 [5.7]）。**本
 新工作区（第三个）已重建：PAT 长存 secrets/、save.py 就位、根 AGENTS.md 指针已写。
 
 本轮步骤（每步一 save）：
-① 接手 + 指针 + PAT 长存 ✓
+① 接手 + 指针 + PAT 长存 ✓（2026-08-01 第三个窗口重做了一遍：工作区又是新的，claude/ 已重新
+   clone 成活仓库，PAT 换了新的一个存进 secrets/，根 AGENTS.md 指针已写，自检 48+74 绿）
 ② 界面：骨架提示词抽屉从「只读」改成可编辑（6 条 textarea + 存 + 逐条恢复出厂）
    + 预设 ⇡导出 / ⇣导入（走 dry_run 预览闸，照提取模板抄）
 ③ 界面：B4 采样参数折叠区（温度/top_p/max_tokens/两个惩罚/附加 JSON）+ B2 后处理三档下拉
