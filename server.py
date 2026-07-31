@@ -1467,6 +1467,7 @@ BUILTIN_SYS_TEXT = {"wizard": WIZARD_SYS, "compose": COMPOSE_SYS, "workbench": W
                     "wb_tools": WB_TOOLS_HOWTO, "wb_text": WB_TEXT_PROTO, "wb_off": WB_HANDS_OFF}
 
 PRESET_SCHEMA = "dcwatch.preset/1"       # 认这个名字才当预设包；字段不兼容了就 /2
+PRESET_DIR = BASE / "presets"            # 程序自带的预设包放这儿，用户能直接用记事本打开改
 
 
 def norm_params(raw):
@@ -3222,6 +3223,38 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             "params": app.ai_params(), "param_defaults": DEFAULT_PARAMS,
             "editable_hint": "这六条是骨架：改坏了向导 / 工作台会变笨，但点「恢复出厂」就回来，不会丢数据。"
                              "命中之后那几种动作（打分、摘要、抽取、回复）的提示词在「模型接入」页最下面。"})
+
+    @r.get("/api/presets")
+    async def listpresets(_):
+        """程序自带的预设包（`presets/*.json`）。装的时候走 /api/preset/import 那道预览闸。
+
+        为什么不写死在代码里：用户要的是「以文件的形式导入，但我得看得到内容、我可以改」。
+        放成文件他自己就能用记事本打开看、改、或者删掉。
+        """
+        out = []
+        for f in sorted(PRESET_DIR.glob("*.json")) if PRESET_DIR.is_dir() else []:
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except Exception as e:
+                out.append({"file": f.name, "name": f.name, "desc": f"这个文件读不了（{e}）",
+                            "bad": True, "size": f.stat().st_size})
+                continue
+            out.append({"file": f.name, "name": str(d.get("name") or f.stem)[:80],
+                        "desc": str(d.get("desc") or "")[:300], "size": f.stat().st_size,
+                        "schema": str(d.get("schema") or "")})
+        return web.json_response({"ok": True, "presets": out, "dir": str(PRESET_DIR)})
+
+    @r.get("/api/presets/file")
+    async def presetfile(req):
+        """把自带预设的原文交出来（界面拿它去走预览闸）。只认 presets/ 下的文件名。"""
+        name = Path(str(req.query.get("id", ""))).name          # 防目录穿越
+        f = PRESET_DIR / name
+        if not name.endswith(".json") or not f.is_file():
+            return web.json_response({"ok": False, "error": f"没有这个自带预设：{name}"}, status=404)
+        try:
+            return web.json_response(json.loads(f.read_text(encoding="utf-8")))
+        except Exception as e:
+            return web.json_response({"ok": False, "error": f"{name} 不是合法 JSON（{e}）"}, status=400)
 
     @r.get("/api/preset/export")
     async def exportpreset(_):

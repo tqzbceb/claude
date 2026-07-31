@@ -547,7 +547,7 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
    <section class="view" id="v-models">
      <div class="pad narrow">
        <div class="card" style="margin-bottom:16px">
-         <h3>默认模型 <span class="hint">规则里不单独指定时，用的就是这个</span></h3>
+         <h3>默认模型 <span class="hint">规则里不单独指定时用的就是这个 · 也可以在下面「接入的模型服务」每张卡片里直接挑</span></h3>
          <div class="bd">
            <div class="grid2">
              <label class="f"><span>服务商</span><select id="defProv"></select></label>
@@ -575,6 +575,42 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
            <div class="row"><button class="btn pri" id="btnSaveAi">保存</button></div>
          </div>
        </div>
+
+       <div class="card" style="margin-bottom:16px">
+         <h3>让模型老实一点 <span class="hint">格式老是答错、答得太发散，先动这里</span>
+           <button class="btn ghost sm" id="btnSeePrompt2" style="margin-left:auto;flex:none"
+             title="看程序发给模型的原话，可以改、可以整包导入导出">提示词与预设</button></h3>
+         <div class="bd">
+           <label class="f"><span>提示词后处理 <em>抄的酒馆（SillyTavern）那个选项</em></span>
+             <select id="aiPost"></select></label>
+           <div class="hint" id="aiPostWhy" style="margin:-4px 0 10px"></div>
+           <details id="aiParamBox">
+             <summary style="cursor:pointer;font-size:13px;color:var(--text2)">采样参数（温度、top_p…）—— 一般不用碰，展开看</summary>
+             <div style="margin-top:14px">
+               <div class="hint" style="margin:0 0 10px">留空＝这个字段根本不发给服务商，用它自己的默认。
+                 有些兼容接口见到 <span class="mono">presence_penalty</span> 就报 400，所以默认全空。</div>
+               <div class="grid3">
+                 <label class="f"><span>温度 temperature <em>0–2，越低越死板越听话</em></span>
+                   <input type="text" id="pa_temperature" placeholder="0.3"></label>
+                 <label class="f"><span>top_p <em>0–1，和温度别同时大改</em></span>
+                   <input type="text" id="pa_top_p" placeholder="留空"></label>
+                 <label class="f"><span>max_tokens <em>16–32000，留空＝按用途各自的默认</em></span>
+                   <input type="text" id="pa_max_tokens" placeholder="留空"></label>
+                 <label class="f"><span>presence_penalty <em>-2–2</em></span>
+                   <input type="text" id="pa_presence_penalty" placeholder="留空"></label>
+                 <label class="f"><span>frequency_penalty <em>-2–2</em></span>
+                   <input type="text" id="pa_frequency_penalty" placeholder="留空"></label>
+               </div>
+               <label class="f"><span>附加参数 <em>一段 JSON，原样并进请求体。例：{"seed":42}</em></span>
+                 <textarea id="pa_extra" rows="2" spellcheck="false" placeholder='留空 · 例 {"reasoning_effort":"low"}'></textarea></label>
+             </div>
+           </details>
+           <div class="row" style="margin-top:12px"><button class="btn pri" id="btnSaveTune">保存</button>
+             <button class="btn" id="btnResetTune">恢复默认</button>
+             <span class="hint" id="tuneNow"></span></div>
+         </div>
+       </div>
+
        <div class="card">
          <h3>接入的模型服务 <span class="hint">任何 OpenAI 兼容端点</span>
            <button class="btn" data-help="models" style="margin-left:auto">怎么填</button></h3>
@@ -1122,7 +1158,7 @@ function go(v){S.view=v;$$('.view').forEach(x=>x.classList.toggle('on',x.id==='v
   if(v==='batch')renderBatch();
   if(v==='settings')renderWhoami();
   if(v==='notify'){renderNotify();renderSinkRows();bindEyes();}
-  if(v==='models'){renderPrompts();bindEyes();}}
+  if(v==='models'){renderPrompts();renderAiTune();bindEyes();}}
 $$('.nav a').forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.v)});
 $('#btnTheme').onclick=()=>{const d=document.documentElement.dataset.theme==='dark'?'light':'dark';
   document.documentElement.dataset.theme=d;localStorage.dcwTheme=d;};
@@ -1711,8 +1747,16 @@ function renderProviders(){
        <span class="sp" style="flex:1"></span>
        <button class="btn ghost sm" data-rmp="${i}">移除</button>
      </div>
-      ${ms.length?`<div class="hint" style="margin-top:6px">${d.provider===p.name
-        ? `当前默认：<b class="mono">${esc(d.model)}</b>` : '要用这家的模型，在上面「默认模型」里选'}</div>`:''}
+      ${ms.length?`<div class="row" style="margin-top:8px;align-items:flex-end">
+        <label class="f" style="flex:1;margin:0"><span>用这家的哪个模型 <em>${ms.length} 个可选</em></span>
+          <select data-psel="${i}">${ms.map(m=>
+            `<option ${d.provider===p.name&&d.model===m?'selected':''}>${esc(m)}</option>`).join('')}</select></label>
+        <button class="btn ${d.provider===p.name?'':'pri'}" data-pdef="${i}"
+          title="以后规则里不单独指定模型时，用的就是这个">设为默认模型</button>
+      </div>
+      <div class="hint" style="margin-top:6px">${d.provider===p.name
+        ? `✓ 现在的默认就是这家的 <b class="mono">${esc(d.model)}</b>`
+        : '选好按「设为默认模型」，上面「默认模型」那一栏会跟着变'}</div>`:''}
     </div>`;}).join('');
   $$('#provList input').forEach(e=>e.oninput=()=>{
     const p=S.cfg.providers[+e.dataset.p];
@@ -1733,10 +1777,19 @@ function renderProviders(){
       (S.modelsDemo=S.modelsDemo||{})[p.name]=true;}
     else if(r.ok){S.models[p.name]=r.models;if(S.modelsDemo)delete S.modelsDemo[p.name];
       tag.textContent=`已拉到 ${r.models.length} 个`;
-      $('#defProv').value=p.name;toast(`拉到 ${r.models.length} 个模型，去上面「默认模型」里挑`);}
+      $('#defProv').value=p.name;toast(`拉到 ${r.models.length} 个模型，就在这张卡片里挑，然后按「设为默认模型」`);}
     else{tag.innerHTML=`<span style="color:var(--err)">失败：${esc(r.error).slice(0,80)}</span>`;
       renderDefaults();return;}
     renderProviders();renderDefaults();});
+  /* C3：模型选择就摆在这家服务自己的卡片里 —— 拉完模型不用再跑到上面那一栏去找 */
+  $$('#provList [data-pdef]').forEach(b=>b.onclick=async()=>{
+    const p=S.cfg.providers[+b.dataset.pdef],m=$(`[data-psel="${b.dataset.pdef}"]`).value;
+    if(!m)return toast('这家还没拉到模型');
+    S.cfg.default_model={provider:p.name,model:m};
+    const r=await api('/api/config','POST',{providers:cleanProviders(),default_model:S.cfg.default_model});
+    if(r)S.cfg=r.config;
+    renderProviders();renderDefaults();renderRules();renderNl();
+    toast(r?`默认模型已设成 ${p.name} · ${m}`:'演示模式：只在这个页面里有效');});
   $$('#provList [data-rmp]').forEach(b=>b.onclick=()=>{S.cfg.providers.splice(+b.dataset.rmp,1);
     renderProviders();renderDefaults();});
   bindEyes();
@@ -1791,6 +1844,39 @@ $('#btnSaveAi').onclick=async()=>{
   const r=await api('/api/config','POST',{ai});
   if(r)S.cfg=r.config; else if(S.cfg)S.cfg.ai=ai;
   renderAiSw();toast(r?'已保存':'演示模式：未保存');};
+
+/* ---------- 让模型老实一点：后处理三档（B2）+ 采样参数（B4） ---------- */
+const PARAM_KEYS=['temperature','top_p','max_tokens','presence_penalty','frequency_penalty'];
+function renderAiTune(){
+  const modes=S.cfg?.post_modes||{},cur=(S.cfg?.ai||{}).post||'off',sel=$('#aiPost');
+  if(sel){
+    sel.innerHTML=Object.keys(modes).map(k=>`<option value="${esc(k)}" ${k===cur?'selected':''}>${
+      esc({off:'原样发（默认）',merge:'合并同角色',strict:'严格（system 也折进第一句）'}[k]||k)}</option>`).join('')
+      ||`<option value="off">原样发（默认）</option>`;
+    $('#aiPostWhy').textContent=modes[sel.value]||'';
+  }
+  const p=(S.cfg?.ai||{}).params||{},d=S.cfg?.param_defaults||{};
+  PARAM_KEYS.forEach(k=>{const el=$('#pa_'+k);if(!el||document.activeElement===el)return;
+    const v=(k in p)?p[k]:d[k];el.value=(v===null||v===undefined)?'':String(v);});
+  const ex=$('#pa_extra');if(ex&&document.activeElement!==ex)ex.value=(('extra' in p)?p.extra:d.extra)||'';
+  const changed=PARAM_KEYS.filter(k=>{const a=(k in p)?p[k]:d[k];return String(a??'')!==String(d[k]??'');}).length
+    +((((('extra' in p)?p.extra:d.extra)||'')!==((d.extra)||''))?1:0);
+  const t=$('#tuneNow');if(t)t.textContent=changed?`有 ${changed} 项跟出厂不一样`:'现在全是出厂值';
+}
+if($('#aiPost'))$('#aiPost').onchange=()=>{$('#aiPostWhy').textContent=(S.cfg?.post_modes||{})[$('#aiPost').value]||'';};
+if($('#btnSaveTune'))$('#btnSaveTune').onclick=async()=>{
+  const params={};PARAM_KEYS.forEach(k=>{const v=$('#pa_'+k).value.trim();params[k]=v===''?null:v;});
+  params.extra=$('#pa_extra').value.trim();
+  const ai={post:$('#aiPost').value,params};
+  const r=await api('/api/config','POST',{ai});
+  if(!r){toast(S.live?'没保存成，看右下角提示（后端会说哪个值不合法）':'演示模式：未保存');return;}
+  S.cfg=r.config;renderAiTune();toast('已保存，下一次调用模型就按这个来');};
+if($('#btnResetTune'))$('#btnResetTune').onclick=async()=>{
+  if(!confirm('把后处理和所有采样参数都恢复成出厂默认？'))return;
+  const r=await api('/api/config','POST',{ai:{post:'off',params:{}}});
+  if(r)S.cfg=r.config;
+  renderAiTune();toast(r?'已恢复出厂':'演示模式：未保存');};
+if($('#btnSeePrompt2'))$('#btnSeePrompt2').onclick=()=>seePrompts();
 
 /* ---------- 内置提示词 ---------- */
 const PM=[['pmTag','ai_tag'],['pmReply','ai_reply'],['pmSummary','ai_summary'],['pmExtract','ai_extract'],['pmAsk','ask']];
@@ -2568,29 +2654,127 @@ function wbLinkCheck(){
   };
 }
 $('#wbInput').addEventListener('input',wbLinkCheck);
+/* ---------- 骨架提示词：看得见、能改、能整包导入导出（B3，酒馆预设那套） ---------- */
 async function seePrompts(){
   const r=await api('/api/prompts');
   if(!r||!r.ok){toast(S.live?('读不到：'+(S.lastErr||'')):'演示模式看不到，跑起来才有');return;}
-  openDrawer(`<div class="dh"><h2>内置提示词（只读）</h2><span class="sp" style="flex:1"></span>
-      <button class="btn ghost" onclick="closeDrawer()">关闭</button></div>
+  S.sp=r;drawPrompts();
+}
+function drawPrompts(){
+  const r=S.sp;
+  openDrawer(`<div class="dh"><h2>提示词与预设</h2><span class="sp" style="flex:1"></span>
+      <button class="btn ghost" id="psExp" title="把提示词+参数存成一个文件，可以发给别人或搬到另一台机器（不含 Key）">⇡ 导出预设</button>
+      <button class="btn ghost" id="psImp" title="读一个预设文件，写进去之前先给你看会改动什么">⇣ 导入预设</button>
+      <button class="btn pri" id="psSave">保存改动</button>
+      <button class="btn ghost" onclick="closeDrawer()">✕</button></div>
     <div class="db">
-      <div class="wizres" style="margin:0 0 14px">这是程序发给模型的原话。写死在里面是为了让便宜的模型也能问对问题；
-        你不用改它，但你有权看见。${esc(r.editable_hint||'')}</div>
+      <input type="file" id="psFile" accept=".json,application/json" style="display:none">
+      <div class="wizres" style="margin:0 0 14px">这是程序发给模型的**原话**，现在可以直接改。
+        ${esc(r.editable_hint||'')}<br>改坏了点每段自己的「恢复出厂」就回来，不会丢数据。
+        改完记得按右上角<b>保存改动</b>。</div>
+      <div id="psBuiltins"></div>
       ${r.builtin.map(p=>`<div class="card" style="margin-bottom:14px">
-        <h3>${esc(p.name)} <em>${esc(p.where||'')}</em></h3>
+        <h3>${esc(p.name)} ${p.changed?'<span class="tag">已改过</span>':''}<em>${esc(p.where||'')}</em></h3>
         <div class="bd">
           <div class="hint" style="margin:0 0 4px"><b>什么时候用：</b>${esc(p.when||'')}</div>
-          <div class="hint" style="margin:0 0 10px"><b>为什么这么写：</b>${esc(p.why||'')}</div>
-          <pre class="pw">${esc(p.text||'')}</pre>
+          <div class="hint" style="margin:0 0 4px"><b>为什么这么写：</b>${esc(p.why||'')}</div>
+          <div class="hint" style="margin:0 0 10px"><b>改坏了会怎样：</b>${esc(p.risk||'')}</div>
+          <textarea data-sp="${esc(p.key)}" rows="10" spellcheck="false"
+            style="font-family:var(--mono,ui-monospace,monospace);font-size:12.5px">${esc(p.text||'')}</textarea>
           <div class="row" style="margin-top:8px">
-            <button class="btn sm" data-cp="${esc(p.key)}">复制这段</button>
-            <span class="hint">${(p.text||'').length} 字</span>
+            <button class="btn sm" data-rs="${esc(p.key)}" title="填回程序自带的那一版（还要按保存才生效）">恢复出厂</button>
+            <button class="btn sm" data-cp="${esc(p.key)}">复制</button>
+            <span class="sp" style="flex:1"></span>
+            <span class="hint" data-len="${esc(p.key)}">${(p.text||'').length} 字</span>
           </div>
         </div></div>`).join('')}
     </div>`);
   $$('[data-cp]').forEach(b=>b.onclick=()=>{
-    const p=r.builtin.find(x=>x.key===b.dataset.cp);
-    navigator.clipboard.writeText(p.text).then(()=>toast('复制好了'),()=>toast('复制失败，手动选中吧'));});
+    const t=$(`[data-sp="${b.dataset.cp}"]`).value;
+    navigator.clipboard.writeText(t).then(()=>toast('复制好了'),()=>toast('复制失败，手动选中吧'));});
+  $$('[data-rs]').forEach(b=>b.onclick=()=>{
+    const p=r.builtin.find(x=>x.key===b.dataset.rs);
+    $(`[data-sp="${p.key}"]`).value=p.builtin||'';
+    $(`[data-len="${p.key}"]`).textContent=(p.builtin||'').length+' 字';
+    toast('已填回出厂原文，按「保存改动」才生效');});
+  $$('[data-sp]').forEach(t=>t.oninput=()=>{
+    $(`[data-len="${t.dataset.sp}"]`).textContent=t.value.length+' 字';});
+  $('#psSave').onclick=savePrompts;
+  $('#psExp').onclick=()=>{
+    if(!S.live){toast('后端没连上，导不出真预设');return;}
+    const a=document.createElement('a');a.href='/api/preset/export';a.download='dcwatch-preset.json';
+    document.body.appendChild(a);a.click();a.remove();toast('已导出预设');};
+  $('#psImp').onclick=()=>{
+    if(!S.live){toast('后端没连上，导入需要程序在跑');return;}
+    const f=$('#psFile');f.value='';f.click();};
+  $('#psFile').onchange=async e=>{
+    const file=e.target.files?.[0];if(!file)return;
+    if(file.size>4e6){toast('这个文件有点大（>4MB），不像预设包');return;}
+    S.pimp={text:await file.text(),name:file.name};presetPreview();};
+  renderBuiltinPresets();
+}
+async function savePrompts(){
+  const out={};$$('[data-sp]').forEach(t=>out[t.dataset.sp]=t.value.trim());
+  const r=await api('/api/config','POST',{sys_prompts:out});
+  if(!r){toast(S.live?'没保存成，看右下角提示':'演示模式：未保存');return;}
+  S.cfg=r.config;
+  const n=Object.keys(r.config.sys_prompts||{}).length;
+  toast(n?`已保存，${n} 段跟出厂不一样`:'已保存，六段都是出厂原文');
+  const f=await api('/api/prompts');if(f&&f.ok){S.sp=f;drawPrompts();}
+}
+/* 内置预设：程序自带的几份「教模型怎么干活」的包，装之前照样先预览（B5） */
+async function renderBuiltinPresets(){
+  const box=$('#psBuiltins');if(!box)return;
+  const r=await api('/api/presets');
+  if(!r||!r.ok||!(r.presets||[]).length)return;
+  box.innerHTML=`<div class="card" style="margin-bottom:14px"><h3>程序自带的预设
+      <em>装之前会先让你看清改动什么</em></h3><div class="bd">
+    ${r.presets.map(p=>`<div class="row" style="margin-bottom:8px;align-items:flex-start">
+      <div style="flex:1">
+        <div><b>${esc(p.name)}</b> <span class="hint">${esc(p.file||'')}</span></div>
+        <div class="hint" style="margin-top:2px">${esc(p.desc||'')}</div>
+      </div>
+      <button class="btn sm" data-bp="${esc(p.file)}">看看 / 装上</button></div>`).join('')}
+    </div></div>`;
+  $$('[data-bp]').forEach(b=>b.onclick=async()=>{
+    const f=await api('/api/presets/file?id='+encodeURIComponent(b.dataset.bp));
+    if(!f)return;
+    S.pimp={text:JSON.stringify(f),name:b.dataset.bp+'（程序自带）'};presetPreview();});
+}
+const PS_KIND={'骨架提示词':'#c96442','动作提示词':'#2f855a','参数':'#2b6cb0','后处理':'#805ad5'};
+async function presetPreview(){
+  const r=await api('/api/preset/import','POST',{data:S.pimp.text,dry_run:true});
+  if(!r)return;                      // api() 已经把真实状态码和后端说的原因 toast 出来了
+  const ch=r.changes||[];
+  openDrawer(`<div class="dh"><h2>导入预设 · 预览</h2><span class="sp" style="flex:1"></span>
+      <button class="btn ghost" id="psBack">返回提示词</button>
+      <button class="btn ghost" onclick="closeDrawer()">✕</button></div>
+    <div class="db">
+      <div class="hint">文件 <b>${esc(S.pimp.name)}</b>${r.name?` · 预设名「${esc(r.name)}」`:''}
+        ${r.from_version?` · 来自 dcwatch v${esc(r.from_version)}`:''}</div>
+      ${(r.notes||[]).map(n=>`<div class="hint" style="color:#c96442">⚠ ${esc(n)}</div>`).join('')}
+      <div class="sect"><div class="st"><b>会改动 ${ch.length} 处</b>
+        <span>没列出来的项目保持不动</span></div>
+        ${ch.map(c=>`<div class="rcard"><div class="body">
+          <div class="nm"><span style="color:${PS_KIND[c.kind]||'var(--text3)'};font-weight:700">${esc(c.kind)}</span>
+            ${esc(c.label||c.key)}${c.same_as_builtin?' <span class="tag">＝出厂值</span>':''}</div>
+          <div class="hint" style="margin:4px 0 0">${c.old_len||c.new_len
+            ?`${c.old_len} 字 → ${c.new_len} 字`:''}</div>
+          ${c.preview?`<pre class="pw" style="margin:6px 0 0;max-height:120px">${esc(c.preview)}</pre>`:''}
+        </div></div>`).join('')||'<div class="hint">跟你现在用的一模一样，不用导</div>'}</div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn pri" id="psGo" ${ch.length?'':'disabled'}>确认导入</button>
+        <button class="btn ghost" id="psCancel">取消</button>
+        <span class="sp" style="flex:1"></span>
+        <span class="hint">${ch.length?'点确认才会写进去；导入后仍可逐段「恢复出厂」':''}</span></div>
+    </div>`);
+  const back=async()=>{const f=await api('/api/prompts');if(f&&f.ok)S.sp=f;drawPrompts();};
+  $('#psBack').onclick=back;$('#psCancel').onclick=back;
+  $('#psGo').onclick=async()=>{
+    const a=await api('/api/preset/import','POST',{data:S.pimp.text,dry_run:false});
+    if(!a)return;
+    if(a.config){S.cfg=a.config;renderPrompts();renderAiTune();}
+    toast(`导入完成：${(a.changes||[]).length} 处改动已生效`);back();};
 }
 $('#btnSeePrompt').onclick=seePrompts;
 $('#brandVer').onclick=seeVersions;
@@ -2722,7 +2906,7 @@ async function boot(){
     console.warn('[dcwatch] 未连上后端：',S.lastErr);}
   S.models={...(S.cfg.models_cache||{})};          // 拉过的模型列表存在配置里，刷新也还在
   renderSources();renderSinkRows();renderList();renderRules();renderNl();
-  renderProviders();renderDefaults();renderPrompts();renderSettings();renderCtxHint();renderAiSw();
+  renderProviders();renderDefaults();renderPrompts();renderAiTune();renderSettings();renderCtxHint();renderAiSw();
   bindEyes();loadSounds();
   if(S.msgs.length)openMsg(S.msgs[0].id);
   if(!S.demo){connectSSE();

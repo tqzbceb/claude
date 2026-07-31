@@ -18,14 +18,18 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**正在做：B3+B4+B2+C3+B5 的界面侧（2026-08-01 第二个窗口，Claude 亲自写码）**。
+**正在做：B3+B4+B2+C3+B5 的界面侧（2026-08-01 第三个窗口接着写，Claude 亲自写码）**。
+本窗口进度：① 接手/PAT/指针 ✓ → ②③④⑤ 代码已写完（提示词抽屉可编辑+预设导入导出、
+采样参数折叠区+后处理三档、模型选择进服务卡片、presets/教模型写规则.json + /api/presets 两个接口）
+→ 现在做 ⑥ 回归 + 目检 + 出包。
 服务端已在 386a8bb 落地（sys_prompts 可覆盖 / /api/prompts 可编辑 / /api/preset 导出导入 dry_run /
-ai.params / ai.post 三档 / ai_tag 补格式标尺 / 诊断包 [5.7]）。**本窗口只动 ui.html + presets/**。
+ai.params / ai.post 三档 / ai_tag 补格式标尺 / 诊断包 [5.7]）。界面侧动 ui.html + presets/，
+另外给 server.py 补了 `/api/presets` `/api/presets/file` 两个只读接口（界面要列自带预设）。
 新工作区（第三个）已重建：PAT 长存 secrets/、save.py 就位、根 AGENTS.md 指针已写。
 
 本轮步骤（每步一 save）：
 ① 接手 + 指针 + PAT 长存 ✓（2026-08-01 第三个窗口重做了一遍：工作区又是新的，claude/ 已重新
-   clone 成活仓库，PAT 换了新的一个存进 secrets/，根 AGENTS.md 指针已写，自检 48+74 绿）
+   clone 成活仓库，PAT：用户给的两个里**第一个只能读不能写**，能推的是 …0Dx28of 那个，已存 secrets/github_pat_tqzbceb.txt，根 AGENTS.md 指针已写，自检 48+74 绿）
 ② 界面：骨架提示词抽屉从「只读」改成可编辑（6 条 textarea + 存 + 逐条恢复出厂）
    + 预设 ⇡导出 / ⇣导入（走 dry_run 预览闸，照提取模板抄）
 ③ 界面：B4 采样参数折叠区（温度/top_p/max_tokens/两个惩罚/附加 JSON）+ B2 后处理三档下拉
