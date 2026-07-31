@@ -13,17 +13,29 @@
 5. 回复末尾报：✅ 本窗口完成 XX，已推送；下窗口发「继续」即可
 
 ## 状态
-**正在做 BACKLOG A2 ·「检测某个用户」失效**（新账号第一个窗口，自举已完成：
-PAT 已存、根 AGENTS.md 记忆已恢复、save.py 已装）。步骤：
-1. [ ] 读 server.py 规则引擎 `match()` 的 author 条件 —— 查为什么按用户筛选不生效
-2. [ ] 读通知渲染取用户名的字段 —— 查为什么通知里用户名写错
+**正在做 BACKLOG A2 ·「检测某个用户」失效**。步骤：
+1. [x] 读 server.py 规则引擎 `match()` 的 author 条件 —— match() 本身没问题
+2. [x] 读通知渲染取用户名的字段 —— fmt_msg 用 ev['author']，渲染没问题，错在上游取数
 3. [ ] 修掉，补回归（tests/ 里对应套加节）
 4. [ ] 跑全套回归，save 推送，更新本页
+
+### 根因（已坐实，第二个窗口查明的）
+- **A · 工作台 test_rule 工具没有 author_id 参数**（server.py `run_wb_tool` 里 ev 硬编码
+  `author_id=""`，工具 schema 也没有这个参数；guild/channel 都有「默认取规则第一个值」，
+  唯独 author_id 漏了）。模型建完盯人规则 → 按纪律试算 → 必中「发的人不在名单里」→
+  模型误以为条件坏了，把 author 过滤删掉 → 全频道都命中（症状①）。
+- **B · content.js 取 author_id 拿的是子树里第一个 /avatars/ 头像**。回复消息时，
+  回复预览里是**被回复人**的头像、排在真作者前面 → author_id 记成被回复人。
+  盯张三 = 所有「回复张三」的消息都中，通知显示的是实际发言人（症状①+②）。
+- **C · gateway 模式 author 用 global_name，没优先 member.nick**（服务器昵称），
+  和 Discord 界面显示不一致（token 模式下的症状②）。顺带修。
+- 修法：A 给 test_rule 加 author_id 参数并默认取规则 author_ids[0]；B 限定在
+  contents 容器里找头像且排除回复预览；C 一行。回归：e2e_wb 加节、content_test 加回复场景。
 
 BACKLOG 其余任务（A1/A3/A4/A5、B、C）不动，等后续窗口按优先级来。
 
 ## 最后更新
-2026-07-31 · 新账号第一个窗口：自举完成，开工 A2
+2026-07-31 · A2 根因查明（test_rule 缺 author_id 参数 + content.js 回复消息拿错头像 + gateway 没取 member.nick），开始改
 
 ## 上一轮（v1.9.3）做完了什么
 批量提取的模板 + 整包导出 / 导入，全流程收尾：
