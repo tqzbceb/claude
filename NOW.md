@@ -75,8 +75,21 @@ C 窗口把 ②③④⑤ 推上来（`18c7b62`）之后就断了，**⑥ 一步�
   ② 用户说「日志也发了」但这条消息里没看到诊断包内容，已请他把 txt 原样重贴。
 - 本窗口**不改代码**（E/F/G 都在各自地盘上，撞车是本轮最大风险），推完这条状态就交棒。
 
+## I 窗口（第八个，2026-08-01）认领：A6（模型全拉不到）→ C4（输入框对齐）→ B6（只读工具）
+
+用户新消息三条：①工作台模型能调用的功能太少（=B6 澄清）；②工作台输入框第一个字不顶左上角（=C4）；
+③**最大的问题：两个模型端点全拉不到**（官方 401 + 中转 ClientPayloadError:400），并附了诊断包。
+- 工作区又是新的：clone ✓、五文档读完 ✓、根 AGENTS.md 指针 ✓、PAT 长存 secrets/ ✓
+  （用户又贴 token2 …QFAiRGbA，**实测 401 无效**；能推的还是 token1 …0Dx28of，已用它）
+- 诊断包读完，A6 根因已定位三条（见 BACKLOG A6）：cleanProviders 抹 key / base_url 尾巴 /model 没剥 /
+  ClientPayloadError 没人话
+- 施工顺序：A6（ui.html cleanProviders + server base_candidates/list_models 提示）→ C4（先目检复现）
+  → B6（一批只读工具 + WB_TEXT_PROTO 同步 + e2e_wb 断言）。每步 save。
+- E/F/G 的残活（B1 界面开关 / C2 扩展侧 / 回归出包）**本窗口不碰**，做完上面三件有富余再说。
+
 ## 状态
-**正在做：B3+B4+B2+C3+B5 的界面侧（2026-08-01 第三个窗口接着写，Claude 亲自写码）**。
+**正在做：A6 修复（I 窗口）**。① 接手 ✓ ② BACKLOG 写入三条新需求 ✓ → ③ 修 cleanProviders 抹 key +
+base_candidates 剥 /model + 报错人话 → ④ C4 目检 → ⑤ B6 只读工具 → ⑥ 回归 + 推送。
 本窗口进度：① 接手/PAT/指针 ✓ → ②③④⑤ 代码已写完（提示词抽屉可编辑+预设导入导出、
 采样参数折叠区+后处理三档、模型选择进服务卡片、presets/教模型写规则.json + /api/presets 两个接口）
 → 现在做 ⑥ 回归 + 目检 + 出包。
