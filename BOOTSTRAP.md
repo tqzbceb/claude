@@ -59,6 +59,14 @@ cp /tmp/dcw/agent/save.py .bcode/agent-workspace/save.py   # 存盘脚本
   `python3 .bcode/agent-workspace/save.py "做了什么"`（commit + 推送 + 把 .md 同步回快照）
 - 存盘时顺手把 `claude/NOW.md` 的「手停在哪一步」改掉，这是下个窗口唯一的接力棒
 - 交付 zip **同时**放 `outputs/`（用户下载）和 `release/`（跟 git 走）；只放 outputs 换窗口就没了
+
+## 窗口工作协议（用户定的，2026-07-31，严格执行）
+额度只够一个窗口做一个小任务。每个窗口固定四步：
+1. 用户消息里有**新需求** → 第一件事写进 `claude/BACKLOG.md` 并推送（比干活优先）
+2. 从 `NOW.md` / `BACKLOG.md` 挑**一个**小任务做，别贪多开第二个
+3. 做完立刻推送，并在 `NOW.md` 写明「这件做完了，下一件是 XX」
+4. 给用户的回复末尾报一句：✅ 本窗口完成 XX，已推送；下窗口发「继续」即可
+用户每窗口只会发「继续」或新需求，不会再发长提示词。缺 PAT 时读操作照常，推送前再要
 ```
 
 ## 第 3 步：按老规矩接活
