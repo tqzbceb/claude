@@ -18,25 +18,20 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**正在做：B3+B4+B2+C3+D+B5 模型接入大轮，直接实现（2026-08-01 本窗口，Claude 亲自写码）**。
-上个窗口只推了一句状态就被掐断，`PLAN_B3B4B2.md` 没写出来 —— 本窗口不再走「先写 PLAN 再换窗口
-实现」两段式（那等于把 10 条消息里的一半花在写文档上），直接改代码 + 每步 save。
-用户 2026-08-01 重发整包需求，逐条对过 BACKLOG：**没有新条目**，A1–A5+C1 已在 v1.9.4 里（等他装）。
-新 PAT 已长存工作区私有目录 `.bcode/agent-workspace/secrets/`（不进仓库），用户授权长存。
+**正在做：B3+B4+B2+C3+B5 的界面侧（2026-08-01 第二个窗口，Claude 亲自写码）**。
+服务端已在 386a8bb 落地（sys_prompts 可覆盖 / /api/prompts 可编辑 / /api/preset 导出导入 dry_run /
+ai.params / ai.post 三档 / ai_tag 补格式标尺 / 诊断包 [5.7]）。**本窗口只动 ui.html + presets/**。
+新工作区（第三个）已重建：PAT 长存 secrets/、save.py 就位、根 AGENTS.md 指针已写。
 
 本轮步骤（每步一 save）：
-① 指针写进新工作区根 AGENTS.md + PAT 长存 + 环境自检（imp 74/74 绿）✓
-② D：`docs/discord-命名约定.md` 定稿（5 层 + 4 点修订）✓ ← 本次推送
-   （新工作区 686c89cd 已重建：PAT 长存 secrets/、save.py 就位、根 AGENTS.md 指针已写、
-    自检 e2e 48/48 + imp 74/74 绿。用户 2026-08-01 重发需求，逐条对过 BACKLOG 仍无新条目）
-③ B3：4 条骨架提示词（wizard/compose/workbench/tools）改成 cfg 可覆盖 + 界面可编辑；
-   预设整包导出/导入（`dcwatch.preset/1`，dry_run 预览闸，照 extract_templates 抄）
-④ B4：`ai.params` 温度/top_p/max_tokens/penalty/附加 JSON 透传，界面折叠区
-⑤ B2：`ai.strict` 提示词后处理严格模式（合并同角色、system 归一、收尾必须 user）
-   + ai_tag 默认提示词补格式指导和 few-shot
-⑥ C3：模型选择挪进「接入的模型服务」每个服务卡片里
-⑦ B5：内置「教模型写规则」预设（presets/ 目录，引用 D）
-⑧ 回归 + 出 v1.10.0 包 + 推送；B1 / C2 写成 PLAN 留给下轮
+① 接手 + 指针 + PAT 长存 ✓
+② 界面：骨架提示词抽屉从「只读」改成可编辑（6 条 textarea + 存 + 逐条恢复出厂）
+   + 预设 ⇡导出 / ⇣导入（走 dry_run 预览闸，照提取模板抄）
+③ 界面：B4 采样参数折叠区（温度/top_p/max_tokens/两个惩罚/附加 JSON）+ B2 后处理三档下拉
+④ C3：模型选择挪进「接入的模型服务」每张服务卡片里（默认模型区保留但改成只显示结果）
+⑤ B5：presets/教模型写规则.json 内置预设 + 界面一键装（引用 docs/discord-命名约定.md）
+⑥ 回归（e2e/ai/wb/diag/imp）+ 出 v1.10.0 包（程序 zip，扩展没动不出）+ 推送
+⑦ B1 / C2 / B6 留给下一轮（B1 最大，单独一轮；C2 动 extension 要 bump 版本）
 
 ---
 （以下为 v1.9.4 出包轮的存档状态）
