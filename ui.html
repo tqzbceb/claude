@@ -2173,6 +2173,9 @@ const HELP={
     <p><b>省钱</b>：规则里把「只对提到我的消息打分」勾上，再把每日调用上限设小一点。打分用便宜模型，回复用好模型——每条规则可以单独指定。</p>`],
   notify:['本机提醒',`
     <p><b>Windows 系统通知</b>：右下角弹窗，走系统原生接口，不用装东西。防刷屏：4 秒内只弹一条。</p>
+    <p><b>网页通知</b>：由浏览器弹出，在 Windows 里<b>同样出现在系统通知中心</b>（发件人是
+      Chrome/Edge）。它和上面的「Windows 系统通知」是两条独立通道——两个都开就会各收一条，
+      只想要一条就关掉其中一个。开关保存后对所有开着的 dcwatch 页面立刻生效。</p>
     <p><b>提示音</b>：内置 6 个，也能导入自己的音频（mp3/wav/m4a 都行，浏览器会自动转成 wav 并截到 6 秒内）。
       「试听」是在你现在看的这个浏览器里放；「本机播放」是让 dcwatch 用电脑喇叭放，和真收到消息一模一样。</p>
     <p><b>免打扰</b>：只静音本机的弹窗和声音，<b>不影响</b>往外转发。跨午夜（23:00 → 08:00）写法直接支持。</p>
@@ -2595,7 +2598,8 @@ function connectSSE(){
     es.onmessage=e=>{const {kind,data}=JSON.parse(e.data);
       if(kind==='message'){S.msgs.unshift({...data,unread:1});if(S.msgs.length>400)S.msgs.pop();renderList();
         if(data.alert&&S.cfg?.sinks?.browser&&Notification?.permission==='granted')
-          new Notification(`${data.author} · ${data.channel_name}`,{body:(data.content||'').slice(0,120)});}
+          new Notification(`${data.author} · ${data.channel_name}`,{body:(data.content||'').slice(0,120),
+            tag:'dcw-'+(data.msg_id||data.id||'')});}
       if(kind==='status'){S.status.discord=data;renderSources();
         if(!$('#v-settings').contains(document.activeElement))renderSettings();}
       if(kind==='log'&&S.view==='logs')loadLogs();

@@ -2658,6 +2658,10 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             patch["extract_templates"] = norm_tpls(patch["extract_templates"])
         app.cfg.update(patch)
         app.save_cfg()
+        if "sinks" in patch:
+            # 开关改了要立刻告诉所有开着的标签页：不然旧页面拿着旧配置
+            # 继续弹网页通知，用户以为「关了开关还弹」（A5）
+            await app.bus.push("sinks", app.cfg["sinks"])
         if "discord" in patch:
             if app.cfg["discord"]["enabled"] and app.cfg["discord"].get("mode") in ("bot", "user"):
                 app.dc.sid = None

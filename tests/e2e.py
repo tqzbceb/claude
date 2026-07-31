@@ -174,4 +174,27 @@ chk("转发内容带上了原文", "再看一下" in flat, flat[:200])
 d = call(f"/api/rules/{rid}", method="DELETE")
 chk("删除规则", d.get("ok") and all(x["id"] != rid for x in d["rules"]))
 
+print("12. 保存 sinks 后 SSE 广播（A5：别的标签页要立刻知道开关变了）")
+import threading
+got_sse = []
+def _listen():
+    req = urllib.request.Request(B + "/api/events")
+    with urllib.request.urlopen(req, timeout=15) as r:
+        for raw in r:
+            line = raw.decode("utf-8", "ignore").strip()
+            if line.startswith("data: "):
+                e = json.loads(line[6:])
+                got_sse.append(e)
+                if e["kind"] == "sinks":
+                    return
+th = threading.Thread(target=_listen, daemon=True)
+th.start()
+time.sleep(0.5)                          # 等订阅真挂上
+call("/api/config", {"sinks": {"toast": False, "sound": False, "browser": False}})
+th.join(6)
+ev = [e for e in got_sse if e["kind"] == "sinks"]
+chk("SSE 推了 sinks 事件", bool(ev), [e["kind"] for e in got_sse][:5])
+chk("推的就是最新开关", bool(ev) and ev[0]["data"].get("toast") is False
+    and ev[0]["data"].get("browser") is False, ev and ev[0]["data"])
+
 print(f"\n通过 {ok} / 失败 {fail}")
