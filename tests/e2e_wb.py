@@ -383,4 +383,62 @@ pr = [x for x in call("/api/prompts")["builtin"] if x["key"] == "wb_tools"][0]
 ok("提示词里有 export_rules", "export_rules" in pr["text"], pr["text"][:300])
 ok("提示词里明说没有导入工具", "没有导入工具" in pr["text"], pr["text"][-400:])
 
+print("15. B6 只读工具一批：端点 / 出口 / 命中 / 全规则试算 / 日志 / 提取模板")
+# 「工具结果真喂回给模型」的断言必须换个没被记成「不支持函数调用」的模型名（RUN.md 的坑）
+call("/api/config", {"default_model": {"provider": "mock", "model": "mock-3"}})
+ai(stream=True, tools=True)
+for r0 in call("/api/state")["rules"]:
+    call(f"/api/rules/{r0['id']}", None, method="DELETE")
+mk({"name": "盯 key", "keywords_any": ["key"], "action": "notify", "cooldown_sec": 0})
+call("/api/config", {"sinks": {"hooks": [
+    {"name": "秘密出口", "url": "http://127.0.0.1:8898/secret-hook-xyz", "content": "json"}]},
+    "extract_templates": [{"name": "key模板", "want": "key", "channel_id": "700000000000000001",
+                           "limit": 50}]})
+call("/api/ingest", {"account": "tester", "messages": [
+    {"msg_id": "b6hit1", "channel_id": "700000000000000001", "channel_name": "资源区",
+     "author": "Bob", "author_id": "900000000000000009", "content": "发个 key 给你",
+     "ts": time.time(), "is_bot": False}]})
+time.sleep(0.8)                    # ingest 后命中落库是异步的（RUN.md 写过要 sleep）
+
+
+def tool_once(name, args, prompt):
+    reset()
+    script([{"tools": [{"name": name, "args": args}]}, {"content": "看完了。"}])
+    ask(prompt)
+    return json.loads(calls()[-1]["tool_out"])
+
+
+out = tool_once("list_providers", {}, "我的模型配置是啥")
+ok("端点配置喂回去了，默认模型在", "mock" in json.dumps(out) and "default" in out, out)
+ok("Key 只报填没填，不漏真值", "sk-test" not in json.dumps(out)
+   and any(p.get("key") == "已填" for p in out.get("providers", [])), out)
+out = tool_once("list_hooks", {}, "通知都发哪了")
+ok("出口清单喂回去了", any(h.get("name") == "秘密出口" for h in out.get("hooks", [])), out)
+ok("转发地址打码了，真地址一字不漏", "secret-hook-xyz" not in json.dumps(out)
+   and any("***" in (h.get("url") or "") for h in out.get("hooks", [])), out)
+out = tool_once("recent_hits", {"limit": 5}, "最近提醒了些啥")
+ok("命中的消息在里头", any("发个 key" in (h.get("content") or "") for h in out.get("hits", [])), out)
+ok("带着命中了哪条规则", any("盯 key" in (h.get("rules") or "") for h in out.get("hits", [])), out)
+out = tool_once("test_message", {"content": "这里有个 key", "channel_id": "700000000000000001"},
+                "这条会提醒吗")
+hit = [x for x in out.get("rules", []) if x.get("name") == "盯 key"]
+ok("全规则逐个试算", len(out.get("rules", [])) >= 1, out)
+ok("该命中的算中了", bool(hit) and hit[0].get("match") is True, out)
+out = tool_once("test_message", {"content": "完全无关的一句话"}, "这条呢")
+miss = [x for x in out.get("rules", []) if x.get("name") == "盯 key"]
+ok("不该命中的说不命中，还带卡点", bool(miss) and miss[0].get("match") is False
+   and bool(miss[0].get("why")), out)
+out = tool_once("get_logs", {"limit": 5}, "最近日志有啥")
+ok("日志喂回去了", "logs" in out and out.get("count", 0) >= 0, out)
+out = tool_once("export_extract_templates", {}, "提取模板给我一份")
+ok("提取模板整包导出", out.get("count") == 1
+   and out["extract_templates"][0].get("name") == "key模板", out)
+ok("包带 schema", out.get("schema") == "dcwatch.extract/1", out)
+pr = [x for x in call("/api/prompts")["builtin"] if x["key"] == "wb_text"][0]
+for nm in ("list_providers", "list_hooks", "recent_hits", "test_message", "get_logs",
+           "export_extract_templates"):
+    ok(f"文本指令协议里有 {nm}", nm in pr["text"], pr["text"][:200])
+ok("函数版提示词里也点了新工具", "list_providers" in pr["text"] and "test_message" in pr["text"],
+   pr["text"][:300])
+
 print(f"\n通过 {P} / 失败 {F}")

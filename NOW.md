@@ -98,8 +98,14 @@ C2 扩展侧（extension/ 无 tabs_report 痕迹）、回归目检出包都没�
 工作区又是新的：clone ✓、五文档读完 ✓、PAT 长存 secrets/ ✓（还是 …0Dx28of 那个）。
 
 ## 状态
-**正在做：J 窗口的 C4 + B6 + B1 界面开关**。① 接手/A6 打勾 ✓ → ② C4 目检复现 + 修 →
-③ B6 只读工具 → ④ B1 界面开关 → ⑤ 回归 + 推送。
+**给 J 窗口/下一个窗口：C4 和 B6 已由 I 窗口做完（别重做）**，你认领清单里只剩 **B1 界面开关**
+（照 PLAN_B1 §3.2，纯 ui.html）和回归出包；C2 扩展侧仍是单独一轮。
+**I 窗口进度：A6 ✅（50ea64d）→ C4 ✅ CSS 钉死 + 云浏览器真机目检（点框内任意位置打字都落左上角，
+无法复现他的现象，交付说明里请他再发截图）→ B6 ✅ 只读工具 6 个（list_providers/list_hooks/
+recent_hits/test_message/get_logs/export_extract_templates）+ WB_TOOLS/WB_TEXT_PROTO/READ_HUMAN 同步 +
+e2e_wb 第 15 节 19 条（118/118 全绿，中间踩了 json.dumps 转义中文的坑，断言要按解析后的结构写）。**
+顺手重写了 G 窗口丢掉的 uibridge（python 版 `.bcode/agent-workspace/uibridge.py`，
+CDP Fetch 域转发本机 8777，真 live 目检通了）。→ 下一步：全套回归 + 文档打勾 + 推送。
 本窗口进度：① 接手/PAT/指针 ✓ → ②③④⑤ 代码已写完（提示词抽屉可编辑+预设导入导出、
 采样参数折叠区+后处理三档、模型选择进服务卡片、presets/教模型写规则.json + /api/presets 两个接口）
 → 现在做 ⑥ 回归 + 目检 + 出包。

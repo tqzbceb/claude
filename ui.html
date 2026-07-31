@@ -306,7 +306,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .wizres li{margin:2px 0}
 .composer{border:1px solid var(--line2);border-radius:var(--r-lg);background:var(--bg-elev);padding:10px 12px;
   box-shadow:var(--shadow)}
-.composer textarea{border:none;box-shadow:none!important;min-height:52px;padding:0}
+.composer textarea{border:none;box-shadow:none!important;min-height:52px;padding:2px 0 0;
+  display:block;text-align:left;vertical-align:top;line-height:1.5}  /* C4：钉死「第一个字永远顶左上角」 */
 .composer .cf{display:flex;align-items:center;gap:8px;margin-top:8px}
 .stat{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
 .stat .b{flex:1;min-width:120px;background:var(--bg-elev);border:1px solid var(--line);border-radius:var(--r);

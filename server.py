@@ -1148,6 +1148,44 @@ WB_TOOLS = [
                        "**只读**：你没有关标签页的工具 —— 该关哪些你可以建议，"
                        "真正的关闭由程序按「闲置多久自动关」那个设置来做，或者他自己点。",
         "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "list_providers",
+        "description": "模型端点配置：每家服务的地址、Key 填没填、拉到过哪些模型、默认模型是谁、"
+                       "今天调了几次。用户说「模型用不了 / 拉不到模型 / 换个模型」时先调它看清楚。",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "list_hooks",
+        "description": "通知与转发的配置：本机弹窗/声音/网页通知开关、免打扰时段、每条出口"
+                       "（转发地址打码）。用户问「通知发到哪了 / 为什么没转发」时用它。",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "recent_hits",
+        "description": "最近命中过规则的消息，带命中了哪条规则。用户问「最近都提醒了些啥 / "
+                       "刚才那条是谁发的」时用它。",
+        "parameters": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "最多几条，默认 20，上限 100"}}}}},
+    {"type": "function", "function": {
+        "name": "test_message",
+        "description": "拿一条假消息对**全部规则**逐个试算，每条会命中还是卡在哪个条件上。"
+                       "用户问「这条消息为什么没提醒我」时用它，比一条条 test_rule 快。",
+        "parameters": {"type": "object", "properties": {
+            "content": {"type": "string", "description": "假消息正文"},
+            "channel_id": {"type": "string"}, "guild_id": {"type": "string"},
+            "author": {"type": "string"}, "author_id": {"type": "string"},
+            "is_bot": {"type": "boolean"}, "is_dm": {"type": "boolean"},
+            "kind": {"type": "string", "description": "msg 或 thread"}},
+            "required": ["content"]}}},
+    {"type": "function", "function": {
+        "name": "get_logs",
+        "description": "最近的运行日志（报错、出口失败、规则执行失败都在里面）。"
+                       "排查「哪里炸了」时调它。",
+        "parameters": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "最多几条，默认 30，上限 100"}}}}},
+    {"type": "function", "function": {
+        "name": "export_extract_templates",
+        "description": "把「批量提取」页存的模板整包导出来（跟界面「导出」按钮同一份）。"
+                       "用户要备份/分享提取模板时用它。没有导入工具，导入必须人在界面上点。",
+        "parameters": {"type": "object", "properties": {}}}},
 ]
 
 # **故意没有 import_rules 工具**（硬规矩 10）：导入会覆盖、甚至删掉用户手填了一晚上的规则，
@@ -1366,6 +1404,72 @@ async def run_wb_tool(app, name, args, allow_ids):
         return ({"ok": True, "id": str(rid), "rule": brief_rule(dict(rule, id=rid, enabled=enabled)),
                  "notes": notes}, human, True)
 
+    # ---- B6：只读工具一批（模型「能调用的功能太少」）。写工具仍只有规则那四个 ----
+    if name == "list_providers":
+        dm = app.cfg["default_model"]
+        used = app.db.q("SELECT COUNT(*) n FROM aiusage WHERE ts>?", (now() - 86400,))[0]["n"]
+        cache = app.cfg.get("models_cache") or {}
+        return {"default": f"{dm.get('provider')} / {dm.get('model')}",
+                "providers": [{"name": p.get("name"), "base_url": p.get("base_url"),
+                               "key": "已填" if p.get("api_key") else "空（空 Key 拉模型必 401）",
+                               "models": (cache.get(p.get("name")) or [])[:30]}
+                              for p in app.cfg.get("providers", [])],
+                "ai_daily": f"{used} / {app.cfg.get('ai_daily_call_cap', 500)}",
+                "note": "Key 空的那一家：到「模型接入」页粘 Key → 按「保存服务商」→ 再拉模型列表。"
+                        "改端点配置只能人在界面上做，你没有写工具"}, "", False
+
+    if name == "list_hooks":
+        sk = app.cfg.get("sinks") or {}
+        return {"toast": bool(sk.get("toast")), "sound": bool(sk.get("sound")),
+                "browser": bool(sk.get("browser")),
+                "quiet": f"{sk.get('quiet_from') or '—'} ~ {sk.get('quiet_to') or '—'}",
+                "hooks": [{"name": h.get("name"), "enabled": bool(h.get("enabled")),
+                           "method": h.get("method"), "url": WB_MASK if h.get("url") else "",
+                           "verified": bool(h.get("verified"))} for h in sk.get("hooks") or []],
+                "note": "转发地址是密址，不给模型看；界面上点「测试」过的那条 verified=true。"
+                        "你没有改出口的工具"}, "", False
+
+    if name == "recent_hits":
+        lim = max(1, min(int(args.get("limit") or 20), 100))
+        rows = app.db.q("""SELECT author,content,channel_name,matched,score,ts FROM messages
+                           WHERE matched<>'' AND matched<>'0' ORDER BY ts DESC LIMIT ?""", (lim,))
+        return {"count": len(rows),
+                "hits": [{"author": r["author"], "channel": r["channel_name"],
+                          "content": (r["content"] or "")[:300], "rules": r["matched"],
+                          "score": r["score"], "when": ago_txt(r["ts"])} for r in rows],
+                "note": "这是命中过规则的消息；想翻全部消息用 search_messages"}, "", False
+
+    if name == "test_message":
+        ev = {"source": "discord", "kind": args.get("kind") or "msg",
+              "guild_id": str(args.get("guild_id") or ""), "parent_id": "",
+              "channel_id": str(args.get("channel_id") or ""), "channel_name": "test",
+              "is_thread": False, "author_id": str(args.get("author_id") or ""),
+              "author": args.get("author") or "someone", "is_bot": bool(args.get("is_bot")),
+              "content": args.get("content") or "", "is_dm": bool(args.get("is_dm")),
+              "mentions_me": False, "ts": now(), "msg_id": "0"}
+        out = []
+        for r in rules:
+            ok, why = app.match(r, ev)
+            out.append({"id": str(r["id"]), "name": r.get("name"), "enabled": bool(r["enabled"]),
+                        "match": ok, "why": "" if ok else NICE_WHY.get(why, why)})
+        return {"rules": out,
+                "note": "逐条试算的结果。算得中但 enabled=false 的那条不会提醒；"
+                        "一条都没算中时，按 why 里说的卡点改条件"}, "", False
+
+    if name == "get_logs":
+        lim = max(1, min(int(args.get("limit") or 30), 100))
+        rows = app.db.q("SELECT level,text,ts FROM logs ORDER BY id DESC LIMIT ?", (lim,))
+        return {"count": len(rows),
+                "logs": [{"level": r["level"], "text": (r["text"] or "")[:200],
+                          "when": ago_txt(r["ts"])} for r in rows]}, "", False
+
+    if name == "export_extract_templates":
+        tpls = [tpl_for_export(t) for t in norm_tpls(app.cfg.get("extract_templates"))]
+        return {"schema": EXTRACT_SCHEMA, "app": "dcwatch", "version": VERSION,
+                "count": len(tpls), "extract_templates": tpls,
+                "note": "批量提取页的模板包。你没有导入工具：导入要人在「批量提取」页点"
+                        "「导入」、看过预览再确认"}, "", False
+
     raise ValueError(f"没有 {name} 这个工具")
 
 
@@ -1392,6 +1496,13 @@ WB_TEXT_PROTO = """## 你可以直接动手（重要）
 - search_messages {"query":"key","limit":20}：搜已收到的消息。
 - get_status {}：现在的收信状况和自查结论。
 - list_open_threads {}：程序自动开着哪些帖子标签页（只读，你不能关，只能建议）。
+- list_providers {}：模型端点 / Key 填没填 / 默认模型 / 今天调了几次（只读）。
+- list_hooks {}：通知开关和出口清单，转发地址打码（只读）。
+- recent_hits {"limit":20}：最近命中过规则的消息（只读）。
+- test_message {"content":"...","channel_id":"..."}：拿一条假消息对全部规则逐个试算，
+  回答「这条为什么没提醒我」用它（只读）。
+- get_logs {"limit":30}：最近的运行日志（只读）。
+- export_extract_templates {}：批量提取的模板整包导出（只读，没有导入工具）。
 - export_rules {"ids":["3"]}：把规则整包导出（ids 留空=全部），可以念给用户、或让他搬到另一台机器。
   **没有导入工具**：导入会覆盖他手填的规则，必须他自己在界面上点「导入规则」看过预览再确认。
 
@@ -1401,7 +1512,8 @@ WB_TEXT_PROTO = """## 你可以直接动手（重要）
 WB_TOOLS_HOWTO = """## 你可以直接动手（重要）
 你有一组工具，能**真的**读写这个程序的配置：list_rules / update_rule / create_rule /
 set_rule_enabled / delete_rule / test_rule / list_channels / search_messages / get_status /
-export_rules / list_open_threads。
+export_rules / list_open_threads / list_providers / list_hooks / recent_hits / test_message /
+get_logs / export_extract_templates。
 
 用户说「帮我改一下这条规则」「让它连表情包也提醒」「把那条停掉」时，**直接调工具改完再回话**，
 不要输出一二三步教他自己去点。他要是想自己点，他不会来问你。
@@ -1447,7 +1559,10 @@ def strip_text_calls(text):
 READ_HUMAN = {"list_rules": "看了一遍你的规则", "list_channels": "查了真实的频道 ID",
               "search_messages": "翻了已经收到的消息", "get_status": "看了现在的收信状况",
               "test_rule": "拿一条假消息试算了一下", "export_rules": "把你的规则整包导了一份出来",
-              "list_open_threads": "看了一遍现在开着哪些帖子"}
+              "list_open_threads": "看了一遍现在开着哪些帖子",
+              "list_providers": "看了一遍模型端点配置", "list_hooks": "看了一遍通知与转发配置",
+              "recent_hits": "翻了最近命中过的消息", "test_message": "拿这条消息对全部规则逐个试算了",
+              "get_logs": "翻了最近的运行日志", "export_extract_templates": "把提取模板整包导了一份出来"}
 
 
 async def wb_run(app, prov, model, msgs, allow_ids, emit=None, stream=False, max_steps=6):
