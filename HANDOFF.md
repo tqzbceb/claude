@@ -178,3 +178,8 @@ imp 74 + **ext 53，本轮新增**）。`extension/` 一行没动，浏览器侧
 - **交付给用户的 zip 里不含 `tests/`、`release/`、`AGENTS.md`、`CLAUDE.md`、`HANDOFF.md`、
   `START_HERE.md`**（26 个文件，`README.md` 要留）。所以让接手的 AI **从 GitHub clone**，
   不要拿用户手上的 zip —— zip 里没有交接内容
+
+## review 盖章（2026-07-31，Claude 窗口）
+A2 + A3+A5 的 diff 对照 PLAN 逐行过了一遍：与施工图一致、无越界改动、
+「不许动」清单全部未动。回归亲测复跑：服务端 500/500 + content_test 46/16 全绿。
+结论：**通过，无返工项**。下一件 A4（先出 PLAN_A4.md）。
