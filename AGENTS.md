@@ -154,3 +154,9 @@ python3 -c "d=open('启动.bat','rb').read(); print(b'\r\n' in d, d.decode('gbk'
 别翻工作区找，直接要）。
 `.gitignore` 排除了 `*.db` —— 配置和 API key 全在 `dcwatch.db` 里，别让它进仓库。
 已经核对过：全仓库历史零密钥泄露（`git rev-list --all` 上 grep 过 `sk-` / `Bearer` / `api_key`）。
+
+## 双模型流程（2026-07-31 起）
+思考和实现分开：Claude 窗口只写方案（`PLAN_<任务>.md`，精确到行号和代码片段），
+实现窗口（Kimi K2 等快模型）**只照 PLAN 施工**，不重构、不顺手改、PLAN 没写的不做。
+你若是实现窗口：NOW.md 状态会指明当前 PLAN 文件，读它，按它的验收命令自测，全绿才算完。
+你若是 Claude：写 PLAN 时把「不许做的事」也写死，实现者会严格照办。

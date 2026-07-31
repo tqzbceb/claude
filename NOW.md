@@ -12,12 +12,19 @@
 4. 做完把本页改成「做完了 XX，下一件是 XX」并推送
 5. 回复末尾报：✅ 本窗口完成 XX，已推送；下窗口发「继续」即可
 
+## 双模型流程（用户 2026-07-31 启用，从 A2 开始）
+Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现窗口用户会换 **Kimi K2**（或别的快模型）
+照 PLAN 写代码。实现完，之后再来一个 Claude 窗口只做 review（对照 PLAN 检查 diff + 回归结果）。
+**实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
+
 ## 状态
-**正在做 BACKLOG A2 ·「检测某个用户」失效**。步骤：
-1. [x] 读 server.py 规则引擎 `match()` 的 author 条件 —— match() 本身没问题
-2. [x] 读通知渲染取用户名的字段 —— fmt_msg 用 ev['author']，渲染没问题，错在上游取数
-3. [ ] 修掉，补回归（tests/ 里对应套加节）
-4. [ ] 跑全套回归，save 推送，更新本页
+**A2 方案已写完：`PLAN_A2.md`（施工图，四处修改 + 两套回归 + 验收命令都定死了）。**
+下一个窗口（不管什么模型）发「继续」= 照 `PLAN_A2.md` 施工：
+1. [ ] 修改 1+2：server.py test_rule 加 author_id 参数 + 默认取规则 author_ids[0]
+2. [ ] 修改 3a+3b：content.js 头像跳过回复预览 + 正文按精确 id 取
+3. [ ] 修改 4：gateway 作者名优先 member.nick（一行）
+4. [ ] 回归：content_test.mjs 加回复场景（3 条）、e2e_wb.py 第 3 节加盯人试算（2 条）
+5. [ ] 全套回归 498/498 全绿，RUN.md/HANDOFF.md 收尾，save 推送，更新本页
 
 ### 根因（已坐实，第二个窗口查明的）
 - **A · 工作台 test_rule 工具没有 author_id 参数**（server.py `run_wb_tool` 里 ev 硬编码
@@ -34,8 +41,12 @@
 
 BACKLOG 其余任务（A1/A3/A4/A5、B、C）不动，等后续窗口按优先级来。
 
+### 本窗口新发现（写方案时读代码看出来的，已并入 PLAN）
+- content.js 的 `content` 取值也有同款病：`[id^="message-content-"]` 前缀匹配会先撞上
+  回复预览里的原文（其 id 是 message-content-<被回复消息id>）→ PLAN 修改 3b 按精确 id 取。
+
 ## 最后更新
-2026-07-31 · A2 根因查明（test_rule 缺 author_id 参数 + content.js 回复消息拿错头像 + gateway 没取 member.nick），开始改
+2026-07-31 · 双模型流程启用；A2 施工图 PLAN_A2.md 写完推送。下一窗口照 PLAN 施工（用户会换 Kimi K2）
 
 ## 上一轮（v1.9.3）做完了什么
 批量提取的模板 + 整包导出 / 导入，全流程收尾：
