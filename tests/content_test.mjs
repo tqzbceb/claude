@@ -48,6 +48,18 @@ const MK = {
       <h3 id="message-username-${mid}"><span class="username-1">${name}</span></h3>
       <div id="message-content-${mid}">${text}</div>
     </li>`,
+  /* 回复消息：预览里是被回复人的头像和原文，都排在真作者之前 —— 不许被骗走 */
+  reply: (chan, mid, name, avatarId, refMid, refName, refAvatarId, refText, text) => `
+    <li id="chat-messages-${chan}-${mid}">
+      <div class="repliedMessage-1">
+        <img src="https://cdn.discordapp.com/avatars/${refAvatarId}/r.png">
+        <span class="username-2">${refName}</span>
+        <div id="message-content-${refMid}">${refText}</div>
+      </div>
+      <img src="https://cdn.discordapp.com/avatars/${avatarId}/x.png">
+      <h3 id="message-username-${mid}"><span class="username-1">${name}</span></h3>
+      <div id="message-content-${mid}">${text}</div>
+    </li>`,
 };
 
 /* Discord snowflake：((ms - 1420070400000) << 22)。造「几分钟前」的历史消息用它 */
@@ -118,6 +130,8 @@ export async function run(session, contentJsPath) {
   await push(MK.normal(CHAN, "1003", "CryptoBot", "100100000000001", "Snapshot 公告", { bot: true }));
   await push(MK.imageOnly(CHAN, "1004"));
   await push(MK.defaultAvatar(CHAN, "1005", "NoAvatar", "我用默认头像"));
+  await push(MK.reply(CHAN, "1008", "Replier", "444100000000002",
+    "1001", "Marcus", "444100000000001", "@我 明天提前到 10 点", "回复：收到"));
 
   // v1.8.0：四种「没文字」的消息，都要变成看得懂的正文上报
   await push(MK.media(CHAN, "1010", "Pic", `<div class="imageWrapper-1">
@@ -194,6 +208,9 @@ export async function run(session, contentJsPath) {
   t("纯文字消息的 media 是空的", by["1001"] && (by["1001"].media || []).length === 0, by["1001"]);
   t("默认头像 author_id 留空", by["1005"] && !by["1005"].author_id, by["1005"]);
   t("默认头像也有作者名", by["1005"] && by["1005"].author === "NoAvatar", by["1005"]);
+  t("回复消息作者是发言人不是被回复人", by["1008"] && by["1008"].author === "Replier", by["1008"]);
+  t("回复消息 author_id 不取回复预览头像", by["1008"] && by["1008"].author_id === "444100000000002", by["1008"]);
+  t("回复消息正文不取回复预览原文", by["1008"] && by["1008"].content === "回复：收到", by["1008"]);
   t("频道名取自标题", by["1001"] && by["1001"].channel_name === "general", by["1001"]);
   t("子区标成 is_thread", by["1006"] && by["1006"].is_thread === true, by["1006"]);
   t("子区 parent_id = URL 里的频道", by["1006"] && by["1006"].parent_id === CHAN, by["1006"]);
