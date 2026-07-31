@@ -356,6 +356,10 @@ CREATE TABLE IF NOT EXISTS rules(
 CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, level TEXT, text TEXT);
 CREATE TABLE IF NOT EXISTS aiusage(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, rule TEXT,
   model TEXT, in_tok INT, out_tok INT, ok INT, err TEXT);
+CREATE TABLE IF NOT EXISTS wb_sessions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT DEFAULT '', created REAL, updated REAL);
+CREATE TABLE IF NOT EXISTS wb_msgs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, sid INTEGER, r TEXT, t TEXT, acts TEXT, ts REAL);
 """
 
 
@@ -3072,6 +3076,31 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         _, known = app.rule_ctx(text + " " + " ".join(str(m.get("content") or "") for m in hist))
         return prov, model, msgs, known
 
+    def wb_save_pair(sid, user_text, ai_text, acts):
+        """一轮一问一答落库。sid 为空或不存在就建个新会话；写进去同时把会话名顶成
+        第一句话的头 20 个字（还是「新会话」才顶），并刷新 updated。"""
+        user_text, ai_text = str(user_text)[:4000], str(ai_text or "")[:8000]
+        if not user_text:
+            return None
+        sid = int(sid or 0)
+        row = app.db.q("SELECT id,name FROM wb_sessions WHERE id=?", (sid,))
+        if not row:
+            ts = now()
+            sid = app.db.x("INSERT INTO wb_sessions(name,created,updated) VALUES('新会话',?,?)",
+                           (ts, ts))
+            app.db.x("INSERT INTO kv(k,v) VALUES('wb_cur',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                     (str(sid),))
+            row = [{"name": "新会话"}]
+        ts = now()
+        app.db.x("INSERT INTO wb_msgs(sid,r,t,acts,ts) VALUES(?,?,?,'',?)", (sid, "u", user_text, ts))
+        app.db.x("INSERT INTO wb_msgs(sid,r,t,acts,ts) VALUES(?,?,?,?,?)",
+                 (sid, "a", ai_text, json.dumps(acts or [], ensure_ascii=False), ts))
+        name = row[0]["name"]
+        if name == "新会话":
+            name = user_text.replace("\n", " ").strip()[:20] or "新会话"
+        app.db.x("UPDATE wb_sessions SET name=?,updated=? WHERE id=?", (name, ts, sid))
+        return sid
+
     @r.post("/api/ask")
     async def ask(req):
         b = await req.json()
@@ -3082,6 +3111,7 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                                           "text": await app.chat(prov, model, msgs, max_tokens=200,
                                                                  rule="manual")})
             text, acts, changed = await wb_run(app, prov, model, msgs, known)
+            wb_save_pair(b.get("sid"), b.get("prompt", ""), text, acts)
             out = {"ok": True, "text": text, "acts": acts, "changed": changed}
             if changed:
                 out["rules"] = app.rules(False)
@@ -3110,6 +3140,7 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                 await line({"t": kind, "d": payload} if kind == "delta" else
                            {"t": kind, "act": payload} if kind == "act" else {"t": kind, "d": payload})
             text, acts, changed = await wb_run(app, prov, model, msgs, known, emit=emit, stream=True)
+            wb_save_pair(b.get("sid"), b.get("prompt", ""), text, acts)
             done = {"t": "done", "text": text, "acts": acts, "changed": changed}
             if changed:
                 done["rules"] = app.rules(False)
@@ -3119,6 +3150,67 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         with contextlib.suppress(Exception):
             await resp.write_eof()
         return resp
+
+    def wb_sess_list():
+        """会话列表 + 每个会话的消息条数（界面排序、显示用）。"""
+        rows = app.db.q("SELECT id,name,created,updated FROM wb_sessions ORDER BY updated DESC")
+        last = {r["sid"]: r["n"] for r in app.db.q(
+            "SELECT sid,COUNT(*) n FROM wb_msgs GROUP BY sid")}
+        for r in rows:
+            r["n"] = last.get(r["id"], 0)
+        return rows
+
+    @r.get("/api/wb/sessions")
+    async def wb_sessions(_):
+        cur = app.db.q("SELECT v FROM kv WHERE k='wb_cur'")
+        cur = int(cur[0]["v"]) if cur and cur[0]["v"] else 0
+        return web.json_response({"ok": True, "sessions": wb_sess_list(), "cur": cur})
+
+    @r.post("/api/wb/session/new")
+    async def wb_new(_):
+        ts = now()
+        sid = app.db.x("INSERT INTO wb_sessions(name,created,updated) VALUES('新会话',?,?)", (ts, ts))
+        app.db.x("INSERT INTO kv(k,v) VALUES('wb_cur',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                 (str(sid),))
+        return web.json_response({"ok": True, "id": sid})
+
+    @r.post("/api/wb/session/open")
+    async def wb_open(req):
+        """打开一个会话：记为当前，并把它的消息捞出来（最多 60 条，防止超长）。"""
+        b = await req.json()
+        sid = int(b.get("id") or 0)
+        if not app.db.q("SELECT id FROM wb_sessions WHERE id=?", (sid,)):
+            return web.json_response({"ok": False, "error": "会话不存在"}, status=404)
+        app.db.x("INSERT INTO kv(k,v) VALUES('wb_cur',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                 (str(sid),))
+        rows = app.db.q("SELECT r,t,acts,ts FROM wb_msgs WHERE sid=? ORDER BY id DESC LIMIT 60", (sid,))
+        msgs = [{"r": x["r"], "t": x["t"],
+                 "acts": json.loads(x["acts"]) if x["acts"] else []}
+                for x in reversed(rows)]
+        return web.json_response({"ok": True, "id": sid, "name": app.db.q(
+            "SELECT name FROM wb_sessions WHERE id=?", (sid,))[0]["name"], "msgs": msgs})
+
+    @r.post("/api/wb/session/rename")
+    async def wb_rename(req):
+        b = await req.json()
+        sid, name = int(b.get("id") or 0), str(b.get("name") or "").strip()[:40]
+        if not sid or not name:
+            return web.json_response({"ok": False, "error": "缺 id 或 name"}, status=400)
+        app.db.x("UPDATE wb_sessions SET name=? WHERE id=?", (name, sid))
+        return web.json_response({"ok": True})
+
+    @r.post("/api/wb/session/del")
+    async def wb_del(req):
+        """删会话连着它的消息一起删。界面必须先 confirm，这里没有 second chance。"""
+        b = await req.json()
+        sid = int(b.get("id") or 0)
+        app.db.x("DELETE FROM wb_msgs WHERE sid=?", (sid,))
+        app.db.x("DELETE FROM wb_sessions WHERE id=?", (sid,))
+        # 删的是当前会话就把指针清掉，界面会自己建新会话
+        cur = app.db.q("SELECT v FROM kv WHERE k='wb_cur'")
+        if cur and cur[0]["v"] == str(sid):
+            app.db.x("DELETE FROM kv WHERE k='wb_cur'")
+        return web.json_response({"ok": True})
 
     BATCH_SYS = """你在批量翻一批 Discord 消息，把用户要的东西挑出来。
 
@@ -3676,6 +3768,15 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             if t.get("imported_at"):
                 P("      来路     ", f"{t['imported_at']} 从模板包导入"
                                      f"（{t.get('imported_from') or '来源不明'}）")
+
+        P("\n[5.6] 工作台会话")
+        sess = app.db.q("SELECT id,name,updated FROM wb_sessions ORDER BY updated DESC")
+        cnt = {r["sid"]: r["n"] for r in app.db.q("SELECT sid,COUNT(*) n FROM wb_msgs GROUP BY sid")}
+        if not sess:
+            P("  还没有会话（工作台一句话都没说过；聊天是从这个版本才开始存库的）")
+        for s in sess:
+            P("  -", f"#{s['id']}", s["name"] or "新会话", "|", cnt.get(s["id"], 0), "条消息",
+              "| 最后", time.strftime("%m-%d %H:%M", time.localtime(s["updated"] or 0)))
 
         P("\n[6] 最近 200 条运行日志（新的在上）")
         lgs = app.db.q("SELECT * FROM logs ORDER BY id DESC LIMIT 200")
