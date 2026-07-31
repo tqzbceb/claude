@@ -18,19 +18,10 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**review 完成：A2 + A3+A5 全部通过**（Claude 窗口，2026-07-31）：
-- diff（a04d809..6ce5741）逐行对照 PLAN_A2.md / PLAN_A3A5.md：所有修改点与施工图一致，
-  没有 PLAN 之外的代码改动；「不许动」清单（myAccount 头像查询、match()、既有断言）全部未动
-- 依赖点核对：ui.html 已有 `kind==='sinks'` 处理器（2606 行）、e2e_wb 顶部有 import json、
-  NICE_WHY 的「名单」措辞在（server.py 37 行附近 NICE_WHY 表）
-- 回归**亲测复跑**：服务端 500/500（48+27+26+83+46+47+96+74+53）；
-  content_test run() 46/46 + runFresh() 16/16，全绿
-- 文档（RUN.md / HANDOFF / BACKLOG 打勾）都已同步，无遗漏
-- 一个已知的可接受小点：Notification tag 兜底 `'dcw-'+''`，msg_id 缺失时所有通知同 tag
-  会互相顶替——PLAN 原文如此，SSE message 事件实际都带 msg_id，不改
-
-**下一件：A4（出口锁死 Discord）**。按双模型流程：下个 Claude 窗口出 PLAN_A4.md，
-再换快模型施工。用户说「继续」时：Claude → 写 PLAN_A4；快模型 → 等 PLAN，别自由发挥。
+**正在出 PLAN_A4**（Claude 窗口，2026-07-31）：A4 = 通知与转发的「出口」锁死 Discord
+（选了 Discord 后其他类型选不了；「+添加出口」只是复制 Discord 配置）。
+步骤：① 查 ui.html 出口编辑器根因 → ② 写 PLAN_A4.md（精确到行号）→ ③ NOW 指向 PLAN 推送。
+中途被掐断的话：下个 Claude 窗口从 ① 接着做，别让快模型上。
 
 ### 发版前待办（攒着，哪轮发版哪轮做）
 - 提 `EXT_MIN`（A2 动了 extension/content.js），用户需重装扩展；
