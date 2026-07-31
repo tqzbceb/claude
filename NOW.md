@@ -98,14 +98,20 @@ C2 扩展侧（extension/ 无 tabs_report 痕迹）、回归目检出包都没�
 工作区又是新的：clone ✓、五文档读完 ✓、PAT 长存 secrets/ ✓（还是 …0Dx28of 那个）。
 
 ## 状态
-**给 J 窗口/下一个窗口：C4 和 B6 已由 I 窗口做完（别重做）**，你认领清单里只剩 **B1 界面开关**
-（照 PLAN_B1 §3.2，纯 ui.html）和回归出包；C2 扩展侧仍是单独一轮。
-**I 窗口进度：A6 ✅（50ea64d）→ C4 ✅ CSS 钉死 + 云浏览器真机目检（点框内任意位置打字都落左上角，
-无法复现他的现象，交付说明里请他再发截图）→ B6 ✅ 只读工具 6 个（list_providers/list_hooks/
+**I 窗口进度：A6 ✅（50ea64d）→ C4 ✅ CSS 钉死 → B6 ✅ 只读工具 6 个（list_providers/list_hooks/
 recent_hits/test_message/get_logs/export_extract_templates）+ WB_TOOLS/WB_TEXT_PROTO/READ_HUMAN 同步 +
 e2e_wb 第 15 节 19 条（118/118 全绿，中间踩了 json.dumps 转义中文的坑，断言要按解析后的结构写）。**
 顺手重写了 G 窗口丢掉的 uibridge（python 版 `.bcode/agent-workspace/uibridge.py`，
-CDP Fetch 域转发本机 8777，真 live 目检通了）。→ 下一步：全套回归 + 文档打勾 + 推送。
+CDP 转发本机 8777，真 live 目检通了）。
+**J 窗口对 C4 做了二次升级**（跟 I 的 CSS 钉死合并保留）：空盒从 52px 改成单行 26px 起步、
+随内容长高（160px 封顶）、发送后缩回、点盒子空白处聚焦 —— 两家都复现不了他的现象
+（空 textarea 点击落点恒为 (0,0)），真凶最可能是「高空盒造成的字与点击位置错位感」，
+单行盒从根上消除；演示目检 26→98→26 + 聚焦全过。若他还说不行，请他发截图。
+**J 窗口环境发现**：`Page.setDocumentContent` **会执行**内联脚本，演示目检不用桥 ——
+先导航到任意 https 真源再注入，localStorage 就能用（about:blank 上 localStorage 抛错，
+app 脚本会同步崩在中段）。Fetch 拦截桥（mjs 版）反复重连后会拖死 CDP 消息泵，慎用。
+**下一个窗口只剩：B1 界面开关**（照 PLAN_B1 §3.2，纯 ui.html）+ 全套回归出包；
+C2 扩展侧仍是单独一轮（动 extension 要 bump manifest + EXT_MIN）。
 本窗口进度：① 接手/PAT/指针 ✓ → ②③④⑤ 代码已写完（提示词抽屉可编辑+预设导入导出、
 采样参数折叠区+后处理三档、模型选择进服务卡片、presets/教模型写规则.json + /api/presets 两个接口）
 → 现在做 ⑥ 回归 + 目检 + 出包。

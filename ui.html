@@ -306,8 +306,9 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .wizres li{margin:2px 0}
 .composer{border:1px solid var(--line2);border-radius:var(--r-lg);background:var(--bg-elev);padding:10px 12px;
   box-shadow:var(--shadow)}
-.composer textarea{border:none;box-shadow:none!important;min-height:52px;padding:2px 0 0;
-  display:block;text-align:left;vertical-align:top;line-height:1.5}  /* C4：钉死「第一个字永远顶左上角」 */
+.composer textarea{border:none;box-shadow:none!important;padding:2px 0 0;display:block;
+  text-align:left;vertical-align:top;line-height:1.5;
+  min-height:26px;height:26px;max-height:160px}  /* C4：钉死左上角 + 单行起步随内容长高 */
 .composer .cf{display:flex;align-items:center;gap:8px;margin-top:8px}
 .stat{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
 .stat .b{flex:1;min-width:120px;background:var(--bg-elev);border:1px solid var(--line);border-radius:var(--r);
@@ -2617,7 +2618,7 @@ async function wbSend(){
   const [prov,model]=($('#wbModel').value||'|').split('|');
   // 带上前几轮：不然「那就改吧」这种跟进它完全接不上
   const hist=S.chat.filter(m=>m.t&&!m.busy).slice(-8).map(m=>({role:m.r==='u'?'user':'assistant',content:m.t}));
-  S.chat.push({r:'u',t});$('#wbInput').value='';wbLinkCheck();
+  S.chat.push({r:'u',t});$('#wbInput').value='';wbLinkCheck();wbGrow();
   const cur={r:'a',t:'',acts:[],busy:true};S.chat.push(cur);renderWb();
   const body={prompt:t,provider:prov,model,msg_ids:[...S.ctx],history:hist,sid:S.wbSid};
   if(!S.live&&S.demo){cur.busy=false;
@@ -2822,6 +2823,14 @@ $('#wbClear').onclick=async()=>{
 };
 $('#wbNew').onclick=()=>wbNewSess();
 enterToSend($('#wbInput'),wbSend);
+/* C4：输入框单行起步、跟着内容长（最高 160px）。空盒只有一行高，
+   第一个字永远顶着左上角 —— 不会再出现「高盒子，字的位置跟点的地方对不上」。 */
+function wbGrow(){const el=$('#wbInput');if(!el)return;
+  el.style.height='26px';el.style.height=Math.min(Math.max(el.scrollHeight,26),160)+'px';}
+$('#wbInput').addEventListener('input',wbGrow);
+$('.composer').addEventListener('click',e=>{          /* 点盒子空白处＝点输入框 */
+  if(e.target.closest('button,a,select,label'))return;$('#wbInput').focus();});
+wbGrow();
 /* ---------- 工作台快捷按钮：全部来自配置，不写死 ---------- */
 function quicks(){const c=S.cfg||{};return Array.isArray(c.quick_actions)?c.quick_actions:[];}
 function renderQuick(){
