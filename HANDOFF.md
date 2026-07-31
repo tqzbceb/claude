@@ -1,7 +1,12 @@
 # HANDOFF
 
+> **第一次接手这个项目？先读根目录的 `AGENTS.md`**（项目怎么运作、用户是谁、十条硬规矩、
+> 排查「它没提醒我」的固定顺序），再读这份看进度，`CLAUDE.md` 是工作协议。
+> 回归套件在 `tests/`，跑法 `cd tests && ./runall.sh e2e.py e2e_ai.py`，细节见 `tests/RUN.md`。
+> 这三份文件 + tests/ 就是全部交接内容，**不需要上一轮的聊天记录**。
+
 ## 最后更新时间
-2026-07-31 13:20（北京时间）
+2026-07-31 14:05（北京时间）
 
 ## 当前状态
 dcwatch **v1.8.0**（扩展也是 v1.8.0，**本版改了扩展，用户必须重装/刷新扩展**）。
@@ -33,6 +38,11 @@ dcwatch **v1.8.0**（扩展也是 v1.8.0，**本版改了扩展，用户必须�
   · 表情包 / 图片 / 贴纸不再被当「没有文字」丢掉，翻译成 `[图片]`、`[贴纸 xx]`、`:emoji:` 上报（扩展侧）
   · 浏览器旁听模式下**不再画回复输入框**（以前填完一段话才吃报错），底部写清原因和换 Bot Token 的入口
   · 新回归套件 `e2e_wb.py`（67 条，13 节），`/api/prompts` 多一条 `workbench_tools`
+- **跨会话/跨账号交接（本轮加的）**：`tests/` 整套回归**进了仓库**（以前只在某个 workspace 的
+  私有目录里，换个账号接手就等于没有安全网）；根目录新增 `AGENTS.md` 作为项目记忆，
+  这个文件名会被 Claude Code / BrowserCode / Cursor 自动读取。
+  `tests/runall.sh` 自动定位项目目录（脚本所在目录的上一级），`content_test.mjs` 默认读
+  `../extension/content.js`，两者都不再写死任何机器上的绝对路径。已在仓库布局下实跑验证
 
 ## 未完成（按优先级排序）
 - [ ] 等用户装上 v1.8.0（**扩展也要重装**，Chrome 卡片上应显示 1.8.0）并确认两件事：
@@ -68,6 +78,10 @@ dcwatch **v1.8.0**（扩展也是 v1.8.0，**本版改了扩展，用户必须�
 - 所有出网调用必须走 `App.rq()`（trust_env + net.proxy），否则国内直连 api.openai.com 必超时
 - 界面绝不能拿假数据冒充成功；`S.live` 一旦为真永不回退
 - 微信只走 Server酱 / 企业微信官方通道；火狐已彻底放弃，只支持 Chrome / Edge
-- **推送凭据已长期保存**在 workspace 的 `.bcode/agent-workspace/secrets/github_pat.txt`（chmod 600，
-  不在仓库、不在 outputs）。用户 2026-07-31 明确要求「每次任务做完都推」，不必每轮再问。
-  推前先 `git ls-remote` 看远端到哪了，别信记忆里的 sha
+- **推送凭据不在仓库里，也不该在**。它存在某个 workspace 的私有目录（`.bcode/agent-workspace/secrets/`），
+  换账号接手时拿不到 —— 那时候直接跟用户要一个新的 GitHub PAT，用一次性 URL 推：
+  `git push "https://x-access-token:<PAT>@github.com/tqzbceb/claude.git" HEAD:main`，
+  输出过一遍 `sed 's/github_pat_[A-Za-z0-9_]*/***TOKEN***/g'`，推完 `grep -rl github_pat_ .git/` 确认无残留。
+  用户 2026-07-31 明确要求「每次任务做完都推」。推前先 `git ls-remote` 看远端到哪了，别信记忆里的 sha
+- **交付给用户的 zip 里不含 `tests/`、`AGENTS.md`、`CLAUDE.md`、`HANDOFF.md`**（26 个文件，
+  只有他要跑的东西）。所以让接手的 AI **从 GitHub clone**，不要拿用户手上的 zip —— zip 里没有交接内容

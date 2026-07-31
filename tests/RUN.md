@@ -1,0 +1,124 @@
+# dcwatch 回归
+
+这个目录就在项目根下面（`<项目>/tests/`），`runall.sh` 自己会找到 `../server.py`，
+不需要配任何路径。布局不一样时用 `DC=/path/to/dcwatch ./runall.sh ...`。
+
+改完 server.py，**342 条全跑一遍**（一次两三套，命令超时一般 120s）：
+
+```bash
+pip install aiohttp        # 唯一依赖；某些一次性环境每次都要重装
+cd tests
+./runall.sh e2e.py e2e_ai.py                     # 46 + 27
+./runall.sh e2e_multi.py e2e_wiz.py              # 26 + 83
+./runall.sh e2e_v17.py e2e_diag.py e2e_wb.py     # 46 + 47 + 67
+```
+
+`runall.sh` 做的事：起假 OpenAI（`mockllm.py` :8899）和假 webhook（`echo.py` :8898 → /tmp/bcode/echo.jsonl），
+然后每套之间 **清 /tmp/p.db\* 并重启 server**（库不干净的话去重守卫会静默丢重复 msg_id，
+表现成「命中数没加」「转发了两次」一片假红）。手动起服务的等价命令：
+
+```bash
+DCWATCH_DB=/tmp/p.db python3 server.py     # 别用真配置库
+```
+
+改完 `extension/content.js`：跑 `content_test.mjs` 的 `run()`（43 条）和 `runFresh()`（16 条），
+要一个 CDP 会话（`browser_execute` 之类）。它默认读 `../extension/content.js`，
+也可以传路径或设 `DCW_CONTENT_JS`。
+
+## content.js 的回归（不需要真装扩展）
+```js
+// browser_execute 里，已 connect+use 之后：
+const m = await import(process.cwd()+"/tests/content_test.mjs?t="+Date.now())
+console.log(JSON.stringify(await m.run(session), null, 1))   // 期望 {syntax:"ok", pass:26, fail:0}
+```
+不传参数就用默认路径。它自己会换 realm、造假 Discord DOM、伪造 /channels/<g>/<c>、注入 chrome 桩、等过 4s 静默期。
+覆盖：折叠消息继承作者 / 头像抠 author_id / 默认头像留空 / 纯图片跳过 / bot 标记 /
+子区认父频道 + 侧栏标题 / 私信 / 去重 / 合批 / 心跳带账号和频道 / 批次带 account+account_id / 页面药丸挂载。
+**换路径会重新触发 4 秒静默期**（切频道不重报历史，设计如此）——测试里换完 URL 必须再等 4.6s，
+否则新塞的消息会被当历史丢掉，看着像 is_dm 解析坏了。
+
+## e2e_multi.py 覆盖（多浏览器 / 多账号 / 跨桥去重）
+心跳带身份被单独列成桥（account/browser/ver/where/fresh）/ 两个桥不互相覆盖 / 旧版扩展版本可见 /
+同一条消息两个桥各报一次只入库一条且命中只 +1 / 规则 accounts 分流 / 单条 account 优先于整批 /
+旁听开关关掉时桥仍可见且带原因。
+- 桥是**进程内内存**，跑过 e2e.py 会留下一个 anon 桥，所以别断言 `live == 2` 这种绝对值。
+- 浏览器来源的 msg_id 入库时会加 `b` 前缀（和 Token 直连的 id 区分），断言要用 `"b"+mid`。
+- 建规则是 `call("/api/rules", dict(rule, enabled=1))`，**不是** `{"rule": ...}`。
+两套都用 :8777/:8899/:8898，但会互相清库清规则，**别同时跑**，一套跑完再跑另一套（各自换一个 DCWATCH_DB）。
+
+覆盖：state / config 掩码不冲真值 / sinks 局部更新 / 拉模型 / ingest 入库 /
+compose 清洗（编 ID 丢弃+notes、非法 action 退回、非法字段丢、字符串转 int）/
+规则 CRUD / 试算三态 / 父频道→子区 / 提示音列表 / 出口 webhook+企业微信 + 未配置报错 /
+命中计数 / 命中后转发内容 / 工作台快捷按钮。
+
+`e2e_ai.py` 覆盖 AI 动作路径：ai_tag（分数+标签+待办+matched，且只调一次模型）/
+min_score 门槛拦低分 / ai_extract（模型输出带废话也能抽出 JSON、走 json_mode）/
+ai_summary（攒够 N 条才调一次、调完清缓冲）/ ai_reply 与手动回复在 browser 模式必须明确报错 /
+`/api/ask` 真把上下文喂给模型 / 每日调用上限拦住并说清 / cooldown 内不重复调模型且写日志 /
+webhook 动作三态（规则自带地址能发、地址留空写告警、对方 500 记 error 且不影响入库）。
+假模型按 system prompt 分任务返回，`/__calls` 看调了什么、`/__reset` 清零；
+打分规则：内容里有 `@` → 88 分，否则 20 分（别用关键词做判据，会跟规则关键词撞）。
+
+## 踩过的坑，别再踩
+- 别在 bash 里写 `case "$c" in *server.py*)` 去杀进程：**pattern 出现在自己的 cmdline 里，会把自己杀掉**，
+  bash 工具随后一直挂到超时。用 `kill.py <关键词>`（跳过自己和父 shell）。
+- `kill.py` 按 cmdline 匹配，而 `python3 server.py` 的 cmdline 里没有目录，
+  想精确杀就用 `python3 kill.py server.py` 并确认只有一个在跑。
+- bash 工具超时会把 setsid 起的后台进程一起带走；长任务改成「后台起 + sleep + 读日志」。
+- 期望值容易写错的三处（都不是 bug）：`/api/state` 里 webhook/api_key 是 `***` 掩码形式；
+  出口转发跟规则 action 无关（notify 也会转，只受 sinks.min_score 管，无分数一律发）；
+  转发 body 是双层 JSON，断言前要 `json.loads` 两次。
+- `call("/api/messages/clear")` 是 POST，测试里 data 传 `{}` 才不会 405。
+- echo.jsonl 每行是 `{"path","body"}`，body 是**字符串**：断言要 `json.loads(json.loads(line)["body"])`，
+  在原始行里搜 `"score": "88"` 永远搜不到（引号被转义成 `\"`）。
+- 日志记录的字段名是 `text`（不是 msg）：`/api/logs` → `{"logs":[{"ts","level","text"}]}`。
+- compose 的 author_ids 取决于「本机最近说话的人」的排序，测试别硬编码某个人的 ID。
+
+## e2e_wiz.py 覆盖（引导式建规则 /api/rules/wizard，33 条）
+空对话挡住 / 第一轮必须反问不许直接出规则 / 复述+假设+why+推荐值都在 / 问题最多 3 个 /
+够了就 done / 模糊意图必须走 ai_tag+粗筛词+阈值 / 字符串数字转 int / 空投类 ignore_bots=False /
+编造 ID 丢弃并写 notes / 真 ID 保留 / 非法字段丢 / catches+misses+verify 都有 /
+出来的规则能直接保存且试算能命中 / **弱模型不给 JSON 时降级成追问（loose=true）不许崩** /
+```json 包裹能解析 / 超过 3 轮强制收尾 / 没传模型用默认模型、一个都没配才报错 /
+providers 形状不对回 400 不是 500。
+- mockllm 的 wizard 分支**自己数 assistant 轮数**决定 ask/done；user 里带 `GARBAGE` 出非 JSON、
+  带 `FENCE` 套 code fence，专门测容错。
+- `/api/rules/test` 的载荷键是 **`sample`**（不是 `message`），写成 message 会全字段空 → why='author'。
+- `b.get("model") or cfg.default_model` 是有意的回退，测「没模型报错」必须先把 default_model 清空。
+
+## content_test.mjs 的抖动（2026-07-30 修）
+症状：runFresh 每次挂的项都不一样，got 是 `[]`。根因**不是 content.js**，是
+①标签页在后台时定时器被节流，600ms 合批会迟到；②断言一次性读 `__sent`，读太早。
+修法：`Page.bringToFront()` + 正向断言全走 `waitSent(id, 4000)` 轮询。
+连跑 3 次 runFresh 10/10、run 26/26 稳定。**以后加「该上报」的断言一律用 waitSent，别单次读。**
+手动复现时诊断区（`__dcwatch.stats`）能直接看出跳过原因，比猜快得多。
+
+## 两个会让你误判成产品 bug 的坑（2026-07-31 各踩一次）
+1. **echo.py 原来 `body[:600]`**：给事件加了 `kind`/`scanned` 两个字段后转发 body 超过 600，
+   被截成非法 JSON，e2e.py 第 11 节直接 traceback。已改成 `[:8000]`。
+   看到「转发内容」相关的 JSONDecodeError 先怀疑这里，不是 server 截断的。
+2. **库不干净 = 第 11 节必挂**：去重守卫是查库的，上一轮跑过的 msg_id 再来一次会被静默丢掉，
+   表现为「规则命中数 +1」「转发了 2 次」全 FAIL。**每套跑之前 `rm -f /tmp/p.db*` 并重启 server**。
+
+## e2e_v17.py（36 条，v1.7.0 新能力）
+覆盖：kinds 闸门六种组合 / 新帖入库并记 kind=thread / 抓历史只入库不加命中数不提醒 /
+批量提取（空范围提示、verified 逐字核对、only_matched）/ env 自查字段 + 诊断包路径段。
+- 它**自己会配 provider**（单独跑时库是空的，否则 /api/batch 一次也调不动模型，
+  而且 server 仍会报 calls>=1，看着像成功 —— 所以断言里加了「没有批次失败」）
+- `/api/rules/test` 的返回键是 **`match`**，不是 `hit`
+- mockllm 加了 `batch` 分流（认 system 里的「批量翻一批」）+ `gen_batch()`：
+  从 user 的 `[msg_id]` 行里抠 `ABCD-1234` 形状的串**原样**返回 —— 原样很重要，服务端要核对
+
+## e2e_v17.py 现在 46 条（v1.7.1 加了 /version 与缓存头）
+- `call(..., headers=True)` 返回响应头 dict（不读 body），用来断言 `Cache-Control: no-store`
+- **断言里不要写死版本号**：原来的「版本是 1.7.0」在 bump 到 1.7.1 时假红了一次。
+  现在只校验形状 `\d+\.\d+\.\d+`，再要求 `/version` 页面里出现同一个号
+- `/version` 的断言包含「页面里没有 `<script`」—— 这一页故意不依赖 JS，改动时别加脚本
+
+## 2026-07-31 v1.7.4 新增的两条
+- `chrome` 桩里补了 `runtime.onMessage.addListener`（存成 `window.__onMsg`）。
+  **content.js 里所有 chrome API 调用都包在 try/catch 里**，桩缺一个方法不会报错、只会静默跳过，
+  于是新代码看着全绿其实一行没跑。加了 chrome 新用法就要同步补桩。
+  第 12 节直接调 `__onMsg({type:"dcwatch-pull"})` 断言它同步 reply 一份心跳 body。
+- `e2e_diag.py` 里桥的扩展版本**不再写死**，改成开头 `EXT_OK = /api/state.env.ext_min`。
+  写死成 1.7.2 时，EXT_MIN 一提到 1.7.4，「一切正常时不许硬凑问题」那节就假红三条。
