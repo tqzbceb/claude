@@ -252,7 +252,24 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .tnode.c{padding-left:26px} .tnode.t{padding-left:44px;font-size:12.5px;color:var(--text2)}
 .tnode .add{margin-left:auto;opacity:0}
 .tnode:hover .add{opacity:1}
-.wb{display:flex;flex-direction:column;gap:14px;height:100%}
+.wb{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px;height:100%}
+/* ============ workbench sessions ============ */
+#wbSide{width:210px;flex-shrink:0;display:flex;flex-direction:column;gap:8px;
+  border-right:1px solid var(--line);padding-right:12px}
+#wbSide .hd{display:flex;align-items:center;gap:8px;font:500 12px var(--sans);
+  color:var(--accent);letter-spacing:.06em}
+#wbSide .hd .btn{margin-left:auto}
+#wbSess{overflow-y:auto;display:flex;flex-direction:column;gap:4px;max-height:70vh}
+.sess{padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13px;
+  display:flex;align-items:center;gap:6px;border:1px solid transparent}
+.sess:hover{background:var(--bg-sunk)}
+.sess.on{background:var(--bg-elev);border-color:var(--line2)}
+.sess .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess .n{font-size:11px;color:var(--text3)}
+.sess .ops{display:none;gap:2px}
+.sess:hover .ops{display:flex}
+.sess .ops button{border:none;background:none;cursor:pointer;font-size:12px;padding:0 3px;
+  color:var(--text3)}
 .chatlog{flex:1;overflow:auto;display:flex;flex-direction:column;gap:14px;padding:4px}
 .chatlog.has>:first-child{margin-top:auto}
 .bub{max-width:min(72ch,88%);padding:11px 15px;border-radius:14px;font-size:14px;line-height:1.65}
@@ -484,7 +501,11 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
 
   <!-- ============ ai workbench ============ -->
   <section class="view" id="v-ai">
-    <div class="pad" style="display:flex;flex-direction:column;gap:0">
+    <div class="pad" style="display:flex;gap:14px;align-items:stretch">
+      <div id="wbSide">
+        <div class="hd"><span>会话</span><button class="btn sm" id="wbNew">＋ 新会话</button></div>
+        <div id="wbSess"></div>
+      </div>
       <div class="wb">
         <div class="row" style="flex-wrap:wrap">
           <select id="wbModel" style="width:auto;min-width:230px"></select>
@@ -495,7 +516,7 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
             title="去「监听规则」，让 AI 问清楚再帮你建一条">◆ 帮我建条规则</button>
           <span class="sp" style="flex:1"></span>
           <span class="tag" id="wbCtx">未带上下文</span>
-          <button class="btn ghost sm" id="wbClear">清空</button>
+          <button class="btn ghost sm" id="wbClear">新话题</button>
         </div>
         <!-- 贴频道链接是他最常做的事，别让他自己去拆 ID -->
         <div class="banner" id="wbLink" style="display:none;align-items:center;gap:12px;margin:10px 0 0"></div>
@@ -789,7 +810,8 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
 <script>
 /* ================= state & utils ================= */
 const S={cfg:null,status:{},rules:[],msgs:[],models:{},sel:null,ctx:new Set(),filter:'all',q:'',
-  demo:false,live:false,lastErr:'',modelsDemo:{},view:'inbox',editing:null,chat:[]};
+  demo:false,live:false,lastErr:'',modelsDemo:{},view:'inbox',editing:null,chat:[],
+  wbSid:0,wbSess:[]};
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const AVC=['#c96442','#7a8b5c','#5b7fa6','#a1743b','#8d6a9f','#3f8f7c','#b05b6e'];
@@ -2413,6 +2435,55 @@ function renderWb(){renderCtxHint();
       「这几条里有哪些需要我今天回？」「起草一条回复」「抽成表格」<br>
       也可以直接说「把『所有消息』那条规则改成连表情包也提醒」——它会自己动手改。</div></div>`;
   $('#wbLog').scrollTop=1e6;}
+/* ---------- 会话：聊天存库（A1）+ 左侧列表多开（C1） ---------- */
+async function wbLoadSessions(){
+  const r=await api('/api/wb/sessions');
+  if(!r||!r.ok)return;
+  S.wbSess=r.sessions;S.wbSid=r.cur||0;renderSess();
+  if(S.wbSid)await wbOpen(S.wbSid,true);
+  else if(!S.chat.length)await wbNewSess(true);       // 第一次用：建个空会话
+}
+function renderSess(){
+  $('#wbSess').innerHTML=S.wbSess.map(s=>
+    `<div class="sess${s.id===S.wbSid?' on':''}" data-sid="${s.id}">
+      <span class="nm" title="${esc(s.name)}">${esc(s.name||'新会话')}</span>
+      <span class="n">${s.n||0}</span>
+      <span class="ops">
+        <button data-ren="${s.id}" title="改名">✎</button>
+        <button data-del="${s.id}" title="删除">🗑</button>
+      </span></div>`).join('')
+    ||`<div class="hint" style="padding:6px">还没有会话，点上面「＋ 新会话」</div>`;
+  $$('#wbSess .sess').forEach(el=>el.onclick=e=>{
+    if(e.target.closest('.ops'))return;
+    wbOpen(+el.dataset.sid);});
+  $$('#wbSess [data-ren]').forEach(b=>b.onclick=async e=>{
+    e.stopPropagation();
+    const s=S.wbSess.find(x=>x.id===+b.dataset.ren);if(!s)return;
+    const name=prompt('会话改名叫：',s.name);if(!name||!name.trim())return;
+    await api('/api/wb/session/rename','POST',{id:s.id,name:name.trim()});
+    wbLoadSessions();});
+  $$('#wbSess [data-del]').forEach(b=>b.onclick=async e=>{
+    e.stopPropagation();
+    const s=S.wbSess.find(x=>x.id===+b.dataset.del);if(!s)return;
+    if(!confirm(`删掉「${s.name}」？里面的 ${s.n||0} 条消息一起删，找不回来。`))return;
+    await api('/api/wb/session/del','POST',{id:s.id});
+    if(s.id===S.wbSid){S.chat=[];S.wbSid=0;renderWb();}
+    wbLoadSessions();});
+}
+async function wbOpen(sid,silent){
+  if(sid===S.wbSid&&S.chat.length&&silent){renderSess();return;}
+  const r=await api('/api/wb/session/open','POST',{id:sid});
+  if(!r||!r.ok){toast(r&&r.error||'打不开会话');return;}
+  S.wbSid=sid;
+  S.chat=(r.msgs||[]).map(m=>({r:m.r,t:m.t,acts:m.acts||[]}));
+  renderWb();renderSess();
+}
+async function wbNewSess(silent){
+  const r=await api('/api/wb/session/new','POST',{});
+  if(!r||!r.ok)return;
+  S.wbSid=r.id;S.chat=[];renderWb();wbLoadSessions();
+  if(!silent)toast('新会话开始了，之前聊的在左边列表里');
+}
 /* 流式时一个字一个字来，别每个 token 都重画一遍整个聊天记录 */
 let wbPaint=0;
 function wbTick(){if(wbPaint)return;wbPaint=setTimeout(()=>{wbPaint=0;renderWb();},70);}
@@ -2423,7 +2494,7 @@ function wbApply(cur,ev){
   if(ev.t==='note'){cur.acts.push({human:ev.d,ok:true});wbTick();return;}
   if(ev.t==='done'){
     cur.t=ev.text||cur.t||'（模型这轮没说话）';cur.acts=ev.acts&&ev.acts.length?ev.acts:cur.acts;
-    cur.busy=false;wbAfter(ev);renderWb();return;}
+    cur.busy=false;wbAfter(ev);wbLoadSessions();renderWb();return;}
   if(ev.t==='error'){cur.busy=false;cur.t=(cur.t?cur.t+'\n\n':'')+'调用失败：'+(ev.error||'');renderWb();}
 }
 /* 模型改了规则就当场刷新规则页，否则用户切过去还是旧的，会以为没生效 */
@@ -2459,7 +2530,7 @@ async function wbSend(){
   const hist=S.chat.filter(m=>m.t&&!m.busy).slice(-8).map(m=>({role:m.r==='u'?'user':'assistant',content:m.t}));
   S.chat.push({r:'u',t});$('#wbInput').value='';wbLinkCheck();
   const cur={r:'a',t:'',acts:[],busy:true};S.chat.push(cur);renderWb();
-  const body={prompt:t,provider:prov,model,msg_ids:[...S.ctx],history:hist};
+  const body={prompt:t,provider:prov,model,msg_ids:[...S.ctx],history:hist,sid:S.wbSid};
   if(!S.live&&S.demo){cur.busy=false;
     cur.t='（演示模式：没有后端。真实运行时这里是模型的回答，会带上你勾选的 '+S.ctx.size+' 条消息，'
       +'而且它可以直接帮你改监听规则。）';renderWb();return;}
@@ -2469,7 +2540,7 @@ async function wbSend(){
   const r=await api('/api/ask','POST',body);
   cur.busy=false;
   if(!r){cur.t='调用失败：'+(S.lastErr||'连不上后端');}
-  else if(r.ok){cur.t=r.text||'（模型这轮没说话）';cur.acts=r.acts||[];wbAfter(r);}
+  else if(r.ok){cur.t=r.text||'（模型这轮没说话）';cur.acts=r.acts||[];wbAfter(r);wbLoadSessions();}
   else cur.t='调用失败：'+r.error;
   renderWb();}
 $('#wbSend').onclick=wbSend;
@@ -2553,7 +2624,16 @@ $('#btnToWiz').onclick=()=>{
   }
   $('#nlText').focus();
 };
-$('#wbClear').onclick=()=>{S.chat=[];S.ctx.clear();renderWb();renderList()};
+$('#wbClear').onclick=async()=>{
+  S.ctx.clear();renderList();
+  if(!S.live){S.chat=[];renderWb();return;}          // 演示：照旧
+  if(!S.wbSid){S.chat=[];renderWb();return;}
+  if(!confirm('把当前会话清成一个全新的？之前的对话会从库里删掉，找不回来。'))return;
+  await api('/api/wb/session/del','POST',{id:S.wbSid});
+  S.chat=[];S.wbSid=0;renderWb();
+  await wbNewSess(true);
+};
+$('#wbNew').onclick=()=>wbNewSess();
 enterToSend($('#wbInput'),wbSend);
 /* ---------- 工作台快捷按钮：全部来自配置，不写死 ---------- */
 function quicks(){const c=S.cfg||{};return Array.isArray(c.quick_actions)?c.quick_actions:[];}
@@ -2636,7 +2716,8 @@ async function boot(){
   if(st){S.cfg=st.config;S.status=st.status;S.rules=st.rules;S.stats=st.stats;S.env=st.env||{};
     S.findings=st.findings||[];
     const ms=await api('/api/messages?limit=300');S.msgs=ms?ms.messages:[];
-    $('#modeTag').textContent='';}
+    $('#modeTag').textContent='';
+    wbLoadSessions();}                                // 聊天存库（A1）：连上后端才装会话
   else{seedDemo();S.demo=true;$('#modeTag').textContent='演示模式（未连上后端）';
     console.warn('[dcwatch] 未连上后端：',S.lastErr);}
   S.models={...(S.cfg.models_cache||{})};          // 拉过的模型列表存在配置里，刷新也还在
