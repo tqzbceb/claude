@@ -18,26 +18,27 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**A3+A5 方案已出**（Claude/Fable5 窗口，2026-07-31）：根因已坐实，施工图在 **`PLAN_A3A5.md`**。
-**下一件：实现窗口（Kimi 等快模型）照 `PLAN_A3A5.md` 施工**——4 处修改（server.py 广播
-sinks、ui.html Notification 加 tag、帮助文案、e2e.py 第 12 节），验收全套 500 全绿。
-实现完之后再换 Claude 窗口做 review（A2 的 diff 也还没 review 过，一起看）。
+**做完了 A3+A5**（照 `PLAN_A3A5.md` 施工完毕，Kimi K3 实现窗口，2026-07-31）：
+1. [x] 修改 1：server.py setcfg 存 sinks 后 `bus.push("sinks", …)` 广播
+2. [x] 修改 2：ui.html 网页通知加 `tag:'dcw-'+msg_id`（多标签页只弹一条）
+3. [x] 修改 3：帮助文案写明「网页通知与系统通知是两条通道」
+4. [x] 修改 4：e2e.py 第 12 节 SSE 广播回归（46→48）
+5. [x] 全套服务端回归 **500/500 全绿**（48+27+26+83+46+47+96+74+53），
+       content_test 46+16 重跑仍全绿（没动扩展）；RUN.md / HANDOFF.md / BACKLOG / 本页已收尾
 
-### A3+A5 根因（已坐实，细节在 PLAN_A3A5.md，别重查）
-- 网页通知 `new Notification` 在 Windows 上也进系统通知中心，用户分不出它和原生 toast；
-- A3：每个 dcwatch 标签页各持一条 SSE 各弹一条（无 tag 不合并）+ server toast → 3 条；
-- A5：`S.cfg` 只在 boot 取一次，`/api/config` 存 sinks 后服务端不广播 → 旧标签页
-  拿着 `browser:true` 永远弹。服务端 toast/sound 路径读实时 cfg，没毛病；
-  msg_id 去重、合并队列也都查过，是好的，不要动。
+**下一件**：换 Claude 窗口做 **review**（A3+A5 的 diff 对照 PLAN_A3A5.md，A2 的 diff 也没
+review 过，一起看）。review 过完后按 BACKLOG 优先级是 **A4**（出口锁死 Discord）。
+用户说「继续」时：Claude → 做 review；快模型 → 别动，等 review 结论。
 
-### A2 遗留（发版前要做）
-- A2 动了 `extension/content.js` → 发版要提 `EXT_MIN`、用户需重装扩展；
-  回复消息在真 Discord 上还没实测，发版前让用户验一条。
-- A2 施工完 498/498 全绿（Kimi K3），还没 review。
+### 发版前待办（攒着，哪轮发版哪轮做）
+- 提 `EXT_MIN`（A2 动了 extension/content.js），用户需重装扩展；
+- 让用户在真 Discord 验：①回复消息的盯人命中（A2）；②开两个 dcwatch 标签页只弹一条（A3）；
+  ③关掉三个开关立刻全停（A5）；
+- 发 zip 时同步 release/ 和 outputs/。
 
 ## 最后更新
-2026-07-31 · Claude/Fable5 出完 A3+A5 施工图（PLAN_A3A5.md）并推送。
-下一件：实现窗口照 PLAN_A3A5.md 施工；用户发「继续」即可。
+2026-07-31 · A3+A5 施工完成（Kimi K3 照 PLAN_A3A5.md）：4 处修改 + 500/500 + 46/16 全绿，已推送。
+下一件 Claude 窗口 review，然后 A4。
 
 ## 上一轮（v1.9.3）做完了什么
 批量提取的模板 + 整包导出 / 导入，全流程收尾：

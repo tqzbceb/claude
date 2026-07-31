@@ -7,7 +7,7 @@
 > 这四份文件 + `tests/` + `release/` 就是全部交接内容，**不需要上一轮的聊天记录**。
 
 ## 最后更新时间
-2026-07-31 20:30（北京时间）
+2026-07-31 23:45（北京时间）
 
 ## 新账号 / 新窗口先看这三行
 - 用户的账号是「10x10」：**每个窗口 10 条消息，用完换窗口**。进行中的状态在 `NOW.md`（粒度到步），
@@ -17,14 +17,26 @@
 - 工作区里的 `claude/` 是**死快照**（没有 `.git`）。干活永远 `git clone` 到 `/tmp` 上改，改完推。
 
 ## 当前状态
-dcwatch 代码侧最新是 **v1.9.3 + A2 修复（未发版）**。A2「检测某个用户」失效已修：
+dcwatch 代码侧最新是 **v1.9.3 + A2/A3/A5 修复（未发版）**。
+
+**A3「重复通知」+ A5「关了开关还弹」已修**（施工图 `PLAN_A3A5.md`）。根因是同一个：
+ui.html 的「网页通知」`new Notification` 在 Windows 上也进系统通知中心，用户分不出它和原生 toast——
+A3：每个开着的 dcwatch 标签页各持一条 SSE 各弹一条（无 tag 不合并）+ server toast 一条 → 3 条；
+A5：`S.cfg` 只在 boot 取一次，`/api/config` 存 sinks 后服务端不广播 → 旧标签页拿着 `browser:true` 永远弹。
+修法三处：① server.py setcfg 存 sinks 后 `bus.push("sinks", …)` 广播（前端处理器本来就有）；
+② ui.html Notification 加 `tag:'dcw-'+msg_id`，同源同 tag Chrome 只显示一条；
+③ 帮助文案写明「网页通知与系统通知是两条通道」。服务端 msg_id 去重、合并队列查过是好的，没动。
+回归：服务端 **500 条全绿**（e2e 46→48，新增 SSE 广播 2 条），content_test 46 + 16 重跑仍全绿。
+这轮没动 extension/。真机多标签页场景（两个页面各收一条变成一条）发版后值得让用户验一次。
+
+**A2「检测某个用户」失效已修**：
 四处改动（施工图 `PLAN_A2.md`）——
 ① test_rule 工具加 `author_id` 参数，留空默认取规则 author_ids[0]（模型试算盯人规则不再必挂）；
 ② content.js 取头像跳过回复预览容器（`[class*="repliedMessage"]`），回复消息 author_id 不再记成被回复人；
 ③ content.js 正文按精确 id `#message-content-<msg_id>` 取，不吃回复预览里的原文；
 ④ gateway 作者名优先 `member.nick`（服务器昵称）再 global_name。
-回归：服务端 **498 条全绿**（wb 94→96），content_test **46 + 16 条全绿**（新增回复消息 3 条）。
-**没发 zip、没升版本**：这次动了 `extension/content.js`，下轮发版要记得 `EXT_MIN` 跟着提、
+回归：服务端 498 条全绿（wb 94→96），content_test 46 + 16 条全绿（新增回复消息 3 条）。
+**没发 zip、没升版本**：A2 动了 `extension/content.js`，下轮发版要记得 `EXT_MIN` 跟着提、
 用户需要重装扩展（硬规矩 2）。扩展在真 Discord 的回复消息上还没实测过，发版前值得让用户验一条。
 
 上一轮（v1.9.3，已发版）：**扩展没改**，留在 v1.8.0，`EXT_MIN` 也留在 1.8.0 ——

@@ -3,12 +3,12 @@
 这个目录就在项目根下面（`<项目>/tests/`），`runall.sh` 自己会找到 `../server.py`，
 不需要配任何路径。布局不一样时用 `DC=/path/to/dcwatch ./runall.sh ...`。
 
-改完 server.py，**498 条全跑一遍**（一次两三套，命令超时一般 120s）：
+改完 server.py，**500 条全跑一遍**（一次两三套，命令超时一般 120s）：
 
 ```bash
 pip install aiohttp        # 唯一依赖；某些一次性环境每次都要重装
 cd tests
-./runall.sh e2e.py e2e_ai.py                     # 46 + 27
+./runall.sh e2e.py e2e_ai.py                     # 48 + 27
 ./runall.sh e2e_multi.py e2e_wiz.py              # 26 + 83（wiz 单套约 40s，别再多塞）
 ./runall.sh e2e_v17.py e2e_diag.py                # 46 + 47
 ./runall.sh e2e_wb.py e2e_imp.py                 # 96 + 74
@@ -51,7 +51,8 @@ console.log(JSON.stringify(await m.run(session), null, 1))   // 期望 {syntax:"
 覆盖：state / config 掩码不冲真值 / sinks 局部更新 / 拉模型 / ingest 入库 /
 compose 清洗（编 ID 丢弃+notes、非法 action 退回、非法字段丢、字符串转 int）/
 规则 CRUD / 试算三态 / 父频道→子区 / 提示音列表 / 出口 webhook+企业微信 + 未配置报错 /
-命中计数 / 命中后转发内容 / 工作台快捷按钮。
+命中计数 / 命中后转发内容 / 工作台快捷按钮 /
+**保存 sinks 后 SSE 广播**（A5 回归：/api/config 存 sinks → /api/events 推到且是最新值）。
 
 `e2e_ai.py` 覆盖 AI 动作路径：ai_tag（分数+标签+待办+matched，且只调一次模型）/
 min_score 门槛拦低分 / ai_extract（模型输出带废话也能抽出 JSON、走 json_mode）/
