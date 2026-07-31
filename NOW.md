@@ -18,8 +18,17 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**A1+C1 施工完成（Kimi K3 实现窗口），下一件：Claude review**（对照 `PLAN_A1C1.md` 检查
-diff + 回归结果，PLAN 里「不许做的事」逐条核对）。施工记录：
+**A1+C1 review 通过（Claude 窗口 2026-07-31），正在出 v1.9.4**。步骤：
+① review 完（见下）✓ → ② bump 三处版本号（server VERSION/EXT_MIN、manifest version，
+扩展跟程序对齐到 1.9.4）→ ③ README/release 文档改版本 → ④ 回归全套重跑 → ⑤ 程序 zip +
+扩展 zip 两个都出，进 release/ 和 outputs/ → ⑥ 推送 + 让用户真机验三条（见发版前待办）。
+
+**review 结论：通过，无返工项。** diff 对照 PLAN_A1C1.md 逐行核过：服务端两表/五接口/
+wb_save_pair/落库点位/[5.6] 段与 PLAN 一致；前端会话栏/wbSend 带 sid/新话题/boot 装载一致；
+「不许做的事」七条全遵守（extension 未动、VERSION/EXT_MIN 未动、wb_prepare 截 8 条未改、
+诊断包只印条数时间、演示不调后端）。回归亲测复跑 **542/542 全绿**
+（e2e 48 + ai 27 + multi 26 + wiz 83 + v17 46 + diag 47 + wb 96 + imp 74 + ext 53 + chat 42）。
+施工记录：
 - server.py：wb_sessions/wb_msgs 两表、`wb_save_pair`、五个 `/api/wb/*`、ask/stream 成功路径
   落库（plain=1 与失败分支不进库）、诊断包 `[5.6] 工作台会话`（只印条数+时间）
 - ui.html：左侧会话栏（新建/切换/改名/删除）、boot 装载、`wbSend` 带 sid、发送后刷新列表、
