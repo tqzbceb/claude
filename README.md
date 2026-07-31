@@ -699,18 +699,23 @@ https://github.com/tqzbceb/claude
 第一步照做，别问我：
 git clone https://github.com/tqzbceb/claude.git ./claude
 然后按顺序读 claude/START_HERE.md → AGENTS.md → HANDOFF.md → CLAUDE.md，照里面写的做。
+读完照 START_HERE 第 5.5 节，把项目指针写进工作区根目录的 AGENTS.md，
+这样我下次开新会话不用再发这段话。
 
 我是 Windows 11 用户，不写代码不用命令行。做完直接提交推送，不要停下来问我。
 要推送凭据时跟我要 GitHub PAT。
 ```
 
-粘完它会自己做四件事：跑一次回归确认环境、读完交接、跟你要一份诊断包、然后按
-`HANDOFF.md` 的「未完成」第一项接着做。**这段话也存在仓库里**
-（`START_HERE.md` 第 6 节），以后再换号就不用回来翻这份 README。
+粘完它会自己做五件事：clone、跑一次回归确认环境、读完交接、**把指针写进新工作区的
+`AGENTS.md`**（这样这段话你只需要发一次，之后每个新会话它自己就知道去哪读）、
+然后跟你要一份诊断包并按 `HANDOFF.md` 的「未完成」第一项接着做。
+**这段话也存在仓库里**（`START_HERE.md` 第 6 节），以后再换号就不用回来翻这份 README。
 
 **你要自己带过去的三样东西**（仓库里故意没有）
 
-1. **一个新的 GitHub PAT** —— 凭据不进仓库。新 AI 要推代码时你现给一个，用完在 GitHub 上 revoke。
+1. **GitHub PAT** —— 凭据不进仓库。**你之前给过的那个 token 存着就还能用**（`github_pat_` 开头
+   那一长串，记在你自己的记事本或密码管理器里），新 AI 要推代码时贴给它；找不到了就去
+   GitHub → Settings → Developer settings → Personal access tokens 现开一个（要 repo 权限）。
 2. **一份诊断包** —— 程序界面「运行日志」页 → 导出诊断。新接手的 AI 只能靠这个知道你机器上的实况
    （跑的是哪一版、扩展活没活、规则会不会命中）。
 3. **你手上程序的版本号** —— 打开 `http://127.0.0.1:8777/version` 那页，截图或念给它。

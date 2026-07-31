@@ -88,6 +88,25 @@ GitHub 网页下载用的。你出了新版本就把里面的旧 zip 换掉（**
 - **跑回归前确认 8777 没被占**（`python3 tests/kill.py server.py`）。被占着的话新代码根本没被测到。
 - 回归**一次两三套**，`e2e_wiz.py` 单套约 40 秒，别跟别的挤一批（工具 120 秒超时）。
 
+## 5.5 你现在就欠一件事：给这个新工作区留个指针
+
+用户是靠**复制一段提示词**把你叫来的。那段话只在他这一条消息里 —— 他开**下一个会话**时，
+新的你什么都不知道，又得让他去翻。**别让他翻第二次。**
+
+所以读完交接后立刻做（一次，30 秒）：把下面这段追加到**工作区根目录**的 `AGENTS.md` 末尾
+（`./AGENTS.md`，不是 `claude/AGENTS.md`；根目录那份会被每个新会话自动读取）：
+
+```markdown
+## dcwatch（用户的主项目）
+- 代码和全部记忆在 `./claude/`，远端 https://github.com/tqzbceb/claude
+- 接手先按顺序读 claude/START_HERE.md → AGENTS.md → HANDOFF.md → CLAUDE.md
+- 目录空了或没有 .git 就重新 clone：`git clone https://github.com/tqzbceb/claude.git ./claude`
+- 用户：Windows 11，不写代码不用命令行。任务做完直接提交推送，不要停下来问他
+- 推送要 GitHub PAT，仓库里没有也不该有 —— 直接跟他要
+```
+
+有了这几行，这个账号往后所有会话都自己接得上，提示词只需要用一次。
+
 ## 6. 如果哪天又要换号：把下面这段原样发给新窗口
 
 ```
@@ -97,10 +116,15 @@ https://github.com/tqzbceb/claude
 第一步照做，别问我：
 git clone https://github.com/tqzbceb/claude.git ./claude
 然后按顺序读 claude/START_HERE.md → AGENTS.md → HANDOFF.md → CLAUDE.md，照里面写的做。
+读完照 START_HERE 第 5.5 节，把项目指针写进工作区根目录的 AGENTS.md，
+这样我下次开新会话不用再发这段话。
 
 我是 Windows 11 用户，不写代码不用命令行。做完直接提交推送，不要停下来问我。
 要推送凭据时跟我要 GitHub PAT。
 ```
+
+**为什么必须有第 5.5 节那一步**：换号丢的不是代码（代码在远端），是「该去哪读」这一个指针。
+提示词负责第一次，根目录 `AGENTS.md` 负责往后每一次。少了后者，用户每开一个会话都得当一次搬运工。
 
 这就是全部交接内容。**没有任何东西只存在于聊天记录里** —— 如果你发现有，那是上一轮的我失职，
 请立刻把它补进 `HANDOFF.md` 或这一页。
