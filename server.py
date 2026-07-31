@@ -950,7 +950,9 @@ WB_TOOLS = [
             "id": {"type": "string", "description": "要试算的规则 id"},
             "content": {"type": "string", "description": "假消息正文，比如 [图片] 或 有人发key了"},
             "channel_id": {"type": "string"}, "guild_id": {"type": "string"},
-            "author": {"type": "string"}, "is_bot": {"type": "boolean"},
+            "author": {"type": "string"},
+            "author_id": {"type": "string", "description": "发消息人的用户 ID；试算盯人规则时填，留空=用规则「只听这些人」的第一个"},
+            "is_bot": {"type": "boolean"},
             "is_dm": {"type": "boolean"},
             "kind": {"type": "string", "description": "msg 或 thread"}},
             "required": ["id"]}}},
@@ -1120,7 +1122,8 @@ async def run_wb_tool(app, name, args, allow_ids):
               "guild_id": str(args.get("guild_id") or (r["guild_ids"] or [""])[0]),
               "channel_id": str(args.get("channel_id") or (r["channel_ids"] or [""])[0]),
               "parent_id": "", "channel_name": "test", "is_thread": False,
-              "author_id": "", "author": args.get("author") or "someone",
+              "author_id": str(args.get("author_id") or (r["author_ids"] or [""])[0]),
+              "author": args.get("author") or "someone",
               "is_bot": bool(args.get("is_bot")), "content": args.get("content") or "",
               "is_dm": bool(args.get("is_dm")), "mentions_me": False, "ts": now(), "msg_id": "0"}
         ok, why = app.match(r, ev)
