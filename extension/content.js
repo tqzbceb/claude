@@ -79,12 +79,52 @@ function threadPanelName() {
   return txt(h).split("\n")[0] || "";
 }
 
+/* 纯图片 / 贴纸 / 表情包的消息：Discord 的正文节点是空的，
+   以前一律跳过 —— 于是「所有消息都提醒我」的规则永远收不到表情包，用户以为规则坏了。
+   现在把它翻译成一段能看的文字（[图片] / [贴纸 xx] / :emoji:），后面的规则、
+   通知、收信箱就都能照常处理。写成占位符而不是空字符串，是因为服务端会丢掉空正文。 */
+/* 一个附件的名字：自己身上的 alt / aria-label，没有就往里找一层带名字的元素 */
+function name1(el) {
+  const pick = (e) => e ? ((e.getAttribute("alt") || e.getAttribute("aria-label") || "").trim()) : "";
+  return pick(el) || pick(el.querySelector("img[alt], [aria-label]")) || "";
+}
+
+function mediaOf(li) {
+  const kinds = [], bits = [];
+  const body = li.querySelector('[id^="message-content-"]') || li;
+  const emo = [...body.querySelectorAll('img[class*="emoji"], img[data-type="emoji"], [class*="emojiContainer"] img')]
+    .map(i => (i.getAttribute("alt") || i.getAttribute("aria-label") || "").trim())
+    .filter(Boolean);
+  if (emo.length) { kinds.push("emoji"); bits.push(emo.join(" ")); }
+  const st = li.querySelector('[class*="stickerAsset"], [class*="clickableSticker"], img[class*="sticker"], [data-type="sticker"]');
+  if (st) {
+    /* querySelector 按文档顺序返回，命中的常是外层容器（它没有 alt），
+       贴纸名字在里面那个 img 上 —— 所以要往里再找一层，不然只剩一个光秃秃的 [贴纸] */
+    kinds.push("sticker"); bits.push("[贴纸" + (name1(st) ? " " + name1(st) : "") + "]");
+  }
+  const img = li.querySelector('[class*="imageWrapper"] img, [class*="imageContainer"] img, [data-role="img"], a[class*="originalLink"]');
+  if (img) {
+    const nm = name1(img);
+    kinds.push("image"); bits.push("[图片" + (nm && nm.length < 40 ? " " + nm : "") + "]");
+  }
+  if (li.querySelector('video, [class*="videoWrapper"]')) { kinds.push("video"); bits.push("[视频]"); }
+  const file = li.querySelector('[class*="attachment"] [class*="filename"], [class*="fileName"]');
+  if (file) { kinds.push("file"); bits.push("[文件 " + txt(file).slice(0, 40) + "]"); }
+  if (!bits.length && li.querySelector('[class*="embed"]')) {
+    const t = txt(li.querySelector('[class*="embedTitle"], [class*="embedDescription"]')).slice(0, 80);
+    kinds.push("embed"); bits.push("[链接卡片" + (t ? " " + t : "") + "]");
+  }
+  return { text: bits.join(" ").trim(), kinds };
+}
+
 function parseLi(li) {
   const m = /^chat-messages-(\d+)-(\d+)$/.exec(li.id || "");
   if (!m) return null;
   const [, channel_id, msg_id] = m;
-  const content = txt(li.querySelector('[id^="message-content-"]'));
-  if (!content) return null;                        // 纯图片/嵌入，没文字就不上报
+  let content = txt(li.querySelector('[id^="message-content-"]'));
+  let media = [];
+  if (!content) { const mm = mediaOf(li); content = mm.text; media = mm.kinds; }
+  if (!content) return null;                        // 真的空（没文字也没附件），不上报
 
   /* Discord 会把同一人连发的消息折叠，作者只出现在这一组的第一条上：往前找 */
   let author = "", author_id = "", is_bot = false, node = li, hops = 0;
@@ -114,6 +154,7 @@ function parseLi(li) {
     ts: (ms || Date.now()) / 1000,      // 消息真正的时间，不是我们看到它的时间
     age_ms: ms ? Date.now() - ms : 0,
     is_dm: u.dm,
+    media,                              // 有哪些附件类型（image/sticker/emoji/...），空数组=纯文字
     mentions_me: /mentioned/i.test(li.className || ""),
     url: `https://discord.com/channels/${u.guild_id || "@me"}/${channel_id}/${msg_id}`,
   };

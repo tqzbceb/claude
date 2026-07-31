@@ -18,11 +18,11 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.7.4"                               # 服务端版本，界面和扩展都能看到
-EXT_MIN = "1.7.4"                               # 低于这个版本的扩展要提示用户更新
+VERSION = "1.8.0"                               # 服务端版本，界面和扩展都能看到
+EXT_MIN = "1.8.0"                               # 低于这个版本的扩展要提示用户更新
 # 扩展上报的跳过原因，给人看的说法（诊断结论里要拼成一句话）
 NICE_SKIP = {"history": "历史消息（时间戳太旧）", "render": "整批渲染（切频道/往上滚）",
-             "dup": "重复", "notext": "没有文字（纯图片/表情）", "quiet": "刚打开页面的头几秒"}
+             "dup": "重复", "notext": "空消息（连图片贴纸都没有）", "quiet": "刚打开页面的头几秒"}
 # match() 返回的卡点代码 → 人话。诊断包的「拿真实消息试算」段和界面试算都用它。
 # 光给一个 "kind" / "channel/thread" 这种代码，用户看了也不知道该改哪个输入框。
 NICE_WHY = {
@@ -153,6 +153,10 @@ DEFAULT_CONFIG = {
     "sources": {"discord": True, "browser": True},   # master switch per source
     # 出网设置。proxy 留空＝跟随系统环境变量；填了就强制走它（形如 http://127.0.0.1:7890）
     "net": {"proxy": ""},
+    # AI 工作台的两个开关。
+    #   stream = 边想边显示（不然模型思考十几秒，界面上只有一个「…」，看着像卡死）
+    #   tools  = 允许模型自己动手改规则（关掉就退回只会讲步骤的老样子）
+    "ai": {"stream": True, "tools": True},
     # 出口：命中并达到 min_score 的消息往哪儿送
     "sinks": {
         "browser": True,            # 网页通知（要开着界面）
@@ -583,9 +587,9 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
 纯 AI 判断）、强度（分数阈值）、命中后做什么（只提醒 / AI 打标签 / 摘要 / 抽取 / 自动回复 / 转发）、
 频率（冷却时间）、边界（什么情况**别**提醒）、时间（只在某些时段生效）。
 
-他要建规则时，最好的回答是**指路加追问**：告诉他「监听规则」页顶部有个**「◆ 帮我建条规则」**的
-向导，会一步步问清楚再生成；同时你自己也可以先问他一两个关键的（盯哪个频道、什么词、要不要算机器人）。
-你在这里说的规则内容不会自动生效 —— 规则必须在「监听规则」页保存，这点要讲明白。
+他要建规则时：**你自己就能建**（见下面的工具）。条件不清楚就先问一两个关键的（盯哪个频道、
+什么词、要不要算机器人），别一次问八个。他要是想一步步来，「监听规则」页顶部还有个
+「◆ 帮我建条规则」的向导。
 
 ## 两件容易答错的事：新帖，和已经过去的消息
 1. **「有人开了新帖就提醒我」** —— 这个程序做得到，别说做不到。规则里第 0 项「什么时候触发」
@@ -600,14 +604,22 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
 判断标准很简单：他要的是「以后」→ 规则；「已经有的」→ 抓历史 + 批量提取。
 
 ## 你能做和不能做
-能：解读下面给你的消息、总结、抽待办、起草回复、解释这个程序里的功能和设置在哪、帮他想规则怎么写、
-把他贴的链接拆成 ID 告诉他填哪里。
-不能：上网查东西、代替他点界面上的按钮、直接改他的配置。要发言到 Discord 得他自己点「回复」按钮，
-而且浏览器旁听模式发不出去（那需要 Bot Token）。
+能：**直接读写监听规则**（建、改、开关、删、试算，见下面的工具）、解读给你的消息、总结、抽待办、
+起草回复、解释这个程序里的功能、把他贴的链接拆成 ID。
+不能：上网查东西、改模型 Key / 通知出口这些设置（那些得他自己去对应的页面）、替他在 Discord 发言。
+
+## 一句话原则
+**能自己动手就别写教程。** 用户来问你，是因为他不想自己一格一格找。
+「打开 X 页 → 点 Y → 找到 Z 勾 → 保存」这种回答，在这里是最差的回答。
 
 ## 说话方式
-中文，简洁，直接给能照着做的步骤。不要列一堆他没问的备选方案。
+中文，简洁。动完手就用一两句话说清「我改了什么、现在会怎样」，不要复述整条规则。
 不知道或者程序里确实没有的功能，就直说没有，别编一个设置项出来。
+
+## 关于表情包、图片、贴纸
+v1.8.0 起扩展会把纯图片/贴纸/表情的消息也报上来，正文写成 `[图片]`、`[贴纸 xx]`、`:emoji:` 这样。
+所以「连表情包也提醒我」是做得到的，条件是：那条规则不能有关键词/正则（纯表情没有文字，
+关键词永远匹配不上），min_len 要是 0，而且他的扩展得升到 1.8.0。
 """
 
 
@@ -673,6 +685,397 @@ def sanitize_draft(draft, notes, known_ids, model=""):
     return rule, notes
 
 
+# ======================================================================
+# 工作台的「手」：让模型自己动手改规则，而不是教用户去点第几个勾
+# ======================================================================
+RULE_FIELDS_DOC = """规则字段（只写你确定要改的，别的别动）：
+  name  规则名（中文短句）
+  kinds  ["msg"]=有人发消息，["thread"]=有人开新帖/新子区，两个都要就都写
+  guild_ids / channel_ids / thread_ids  只听这些 ID（空数组=不限）
+  include_threads_of_channels  true 时 channel_ids 连它下面的子区/帖子一起算
+  dm  true=连私信一起听（默认 false，所以私信默认不提醒）
+  accounts  只听这些 Discord 账号（多号旁听时分流用）
+  author_ids  只听这些人 / author_name_contains  昵称包含
+  ignore_bots  忽略机器人发的（默认 true；空投、开奖这类公告是机器人发的，要 false）
+  mention_only  true=只有 @我 才算
+  keywords_any 含任一即命中 / keywords_all 必须全含 / regex 正则
+  min_len  最短字数。>0 会把纯图片、贴纸、表情包挡在外面；想连表情包都收就设 0
+  action  notify(只提醒) / ai_tag(打分) / ai_reply(自动回复) / ai_summary(摘要) /
+          ai_extract(抽取) / webhook(转发)
+  prompt  要让模型干的活（action 是 ai_* 时才有意义）
+  notify_min_score  action=ai_tag 时低于这个分不提醒（0-100）
+  cooldown_sec 冷却秒数 / max_per_hour 每小时最多提醒几次"""
+
+WB_TOOLS = [
+    {"type": "function", "function": {
+        "name": "list_rules",
+        "description": "列出用户现在所有的监听规则：id、名字、开关、命中次数和全部条件。"
+                       "要改规则前先调它拿 id，别猜。",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "update_rule",
+        "description": "修改一条已有规则并立刻生效。只在 patch 里写要改的字段，没写的保持原样。\n"
+                       + RULE_FIELDS_DOC,
+        "parameters": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "规则 id，从 list_rules 拿"},
+            "patch": {"type": "object", "description": "要改的字段，键名同上"}},
+            "required": ["id", "patch"]}}},
+    {"type": "function", "function": {
+        "name": "create_rule",
+        "description": "新建一条监听规则并保存。用户明确要「加一条」时才用；改现有的用 update_rule。\n"
+                       + RULE_FIELDS_DOC,
+        "parameters": {"type": "object", "properties": {
+            "rule": {"type": "object", "description": "规则字段，见上"},
+            "enabled": {"type": "boolean", "description": "是否直接启用，默认 true"}},
+            "required": ["rule"]}}},
+    {"type": "function", "function": {
+        "name": "set_rule_enabled",
+        "description": "启用或停用一条规则。",
+        "parameters": {"type": "object", "properties": {
+            "id": {"type": "string"}, "enabled": {"type": "boolean"}},
+            "required": ["id", "enabled"]}}},
+    {"type": "function", "function": {
+        "name": "delete_rule",
+        "description": "删除一条规则。这是不可逆的，用户没有明确说「删掉」就别用——"
+                       "多数时候他要的是停用（set_rule_enabled）。",
+        "parameters": {"type": "object", "properties": {"id": {"type": "string"}},
+                       "required": ["id"]}}},
+    {"type": "function", "function": {
+        "name": "test_rule",
+        "description": "拿一条假消息试算某规则会不会命中，并告诉你卡在哪个条件上。改完规则应该试一次。",
+        "parameters": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "要试算的规则 id"},
+            "content": {"type": "string", "description": "假消息正文，比如 [图片] 或 有人发key了"},
+            "channel_id": {"type": "string"}, "guild_id": {"type": "string"},
+            "author": {"type": "string"}, "is_bot": {"type": "boolean"},
+            "is_dm": {"type": "boolean"},
+            "kind": {"type": "string", "description": "msg 或 thread"}},
+            "required": ["id"]}}},
+    {"type": "function", "function": {
+        "name": "list_channels",
+        "description": "最近收到过消息的频道和人，带真实 ID。填 ID 前先查这个，不许编 ID。",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "search_messages",
+        "description": "在已经收到的消息里搜。回答「有人发过 xx 吗」用它。",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "关键词，留空=最近的消息"},
+            "channel_id": {"type": "string"},
+            "limit": {"type": "integer", "description": "最多几条，默认 20，上限 100"}}}}},
+    {"type": "function", "function": {
+        "name": "get_status",
+        "description": "这台机器现在的状况：收信方式、有没有浏览器在旁听、程序自查出来的问题。"
+                       "用户说「怎么没提醒我」时先调它。",
+        "parameters": {"type": "object", "properties": {}}}},
+]
+
+WB_WRITE_TOOLS = ("update_rule", "create_rule", "set_rule_enabled", "delete_rule")
+
+
+def ago_txt(ts):
+    d = max(0, int(now() - (ts or 0)))
+    if d < 60:
+        return f"{d} 秒前"
+    if d < 3600:
+        return f"{d // 60} 分钟前"
+    if d < 86400:
+        return f"{d // 3600} 小时前"
+    return f"{d // 86400} 天前"
+
+
+def brief_rule(r):
+    """给模型看的规则摘要：全字段太长，但条件一个都不能省——它得据此判断改哪里。"""
+    keep = ("name", "kinds", "guild_ids", "channel_ids", "thread_ids", "include_threads_of_channels",
+            "dm", "accounts", "author_ids", "author_name_contains", "ignore_bots", "mention_only",
+            "keywords_any", "keywords_all", "regex", "min_len", "action", "prompt",
+            "notify_min_score", "cooldown_sec", "max_per_hour")
+    out = {"id": str(r.get("id")), "enabled": bool(r.get("enabled")), "hits": r.get("hits", 0)}
+    for k in keep:
+        v = r.get(k)
+        if v not in ([], "", 0, None) or k in ("name", "action", "ignore_bots", "kinds"):
+            out[k] = v
+    return out
+
+
+async def run_wb_tool(app, name, args, allow_ids):
+    """执行一个工作台工具。返回 (给模型看的 dict, 给用户看的一句话, 有没有改动配置)。
+    所有写操作都在这里落地，模型改完立刻生效——这就是「能干活」和「只会讲步骤」的区别。"""
+    args = args if isinstance(args, dict) else {}
+    rules = app.rules(False)
+    byid = {str(r["id"]): r for r in rules}
+
+    def need_rule():
+        rid = str(args.get("id") or "").strip()
+        r = byid.get(rid)
+        if not r:
+            raise ValueError(f"没有 id={rid} 这条规则。现有的是：" +
+                             ("、".join(f"{x['id']}={x.get('name')}" for x in rules) or "一条都没有"))
+        return rid, r
+
+    if name == "list_rules":
+        return {"rules": [brief_rule(r) for r in rules],
+                "note": "改哪条就用它的 id 调 update_rule" if rules else "他一条规则都没有"}, "", False
+
+    if name == "list_channels":
+        txt, known = app.rule_ctx()
+        return {"known": txt}, "", False
+
+    if name == "get_status":
+        bl = app.bridge_list()
+        return {"version": VERSION, "mode": app.cfg["discord"].get("mode", "browser"),
+                "can_send": can_send(app),
+                "bridges": [{"account": b.get("account"), "where": b.get("where"),
+                             "fresh": b["fresh"], "ver": b.get("ver")} for b in bl],
+                "findings": app.findings(),
+                "msgs": app.db.q("SELECT COUNT(*) n FROM messages")[0]["n"]}, "", False
+
+    if name == "search_messages":
+        q = (args.get("query") or "").strip()
+        where, a = ["1=1"], []
+        if q:
+            where.append("lower(content) LIKE ?")
+            a.append("%" + q.lower() + "%")
+        if args.get("channel_id"):
+            where.append("(channel_id=? OR parent_id=?)")
+            a += [str(args["channel_id"])] * 2
+        lim = max(1, min(int(args.get("limit") or 20), 100))
+        rows = app.db.q("SELECT author,content,channel_name,channel_id,ts FROM messages WHERE "
+                        + " AND ".join(where) + " ORDER BY ts DESC LIMIT ?", a + [lim])
+        return {"count": len(rows),
+                "messages": [{"author": r["author"], "channel": r["channel_name"],
+                              "channel_id": r["channel_id"], "content": (r["content"] or "")[:300],
+                              "when": ago_txt(r["ts"])} for r in rows]}, "", False
+
+    if name == "test_rule":
+        rid, r = need_rule()
+        ev = {"source": "discord", "kind": args.get("kind") or "msg",
+              "guild_id": str(args.get("guild_id") or (r["guild_ids"] or [""])[0]),
+              "channel_id": str(args.get("channel_id") or (r["channel_ids"] or [""])[0]),
+              "parent_id": "", "channel_name": "test", "is_thread": False,
+              "author_id": "", "author": args.get("author") or "someone",
+              "is_bot": bool(args.get("is_bot")), "content": args.get("content") or "",
+              "is_dm": bool(args.get("is_dm")), "mentions_me": False, "ts": now(), "msg_id": "0"}
+        ok, why = app.match(r, ev)
+        return {"match": ok, "why": NICE_WHY.get(why, why),
+                "enabled": bool(r["enabled"]),
+                "note": "" if r["enabled"] else "注意：这条规则是停用状态，就算算得中也不会提醒"}, "", False
+
+    if name == "set_rule_enabled":
+        rid, r = need_rule()
+        on = 1 if args.get("enabled", True) else 0
+        app.db.x("UPDATE rules SET enabled=? WHERE id=?", (on, rid))
+        return ({"ok": True, "id": rid, "enabled": bool(on)},
+                f"{'启用' if on else '停用'}了规则「{r.get('name')}」", True)
+
+    if name == "delete_rule":
+        rid, r = need_rule()
+        app.db.x("DELETE FROM rules WHERE id=?", (rid,))
+        return ({"ok": True, "deleted": rid},
+                f"删除了规则「{r.get('name')}」（这一步不可逆）", True)
+
+    if name in ("update_rule", "create_rule"):
+        notes = []
+        if name == "update_rule":
+            rid, r = need_rule()
+            patch = args.get("patch")
+            if not isinstance(patch, dict) or not patch:
+                raise ValueError("patch 是空的，没有可改的字段")
+            bad = [k for k in patch if k not in DEFAULT_RULE]
+            merged = dict(r)
+            merged.update({k: v for k, v in patch.items() if k in DEFAULT_RULE})
+            enabled = int(r["enabled"])
+        else:
+            rid, patch, bad = None, (args.get("rule") or {}), []
+            if not isinstance(patch, dict) or not patch:
+                raise ValueError("rule 是空的")
+            bad = [k for k in patch if k not in DEFAULT_RULE]
+            merged = dict(patch)
+            enabled = 1 if args.get("enabled", True) else 0
+        if bad:
+            notes.append("这些字段名不存在，已忽略：" + "、".join(bad[:5]))
+        # 规则里本来就有的 ID 是真的，别被当成模型编的给洗掉
+        ok_ids = set(allow_ids) | {str(x) for k in ("guild_ids", "channel_ids", "thread_ids", "author_ids")
+                                   for x in ((byid.get(str(rid)) or {}).get(k) or [])}
+        rule, notes = sanitize_draft(merged, notes, ok_ids, app.cfg["default_model"].get("model") or "")
+        blob = json.dumps({k: v for k, v in rule.items() if k in DEFAULT_RULE}, ensure_ascii=False)
+        if rid:
+            app.db.x("UPDATE rules SET json=?,enabled=? WHERE id=?", (blob, enabled, rid))
+            changed = [k for k, v in patch.items() if k in DEFAULT_RULE]
+            human = f"改了规则「{rule.get('name')}」的：" + "、".join(changed[:6])
+        else:
+            rid = app.db.x("INSERT INTO rules(json,enabled) VALUES(?,?)", (blob, enabled))
+            human = f"新建了规则「{rule.get('name')}」" + ("" if enabled else "（先停用着）")
+        return ({"ok": True, "id": str(rid), "rule": brief_rule(dict(rule, id=rid, enabled=enabled)),
+                 "notes": notes}, human, True)
+
+    raise ValueError(f"没有 {name} 这个工具")
+
+
+# 不支持函数调用的模型走这条路：让它在正文里输出 ```dcwatch 块。
+# 便宜的国产模型、本机 Ollama 里有不少不认 tools，不能因此就让工作台变回废物。
+WB_TEXT_PROTO = """## 你可以直接动手（重要）
+你的接口不支持函数调用，所以要动手时，在回答里单独输出一个代码块，格式严格如下：
+
+```dcwatch
+{"tool":"工具名","args":{...}}
+```
+
+一次只放一个块，块外可以写给用户看的话。程序会执行它，把结果发回给你，你再接着说。
+**不要**把这个块当例子展示给用户看——你写出来它就会真的执行。
+
+可用的工具（args 见说明）：
+- list_rules {}：列出所有规则（含 id）。要改规则前必须先调它，别猜 id。
+- update_rule {"id":"3","patch":{...}}：改一条规则，只写要改的字段。
+- create_rule {"rule":{...},"enabled":true}：新建规则。
+- set_rule_enabled {"id":"3","enabled":true}：启用/停用。
+- delete_rule {"id":"3"}：删除（不可逆，用户没明说删就别用）。
+- test_rule {"id":"3","content":"[图片]"}：试算会不会命中。
+- list_channels {}：真实的频道 / 人 ID。
+- search_messages {"query":"key","limit":20}：搜已收到的消息。
+- get_status {}：现在的收信状况和自查结论。
+
+""" + RULE_FIELDS_DOC
+
+
+WB_TOOLS_HOWTO = """## 你可以直接动手（重要）
+你有一组工具，能**真的**读写这个程序的配置：list_rules / update_rule / create_rule /
+set_rule_enabled / delete_rule / test_rule / list_channels / search_messages / get_status。
+
+用户说「帮我改一下这条规则」「让它连表情包也提醒」「把那条停掉」时，**直接调工具改完再回话**，
+不要输出一二三步教他自己去点。他要是想自己点，他不会来问你。
+
+纪律：
+1. 改之前先 list_rules 拿到真实 id 和现在的条件，绝不凭名字猜 id。
+2. 一次只改他要求的那部分，别顺手改别的。
+3. 改完用 test_rule 试算一次，然后用一句话告诉他：改了什么、现在会不会命中。
+4. 删除是不可逆的：他没明确说「删」，就用 set_rule_enabled 停用。
+5. 需要频道 / 人的 ID 就调 list_channels，绝不编 ID。
+6. 改完要提醒他：改动已经生效了，去「监听规则」页能看到。"""
+
+
+# 用户在「模型接入」页把「允许模型直接改规则」关掉了。上面那两段都不发，
+# 换成这段 —— 不然它会照着 ```dcwatch 的写法输出，程序又不执行，用户看着一团乱码。
+WB_HANDS_OFF = """## 你这轮不能动手（用户自己关掉了）
+用户在「模型接入」页把「允许模型直接改规则」这个勾**关掉**了，所以这一轮你只能说话，
+不能改他的配置。要改规则时：讲清楚该改哪一栏、改成什么，并告诉他
+「你把『模型接入』页的『允许模型直接改规则』打开，我就能自己动手了」。
+不要输出 ```dcwatch 这种代码块 —— 现在没人执行它。"""
+
+
+def wb_text_calls(text):
+    """从正文里抠出 ```dcwatch 块。没有 tools 的模型靠这个动手。"""
+    out = []
+    for m in re.finditer(r"```dcwatch\s*(\{.*?\})\s*```", text or "", re.S):
+        with contextlib.suppress(Exception):
+            j = json.loads(m.group(1))
+            if isinstance(j, dict) and j.get("tool"):
+                out.append({"id": f"t{len(out)}", "type": "function",
+                            "function": {"name": j["tool"],
+                                         "arguments": json.dumps(j.get("args") or {}, ensure_ascii=False)}})
+    return out
+
+
+def strip_text_calls(text):
+    return re.sub(r"```dcwatch\s*\{.*?\}\s*```", "", text or "", flags=re.S).strip()
+
+
+READ_HUMAN = {"list_rules": "看了一遍你的规则", "list_channels": "查了真实的频道 ID",
+              "search_messages": "翻了已经收到的消息", "get_status": "看了现在的收信状况",
+              "test_rule": "拿一条假消息试算了一下"}
+
+
+async def wb_run(app, prov, model, msgs, allow_ids, emit=None, stream=False, max_steps=6):
+    """工作台的一轮对话：模型可以连着调工具，直到它不再想动手为止。
+    返回 (最终回答, 干过的事, 有没有改到配置)。emit(kind, payload) 用来往界面上推流。
+    act=False（用户把「允许模型直接改规则」关了）时一轮就走完，两条动手路径都不通。"""
+    acts, changed, final, step = [], False, "", 0
+    act = app.acting()
+
+    async def send(kind, payload):
+        if emit:
+            await emit(kind, payload)
+
+    while step < max_steps:
+        step += 1
+        use_tools = act and app.tools_ok(prov, model)
+        try:
+            if stream:
+                msg, quiet = None, False
+                async for kind, val in app.chat_stream(prov, model, msgs, max_tokens=1500,
+                                                       rule="manual",
+                                                       tools=WB_TOOLS if use_tools else None):
+                    if kind != "delta":
+                        msg = val
+                        continue
+                    # 文本指令模式下，```dcwatch 块是给程序看的，别让它在界面上刷出来
+                    if act and not use_tools and ("```" in val or quiet):
+                        quiet = True
+                        continue
+                    await send("delta", val)
+                msg = msg or {"role": "assistant", "content": ""}
+            else:
+                msg = await app.chat(prov, model, msgs, max_tokens=1500, rule="manual",
+                                     tools=WB_TOOLS if use_tools else None, want_msg=True)
+        except ToolsUnsupported as e:
+            app.mark_no_tools(prov, model, str(e))
+            # 这句要进 acts，不能只走流式推送 —— 非流式那条路上用户否则完全看不见发生了什么
+            note = {"tool": "note", "ok": True, "wrote": False, "err": "",
+                    "human": "这个模型不支持函数调用，改用文本指令模式，功能一样"}
+            acts.append(note)
+            await send("act", note)
+            msgs[0]["content"] = msgs[0]["content"].replace(WB_TOOLS_HOWTO, WB_TEXT_PROTO)
+            step -= 1               # 这一轮不算数，重来一次
+            continue
+        text = msg.get("content") or ""
+        calls = (msg.get("tool_calls") or []) if act else []
+        if not calls and act and not use_tools:
+            calls = wb_text_calls(text)
+            if calls:
+                text = strip_text_calls(text)
+        if not calls:
+            final = text
+            break
+        if use_tools:
+            msgs.append({"role": "assistant", "content": text or None, "tool_calls": calls})
+        else:
+            msgs.append({"role": "assistant", "content": msg.get("content") or ""})
+        results = []
+        for c in calls[:4]:
+            fn = (c.get("function") or {})
+            nm = fn.get("name") or ""
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                args = {}
+            try:
+                data, human, wrote = await run_wb_tool(app, nm, args, allow_ids)
+                ok, err = True, ""
+            except Exception as e:
+                data, human, wrote, ok, err = {"error": str(e)[:300]}, "", False, False, str(e)[:200]
+            changed = changed or wrote
+            act = {"tool": nm, "ok": ok, "wrote": wrote, "err": err,
+                   "human": human or READ_HUMAN.get(nm, nm)}
+            acts.append(act)
+            await send("act", act)
+            results.append((c.get("id") or nm, nm, data))
+        if use_tools:
+            for cid, nm, data in results:
+                msgs.append({"role": "tool", "tool_call_id": cid, "name": nm,
+                             "content": json.dumps(data, ensure_ascii=False)[:6000]})
+        else:
+            msgs.append({"role": "user", "content": "（程序执行结果，不是用户说的）\n" + "\n".join(
+                f"{nm} → {json.dumps(data, ensure_ascii=False)[:3000]}" for _, nm, data in results)})
+    else:
+        final = final or "动作有点多，我先停一下。要不你看看现在的规则，再告诉我下一步？"
+    return final, acts, changed
+
+
+def can_send(app):
+    """能不能往 Discord 发消息。旁听模式只能收——界面上就不该出现输入框。"""
+    d = app.cfg.get("discord") or {}
+    return bool(d.get("token")) and d.get("mode") in ("bot", "user")
+
+
 def ext_dir():
     """扩展目录：源码版在 BASE 下；exe 版优先打进包里的，其次 exe 旁边，最后数据目录。"""
     for p in (BASE / "extension", Path(sys.executable).resolve().parent / "extension",
@@ -729,6 +1132,10 @@ class Bus:
             self.subs.discard(q)
 
 
+class ToolsUnsupported(RuntimeError):
+    """这个接口不认 tools 字段。工作台会自动退回「文本指令」模式，不该让用户看见报错。"""
+
+
 class App:
     def __init__(self):
         self.db = DB(DB_PATH)
@@ -752,6 +1159,7 @@ class App:
         self._pend = []               # [(head, body)] 等着合并发出去的
         self._pend_task = None
         self._pend_sound = False
+        self.no_tools = set()         # 试过一次不支持函数调用的 provider|model，别反复白试
         self.port = 8777
 
     def touch_bridge(self, b, n=0, err=""):
@@ -1091,7 +1499,9 @@ class App:
             hint = "。404 一般是 Base URL 写法不对，正确的形如 https://api.deepseek.com/v1"
         raise RuntimeError(f"拉取模型失败{hint}\n试过：{body}")
 
-    async def chat(self, provider_name, model, messages, json_mode=False, max_tokens=800, rule="-"):
+    def chat_prep(self, provider_name, model, messages, json_mode=False, max_tokens=800,
+                  tools=None, stream=False):
+        """一次 chat 请求的公共部分。非流式和流式共用，免得两边的代理/base 修正走岔。"""
         p = self.provider(provider_name) or {}
         base = (p.get("base_url") or "").rstrip("/")
         if not base or not model:
@@ -1103,28 +1513,109 @@ class App:
         body = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.3}
         if json_mode:
             body["response_format"] = {"type": "json_object"}
+        if tools:
+            body["tools"], body["tool_choice"] = tools, "auto"
+        if stream:
+            body["stream"] = True
         hdr = {"Content-Type": "application/json"}
         if p.get("api_key"):
             hdr["Authorization"] = "Bearer " + p["api_key"]
+        if not base.endswith("/v1") and getattr(self, "models_base", ""):
+            base = self.models_base              # 用拉模型时验证过的那个 base
+        return base, hdr, body
+
+    def acting(self):
+        """允不允许模型自己动手改规则。「模型接入」页那个勾管的是这个 —— 关掉之后
+        函数调用和 ```dcwatch 文本指令**都**不能用，不然那个勾等于没关。"""
+        return bool((self.cfg.get("ai") or {}).get("tools", True))
+
+    def tools_ok(self, provider_name, model):
+        """这个模型能不能用函数调用（只看接口能力，跟上面那个勾无关）。
+        试过一次被拒就记住，别每轮都白试一次。"""
+        return f"{provider_name}|{model}" not in self.no_tools
+
+    def mark_no_tools(self, provider_name, model, why=""):
+        self.no_tools.add(f"{provider_name}|{model}")
+        self.log("warn", f"{model} 这个接口不支持函数调用，工作台改用文本指令模式"
+                         + (f"：{why[:120]}" if why else ""))
+
+    def ai_used(self, t0, rule, model, u=None, err=""):
+        if err:
+            self.db.x("INSERT INTO aiusage(ts,rule,model,in_tok,out_tok,ok,err) VALUES(?,?,?,0,0,0,?)",
+                      (t0, rule, model, err[:300]))
+        else:
+            u = u or {}
+            self.db.x("INSERT INTO aiusage(ts,rule,model,in_tok,out_tok,ok,err) VALUES(?,?,?,?,?,1,'')",
+                      (t0, rule, model, u.get("prompt_tokens", 0), u.get("completion_tokens", 0)))
+
+    async def chat(self, provider_name, model, messages, json_mode=False, max_tokens=800, rule="-",
+                   tools=None, want_msg=False):
+        """want_msg=True 时返回整个 message（要读 tool_calls 就得要它），否则只返回正文。"""
+        base, hdr, body = self.chat_prep(provider_name, model, messages, json_mode, max_tokens, tools)
         t0 = now()
         try:
-            if not base.endswith("/v1") and getattr(self, "models_base", ""):
-                base = self.models_base          # 用拉模型时验证过的那个 base
             async with self.http.post(f"{base}/chat/completions", headers=hdr, json=body, **self.rq(),
                                       timeout=aiohttp.ClientTimeout(total=120)) as r:
                 txt = await r.text()
                 if r.status != 200:
+                    if tools and r.status in (400, 404, 422) and "tool" in txt.lower():
+                        raise ToolsUnsupported(txt[:200])
                     raise RuntimeError(f"{r.status} {txt[:300]}")
                 j = json.loads(txt)
-            content = j["choices"][0]["message"].get("content") or ""
-            u = j.get("usage") or {}
-            self.db.x("INSERT INTO aiusage(ts,rule,model,in_tok,out_tok,ok,err) VALUES(?,?,?,?,?,1,'')",
-                      (t0, rule, model, u.get("prompt_tokens", 0), u.get("completion_tokens", 0)))
-            return content
+            msg = j["choices"][0]["message"]
+            self.ai_used(t0, rule, model, j.get("usage"))
+            return msg if want_msg else (msg.get("content") or "")
         except Exception as e:
-            self.db.x("INSERT INTO aiusage(ts,rule,model,in_tok,out_tok,ok,err) VALUES(?,?,?,0,0,0,?)",
-                      (t0, rule, model, str(e)[:300]))
+            self.ai_used(t0, rule, model, err=str(e))
             raise
+
+    async def chat_stream(self, provider_name, model, messages, max_tokens=1200, rule="-", tools=None):
+        """流式。产出 ("delta", 文本片段) 若干，最后一个是 ("msg", 完整 message)。
+        模型想十几秒才吐第一个字是常态，界面上只有一个「…」的话用户会以为卡死了。"""
+        base, hdr, body = self.chat_prep(provider_name, model, messages, False, max_tokens, tools, True)
+        t0, content, calls = now(), "", {}
+        try:
+            async with self.http.post(f"{base}/chat/completions", headers=hdr, json=body, **self.rq(),
+                                      timeout=aiohttp.ClientTimeout(total=300, sock_read=120)) as r:
+                if r.status != 200:
+                    txt = (await r.text())[:300]
+                    if tools and r.status in (400, 404, 422) and "tool" in txt.lower():
+                        raise ToolsUnsupported(txt)
+                    raise RuntimeError(f"{r.status} {txt}")
+                async for raw in r.content:
+                    line = raw.decode("utf-8", "ignore").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        ch = (json.loads(data).get("choices") or [{}])[0]
+                    except Exception:
+                        continue
+                    d = ch.get("delta") or ch.get("message") or {}
+                    if d.get("content"):
+                        content += d["content"]
+                        yield ("delta", d["content"])
+                    for tc in (d.get("tool_calls") or []):
+                        cur = calls.setdefault(tc.get("index", len(calls)),
+                                               {"id": "", "type": "function",
+                                                "function": {"name": "", "arguments": ""}})
+                        if tc.get("id"):
+                            cur["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            cur["function"]["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            cur["function"]["arguments"] += fn["arguments"]
+        except Exception as e:
+            self.ai_used(t0, rule, model, err=str(e))
+            raise
+        self.ai_used(t0, rule, model)
+        msg = {"role": "assistant", "content": content}
+        if calls:
+            msg["tool_calls"] = [calls[k] for k in sorted(calls)]
+        yield ("msg", msg)
 
     # ---------- discord rest ----------
     def dc_headers(self):
@@ -1846,7 +2337,10 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                     # 不然用户换个文件夹跑，看到旧的模型配置，只能怀疑是密钥泄露了
                     "code_dir": str(BASE), "db_path": str(DB_PATH),
                     "db_exists": Path(DB_PATH).exists(),
-                    "shared_data": FROZEN},
+                    "shared_data": FROZEN,
+                    # 旁听模式发不出消息，界面就不该摆一个按了必失败的发送框
+                    "can_send": can_send(app),
+                    "ai": dict({"stream": True, "tools": True}, **(app.cfg.get("ai") or {}))},
             "rules": app.rules(enabled_only=False),
             "stats": {
                 "msgs": app.db.q("SELECT COUNT(*) n FROM messages")[0]["n"],
@@ -2016,6 +2510,14 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                     "然后推荐你去写 Discord 机器人或者用 Zapier —— 而这些功能你手上这个程序本来就有。"
                     "它也会把「帮我写规则」误解成群聊管理规则。",
              "where": "server.py 里的 WORKBENCH_SYS，实况部分在 App.workbench_ctx()", "text": WORKBENCH_SYS},
+            {"key": "workbench_tools", "name": "工作台的「手」（让它能直接改规则）",
+             "when": "工作台每次调用都跟着上一条一起发。模型接口支持函数调用时发上面那版，"
+                     "不支持时自动换成文本指令版（```dcwatch 块）",
+             "why": "没有这段，模型只会回「你去点第几个勾」；有了它，它自己就把规则改了。"
+                    "「模型接入」页的「允许模型直接改规则」关掉后，这段不会发出去",
+             "where": "server.py 里的 WB_TOOLS_HOWTO / WB_TEXT_PROTO / WB_HANDS_OFF，工具定义在 WB_TOOLS",
+             "text": WB_TOOLS_HOWTO + "\n\n（不支持函数调用时换成：）\n\n" + WB_TEXT_PROTO
+                     + "\n\n（把那个勾关掉之后换成：）\n\n" + WB_HANDS_OFF},
         ], "editable_hint": "命中之后那几种动作（打分、摘要、抽取、回复）的提示词是可以改的，"
                             "在「模型接入」页最下面，工作台的「额外要求」也在那儿（prompts.ask）。"
                             "这里这三条是骨架，写死在程序里：改坏了向导和工作台会直接失效。"})
@@ -2124,9 +2626,8 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         app.save_cfg()
         return web.json_response({"ok": True, "config": safe_cfg(app.cfg)})
 
-    @r.post("/api/ask")
-    async def ask(req):
-        b = await req.json()
+    def wb_prepare(b):
+        """工作台一次请求的公共准备：模型、消息、允许写进规则的真实 ID。"""
         prov = b.get("provider") or app.cfg["default_model"]["provider"]
         model = b.get("model") or app.cfg["default_model"]["model"]
         ids = b.get("msg_ids") or []
@@ -2138,17 +2639,69 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         # 身份和边界写死在 WORKBENCH_SYS 里，不让改 —— 少了它模型就会说「我无法访问 Discord」
         # 然后推荐用户去装 Zapier。用户在「模型接入」页能改的那句只作为额外要求附在后面。
         text = b.get("prompt", "")
+        hist = [m for m in (b.get("history") or [])
+                if isinstance(m, dict) and m.get("role") in ("user", "assistant") and m.get("content")][-8:]
         extra = (b.get("system") or app.prompt("ask") or "").strip()
-        sysmsg = WORKBENCH_SYS + "\n\n## 这台机器现在的实况\n" + app.workbench_ctx(text)
+        hands = WB_HANDS_OFF if not app.acting() else \
+            (WB_TOOLS_HOWTO if app.tools_ok(prov, model) else WB_TEXT_PROTO)
+        sysmsg = WORKBENCH_SYS + "\n\n" + hands \
+            + "\n\n## 这台机器现在的实况\n" + app.workbench_ctx(text)
         if extra and extra != DEFAULT_PROMPTS["ask"]:
             sysmsg += "\n\n## 用户自己追加的要求（优先照做，但不能违反上面的边界）\n" + extra
         msgs = [{"role": "system", "content": sysmsg}]
+        msgs += [{"role": m["role"], "content": str(m["content"])[:4000]} for m in hist]
         msgs.append({"role": "user", "content": (f"消息上下文:\n{ctx}\n\n" if ctx else "") + text})
+        # 允许写进规则的 ID：库里见过的 + 他自己在这句话/这轮对话里贴出来的
+        _, known = app.rule_ctx(text + " " + " ".join(str(m.get("content") or "") for m in hist))
+        return prov, model, msgs, known
+
+    @r.post("/api/ask")
+    async def ask(req):
+        b = await req.json()
+        prov, model, msgs, known = wb_prepare(b)
         try:
-            return web.json_response({"ok": True, "text": await app.chat(prov, model, msgs, max_tokens=1200,
-                                                                        rule="manual")})
+            if b.get("plain"):       # 「测试一次调用」这种：只要一句回话，别让它去调工具
+                return web.json_response({"ok": True, "acts": [], "changed": False,
+                                          "text": await app.chat(prov, model, msgs, max_tokens=200,
+                                                                 rule="manual")})
+            text, acts, changed = await wb_run(app, prov, model, msgs, known)
+            out = {"ok": True, "text": text, "acts": acts, "changed": changed}
+            if changed:
+                out["rules"] = app.rules(False)
+            return web.json_response(out)
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)})
+
+    @r.post("/api/ask/stream")
+    async def ask_stream(req):
+        """流式版工作台。模型想十几秒才开口是常事，没有流式的话界面上只有一个「…」，
+        用户分不清是在想还是卡死了。"""
+        b = await req.json()
+        resp = web.StreamResponse(headers={"Content-Type": "text/event-stream; charset=utf-8",
+                                           "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+        await resp.prepare(req)
+
+        async def line(obj):
+            with contextlib.suppress(Exception):
+                await resp.write(b"data: " + json.dumps(obj, ensure_ascii=False).encode() + b"\n\n")
+
+        try:
+            prov, model, msgs, known = wb_prepare(b)
+            await line({"t": "start", "model": model})
+
+            async def emit(kind, payload):
+                await line({"t": kind, "d": payload} if kind == "delta" else
+                           {"t": kind, "act": payload} if kind == "act" else {"t": kind, "d": payload})
+            text, acts, changed = await wb_run(app, prov, model, msgs, known, emit=emit, stream=True)
+            done = {"t": "done", "text": text, "acts": acts, "changed": changed}
+            if changed:
+                done["rules"] = app.rules(False)
+            await line(done)
+        except Exception as e:
+            await line({"t": "error", "error": str(e)[:400]})
+        with contextlib.suppress(Exception):
+            await resp.write_eof()
+        return resp
 
     BATCH_SYS = """你在批量翻一批 Discord 消息，把用户要的东西挑出来。
 

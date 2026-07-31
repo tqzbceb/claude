@@ -259,6 +259,14 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .bub .txt{white-space:pre-wrap}
 .bub.u{align-self:flex-end;background:var(--accent-soft);border:1px solid var(--accent-line)}
 .bub.a{align-self:flex-start;background:var(--bg-elev);border:1px solid var(--line);box-shadow:var(--shadow)}
+/* 模型动手干的事，显示在回答上面。用户必须看得见「它到底改了什么」 */
+.acts{display:flex;flex-direction:column;gap:4px;margin:0 0 8px}
+.act{font-size:12px;color:var(--text3);display:flex;gap:6px;align-items:baseline}
+.act.w{color:var(--accent);font-weight:600}
+.act.bad{color:var(--red,#c0392b)}
+.cur{display:inline-block;width:7px;height:15px;background:var(--accent);opacity:.75;
+  vertical-align:-2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
 .wq{border:1px solid var(--line2);border-radius:var(--r-lg);background:var(--bg-elev);padding:10px 12px;margin:0 0 8px}
 .wq .qh{font-weight:600;font-size:14px}
 .wq .why{font-size:12px;color:var(--text3);margin:3px 0 8px}
@@ -525,6 +533,22 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
              <button class="btn" id="btnPing">测试一次调用</button>
              <span class="hint" id="defNow"></span></div>
            <div id="pingOut" style="margin-top:10px;font-size:13px;color:var(--text2)"></div>
+         </div>
+       </div>
+
+       <div class="card" style="margin-bottom:16px">
+         <h3>AI 工作台怎么工作 <span class="hint">改完立刻生效，不用重启</span></h3>
+         <div class="bd">
+           <div class="chk"><input type="checkbox" id="aiStream"><label for="aiStream">
+             <b>边想边显示（流式）</b> —— 模型一个字一个字往外吐，不用干等。
+             关掉的话要等它整段说完才显示，慢的模型看着像卡死了。</label></div>
+           <div class="chk"><input type="checkbox" id="aiTools"><label for="aiTools">
+             <b>允许模型直接改规则</b> —— 你说「把这条改成连表情包也提醒」，它自己就改完了，
+             不再回一堆「你去点第几个勾」。它能建、改、开关、删规则和试算，
+             改动会立刻出现在「监听规则」页。删除前它会先问你。</label></div>
+           <div class="hint" style="margin-top:8px">接口不支持函数调用的模型（一些便宜的国产模型、本机 Ollama）
+             会自动退回文本指令模式，能力一样，只是那一轮不流式。</div>
+           <div class="row"><button class="btn pri" id="btnSaveAi">保存</button></div>
          </div>
        </div>
        <div class="card">
@@ -985,6 +1009,9 @@ function renderList(){
 }
 function renderCtxHint(){const n=S.ctx.size;
   $('#wbCtx').textContent=n?`上下文 ${n} 条`:'未带上下文';$('#wbHint').textContent=`上下文 ${n} 条消息`;}
+/* 能不能真的发出去：后端算好放在 env.can_send（有 token 且不是旁听模式）。
+   演示模式没有后端，按不能发处理 —— 宁可少一个框，也别给一个必然失败的按钮。 */
+function canSend(){return !!(S.env&&S.env.can_send);}
 function openMsg(id){
   S.sel=id;const m=S.msgs.find(x=>x.id===id);if(!m)return;m.unread=0;renderList();
   const link=m.guild_id?`https://discord.com/channels/${m.guild_id}/${m.channel_id}/${m.msg_id}`:'#';
@@ -1013,19 +1040,27 @@ function openMsg(id){
        <button class="btn sm" id="dRule">按此消息新建规则</button>
      </div>
    </div>
-   <div class="dfoot">
+   ${canSend()?`<div class="dfoot">
      <textarea id="rBox" placeholder="直接回复到该频道／子区…（Enter 发送 · Shift+Enter 换行）"></textarea>
      <button class="btn pri" id="rSend">发送</button>
-   </div>`;
+   </div>`:`<div class="dfoot" style="display:block;font-size:12.5px;color:var(--text3);line-height:1.6">
+     现在是<b>浏览器旁听</b>模式，只能收、不能发，所以这里没有输入框。
+     要在 dcwatch 里直接回复，得去<a href="#" id="dGoSet">设置</a>换成 Bot Token 模式。
+   </div>`}`;
   $('#dCtx').onclick=()=>{S.ctx.has(m.id)?S.ctx.delete(m.id):S.ctx.add(m.id);openMsg(id);renderCtxHint();renderList()};
   $('#dDraft').onclick=()=>{S.ctx.add(m.id);renderCtxHint();go('ai');
     $('#wbInput').value=`帮我起草一条回复 ${m.author} 的消息，中文，简洁礼貌。`;wbSend()};
   $('#dRule').onclick=()=>{go('rules');editRule({name:`来自 ${m.author} 的消息`,channel_ids:[m.channel_id],
     author_ids:[m.author_id],guild_ids:m.guild_id?[m.guild_id]:[]})};
-  $('#rSend').onclick=async()=>{const t=$('#rBox').value.trim();if(!t)return;
-    const r=await api('/api/reply','POST',{channel_id:m.channel_id,content:t,reply_to:m.msg_id});
-    if(!r){toast('演示模式：未真的发送');return;} r.ok?(toast('已发送'),$('#rBox').value=''):toast('发送失败：'+r.error);};
-  enterToSend($('#rBox'),()=>$('#rSend').click());
+  /* 发送框只在真的发得出去时才存在。旁听模式摆一个按了必失败的按钮，
+     等于让用户先白填一段话、再吃一个报错。 */
+  if($('#rSend')){
+    $('#rSend').onclick=async()=>{const t=$('#rBox').value.trim();if(!t)return;
+      const r=await api('/api/reply','POST',{channel_id:m.channel_id,content:t,reply_to:m.msg_id});
+      if(!r){toast('演示模式：未真的发送');return;} r.ok?(toast('已发送'),$('#rBox').value=''):toast('发送失败：'+r.error);};
+    enterToSend($('#rBox'),()=>$('#rSend').click());
+  }
+  if($('#dGoSet'))$('#dGoSet').onclick=e=>{e.preventDefault();closeDrawer();go('settings');};
 }
 $$('.chip[data-f]').forEach(c=>c.onclick=()=>{S.filter=c.dataset.f;
   $$('.chip[data-f]').forEach(x=>x.classList.toggle('on',x===c));renderList()});
@@ -1519,6 +1554,17 @@ $('#btnSaveDef').onclick=async()=>{S.cfg.default_model={provider:$('#defProv').v
   await api('/api/config','POST',{providers:cleanProviders(),default_model:S.cfg.default_model});
   toast('已保存默认模型');renderProviders();renderDefaults();renderRules();renderNl();};
 
+/* ---------- 工作台开关（流式 / 让模型动手） ---------- */
+function aiCfg(){return Object.assign({stream:true,tools:true},(S.cfg&&S.cfg.ai)||{});}
+function renderAiSw(){const a=aiCfg();
+  if($('#aiStream'))$('#aiStream').checked=!!a.stream;
+  if($('#aiTools'))$('#aiTools').checked=!!a.tools;}
+$('#btnSaveAi').onclick=async()=>{
+  const ai={stream:$('#aiStream').checked,tools:$('#aiTools').checked};
+  const r=await api('/api/config','POST',{ai});
+  if(r)S.cfg=r.config; else if(S.cfg)S.cfg.ai=ai;
+  renderAiSw();toast(r?'已保存':'演示模式：未保存');};
+
 /* ---------- 内置提示词 ---------- */
 const PM=[['pmTag','ai_tag'],['pmReply','ai_reply'],['pmSummary','ai_summary'],['pmExtract','ai_extract'],['pmAsk','ask']];
 function renderPrompts(){
@@ -1535,7 +1581,7 @@ $('#btnResetPm').onclick=async()=>{
   if(r){S.cfg=r.config;}renderPrompts();toast('已恢复默认');};
 
 $('#btnPing').onclick=async()=>{$('#pingOut').innerHTML='<span class="spin"></span> 调用中…';
-  const r=await api('/api/ask','POST',{prompt:'用一句中文回复：连接正常'});
+  const r=await api('/api/ask','POST',{prompt:'用一句中文回复：连接正常',plain:1});
   $('#pingOut').innerHTML=!r?'演示模式：没有后端，无法真调用'
     :r.ok?`<span class="tag g">✓</span> ${esc(r.text).slice(0,300)}`:`<span class="tag r">✕</span> ${esc(r.error)}`;};
 
@@ -2123,22 +2169,79 @@ $('#btnPause').onclick=()=>{const target=$('#btnPause').classList.contains('paus
   $$('.sw[data-src]').forEach(b=>{if(b.classList.contains('on')!==target)b.click();});};
 
 /* ================= AI workbench ================= */
+function actLine(a){
+  const ok=a.ok!==false, cls=!ok?'bad':(a.wrote?'w':'');
+  return `<div class="act ${cls}"><span>${ok?(a.wrote?'✔':'·'):'✕'}</span>
+    <span>${esc(a.human||a.tool||'')}${a.err?'：'+esc(a.err):''}</span></div>`;}
 function renderWb(){renderCtxHint();
   $('#wbLog').classList.toggle('has',!!S.chat.length);
   $('#wbLog').innerHTML=S.chat.length?S.chat.map(m=>
-    `<div class="bub ${m.r==='u'?'u':'a'}"><div class="txt">${esc(m.t)}</div></div>`).join('')
+    `<div class="bub ${m.r==='u'?'u':'a'}">${(m.acts&&m.acts.length)?
+        `<div class="acts">${m.acts.map(actLine).join('')}</div>`:''}<div class="txt">${esc(m.t)}${
+        m.busy?(m.t?'<span class="cur"></span>':'<span class="spin"></span> 模型在想…'):''}</div></div>`).join('')
     :`<div class="empty"><span class="big">✧</span><div>把消息交给模型处理</div>
       <div style="font-size:12.5px;max-width:330px">在收信箱点消息卡右下的 ✧ 把它加进上下文，再回来问：<br>
-      「这几条里有哪些需要我今天回？」「起草一条回复」「抽成表格」</div></div>`;
+      「这几条里有哪些需要我今天回？」「起草一条回复」「抽成表格」<br>
+      也可以直接说「把『所有消息』那条规则改成连表情包也提醒」——它会自己动手改。</div></div>`;
   $('#wbLog').scrollTop=1e6;}
+/* 流式时一个字一个字来，别每个 token 都重画一遍整个聊天记录 */
+let wbPaint=0;
+function wbTick(){if(wbPaint)return;wbPaint=setTimeout(()=>{wbPaint=0;renderWb();},70);}
+
+function wbApply(cur,ev){
+  if(ev.t==='delta'){cur.t+=ev.d||'';wbTick();return;}
+  if(ev.t==='act'){cur.acts.push(ev.act||{});wbTick();return;}
+  if(ev.t==='note'){cur.acts.push({human:ev.d,ok:true});wbTick();return;}
+  if(ev.t==='done'){
+    cur.t=ev.text||cur.t||'（模型这轮没说话）';cur.acts=ev.acts&&ev.acts.length?ev.acts:cur.acts;
+    cur.busy=false;wbAfter(ev);renderWb();return;}
+  if(ev.t==='error'){cur.busy=false;cur.t=(cur.t?cur.t+'\n\n':'')+'调用失败：'+(ev.error||'');renderWb();}
+}
+/* 模型改了规则就当场刷新规则页，否则用户切过去还是旧的，会以为没生效 */
+function wbAfter(ev){
+  if(!ev.changed)return;
+  if(ev.rules){S.rules=ev.rules;renderRules();}
+  else api('/api/state').then(st=>{if(st){S.rules=st.rules;renderRules();}});
+  toast('规则已改动，「监听规则」页可以核对');
+}
+async function wbStream(body,cur){
+  let r=null;
+  try{r=await fetch('/api/ask/stream',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)});}catch(e){r=null;}
+  if(!r||!r.ok||!r.body)return false;
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
+  for(;;){
+    const {value,done}=await rd.read();if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf('\n\n'))>=0){
+      const chunk=buf.slice(0,i).trim();buf=buf.slice(i+2);
+      if(!chunk.startsWith('data:'))continue;
+      let ev;try{ev=JSON.parse(chunk.slice(5));}catch(e){continue;}
+      wbApply(cur,ev);
+    }
+  }
+  cur.busy=false;renderWb();return true;
+}
 async function wbSend(){
   const t=$('#wbInput').value.trim();if(!t)return;
   const [prov,model]=($('#wbModel').value||'|').split('|');
-  S.chat.push({r:'u',t});$('#wbInput').value='';S.chat.push({r:'a',t:'…'});renderWb();
-  const r=await api('/api/ask','POST',{prompt:t,provider:prov,model,msg_ids:[...S.ctx]});
-  S.chat.pop();
-  S.chat.push({r:'a',t:!r?'（演示模式：没有后端。真实运行时这里是模型的回答，并且会带上你勾选的 '+S.ctx.size+' 条消息作为上下文。）'
-    :r.ok?r.text:'调用失败：'+r.error});
+  // 带上前几轮：不然「那就改吧」这种跟进它完全接不上
+  const hist=S.chat.filter(m=>m.t&&!m.busy).slice(-8).map(m=>({role:m.r==='u'?'user':'assistant',content:m.t}));
+  S.chat.push({r:'u',t});$('#wbInput').value='';wbLinkCheck();
+  const cur={r:'a',t:'',acts:[],busy:true};S.chat.push(cur);renderWb();
+  const body={prompt:t,provider:prov,model,msg_ids:[...S.ctx],history:hist};
+  if(!S.live&&S.demo){cur.busy=false;
+    cur.t='（演示模式：没有后端。真实运行时这里是模型的回答，会带上你勾选的 '+S.ctx.size+' 条消息，'
+      +'而且它可以直接帮你改监听规则。）';renderWb();return;}
+  if(aiCfg().stream!==false && window.ReadableStream){
+    if(await wbStream(body,cur))return;
+  }
+  const r=await api('/api/ask','POST',body);
+  cur.busy=false;
+  if(!r){cur.t='调用失败：'+(S.lastErr||'连不上后端');}
+  else if(r.ok){cur.t=r.text||'（模型这轮没说话）';cur.acts=r.acts||[];wbAfter(r);}
+  else cur.t='调用失败：'+r.error;
   renderWb();}
 $('#wbSend').onclick=wbSend;
 /* 用户在工作台十次有九次是直接贴一条频道链接。自己去拆 ID 是他做不到的事，
@@ -2308,7 +2411,7 @@ async function boot(){
     console.warn('[dcwatch] 未连上后端：',S.lastErr);}
   S.models={...(S.cfg.models_cache||{})};          // 拉过的模型列表存在配置里，刷新也还在
   renderSources();renderSinkRows();renderList();renderRules();renderNl();
-  renderProviders();renderDefaults();renderPrompts();renderSettings();renderCtxHint();
+  renderProviders();renderDefaults();renderPrompts();renderSettings();renderCtxHint();renderAiSw();
   bindEyes();loadSounds();
   if(S.msgs.length)openMsg(S.msgs[0].id);
   if(!S.demo){connectSSE();
