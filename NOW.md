@@ -18,41 +18,26 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**做完了 A2**（照 `PLAN_A2.md` 施工完毕，Kimi K3 实现窗口）：
-1. [x] 修改 1+2：server.py test_rule 加 author_id 参数 + 默认取规则 author_ids[0]
-2. [x] 修改 3a+3b：content.js 头像跳过回复预览 + 正文按精确 id 取
-3. [x] 修改 4：gateway 作者名优先 member.nick
-4. [x] 回归：content_test.mjs 回复场景 3 条（46+16 全绿）、e2e_wb.py 盯人试算 2 条（96/96）
-5. [x] 全套服务端回归 **498/498 全绿**，RUN.md / HANDOFF.md / 本页已收尾推送
+**A3+A5 方案已出**（Claude/Fable5 窗口，2026-07-31）：根因已坐实，施工图在 **`PLAN_A3A5.md`**。
+**下一件：实现窗口（Kimi 等快模型）照 `PLAN_A3A5.md` 施工**——4 处修改（server.py 广播
+sinks、ui.html Notification 加 tag、帮助文案、e2e.py 第 12 节），验收全套 500 全绿。
+实现完之后再换 Claude 窗口做 review（A2 的 diff 也还没 review 过，一起看）。
 
-**注意**：这次动了 `extension/content.js` —— 下轮发版要提 `EXT_MIN`、用户需重装扩展；
-回复消息在真 Discord 上还没实测，发版前让用户验一条。
+### A3+A5 根因（已坐实，细节在 PLAN_A3A5.md，别重查）
+- 网页通知 `new Notification` 在 Windows 上也进系统通知中心，用户分不出它和原生 toast；
+- A3：每个 dcwatch 标签页各持一条 SSE 各弹一条（无 tag 不合并）+ server toast → 3 条；
+- A5：`S.cfg` 只在 boot 取一次，`/api/config` 存 sinks 后服务端不广播 → 旧标签页
+  拿着 `browser:true` 永远弹。服务端 toast/sound 路径读实时 cfg，没毛病；
+  msg_id 去重、合并队列也都查过，是好的，不要动。
 
-**下一件**：按 BACKLOG 优先级是 **A3 + A5**（监听其余失效项）。Claude 窗口接手写 `PLAN_A3A5.md`，
-然后照旧换实现窗口施工。用户说「继续」时：Claude → 出方案；快模型 → 等 PLAN 出来再施工。
-
-### 根因（已坐实，第二个窗口查明的）
-- **A · 工作台 test_rule 工具没有 author_id 参数**（server.py `run_wb_tool` 里 ev 硬编码
-  `author_id=""`，工具 schema 也没有这个参数；guild/channel 都有「默认取规则第一个值」，
-  唯独 author_id 漏了）。模型建完盯人规则 → 按纪律试算 → 必中「发的人不在名单里」→
-  模型误以为条件坏了，把 author 过滤删掉 → 全频道都命中（症状①）。
-- **B · content.js 取 author_id 拿的是子树里第一个 /avatars/ 头像**。回复消息时，
-  回复预览里是**被回复人**的头像、排在真作者前面 → author_id 记成被回复人。
-  盯张三 = 所有「回复张三」的消息都中，通知显示的是实际发言人（症状①+②）。
-- **C · gateway 模式 author 用 global_name，没优先 member.nick**（服务器昵称），
-  和 Discord 界面显示不一致（token 模式下的症状②）。顺带修。
-- 修法：A 给 test_rule 加 author_id 参数并默认取规则 author_ids[0]；B 限定在
-  contents 容器里找头像且排除回复预览；C 一行。回归：e2e_wb 加节、content_test 加回复场景。
-
-BACKLOG 其余任务（A1/A3/A4/A5、B、C）不动，等后续窗口按优先级来。
-
-### 本窗口新发现（写方案时读代码看出来的，已并入 PLAN）
-- content.js 的 `content` 取值也有同款病：`[id^="message-content-"]` 前缀匹配会先撞上
-  回复预览里的原文（其 id 是 message-content-<被回复消息id>）→ PLAN 修改 3b 按精确 id 取。
+### A2 遗留（发版前要做）
+- A2 动了 `extension/content.js` → 发版要提 `EXT_MIN`、用户需重装扩展；
+  回复消息在真 Discord 上还没实测，发版前让用户验一条。
+- A2 施工完 498/498 全绿（Kimi K3），还没 review。
 
 ## 最后更新
-2026-07-31 · A2 施工完成（Kimi K3 照 PLAN_A2.md）：四处修改 + 498/498 + 46/16 全绿，已推送。
-下一件 A3+A5，等 Claude 窗口出方案。
+2026-07-31 · Claude/Fable5 出完 A3+A5 施工图（PLAN_A3A5.md）并推送。
+下一件：实现窗口照 PLAN_A3A5.md 施工；用户发「继续」即可。
 
 ## 上一轮（v1.9.3）做完了什么
 批量提取的模板 + 整包导出 / 导入，全流程收尾：
