@@ -219,6 +219,52 @@ DEFAULT_PROMPTS = {
         "## 拿不准怎么办\n"
         "看不清（内容在图片/附件里、被截断、疑似有意打乱字符）→ 别猜：score 给 60，"
         'tags 里加 "需人工看"，reason 写清你看不到什么。宁可让他自己看一眼，也不要漏。'),
+    # B1 · AI 复核（规则的第二道闸）。用户盯的是白嫖 API key 的社群，发 key 的人会主动
+    # 反侦察：中间插字符、后面加杂物再下一条说「删掉后面才是真的」、或者干脆把 key 塞附件里。
+    # 正则必然筛不住这三种，所以命中宽条件之后交模型看一眼。
+    # 最容易做错的是第三种：模型看不到附件时会**编一个 key**。所以下面给它一条体面的退路
+    # （need_human=true），并且结尾三句硬话反复强调「看不到就说看不到，绝对不许编」。
+    "ai_check": (
+        "你是 dcwatch 的复核员。dcwatch 是一个 Discord 监听程序，使用者盯的是发放资源的社群，"
+        "他关心的是：API key / 密钥 / 邀请码 / 兑换码 / 车位 / 名额 / 新开的资源。\n"
+        "脚本已经用关键词粗筛过一遍了，现在请你判断这条消息**是不是真的那回事**，"
+        "并且把被藏起来的密钥还原出来。\n"
+        "\n"
+        "## 输出格式（硬要求）\n"
+        "只输出一个 JSON 对象。不要 markdown 代码块、不要 ```、不要解释、不要前后缀。字段固定六个：\n"
+        '{"hit":true 或 false,"confidence":0-100 的整数,'
+        '"kind":"key" 或 "invite" 或 "quota" 或 "resource" 或 "other" 或 "unreadable",'
+        '"extracted":["还原出来的真密钥，可以多个，没有就空数组"],'
+        '"need_human":true 或 false,"reason":"一句话中文，30 字内"}\n'
+        "\n"
+        "## 发的人常用的三种反侦察手段（重点看这些）\n"
+        "① 密钥中间插了字符（星号、空格、全角括号、「去掉这个」之类的字）——"
+        "还原成真密钥放进 extracted。\n"
+        "② 密钥后面加了一坨杂物，紧接着的下一条消息说「上面那个删掉后面 xxx 才是真的」——"
+        "给你的内容里带了这条消息前面几条，**要连起来读**，交出净化后的密钥。\n"
+        "③ 密钥根本不在文字里（在附件 / 图片 / 用 /下载 命令发的 txt 里）——"
+        "这时候 kind 填 unreadable、need_human 填 true、extracted 留空数组，程序会提醒使用者自己去看。\n"
+        "\n"
+        "## 例子（照这个格式答）\n"
+        "消息：`新号池 sk-ab*c1**23 手慢无`\n"
+        '{"hit":true,"confidence":90,"kind":"key","extracted":["sk-abc123"],'
+        '"need_human":false,"reason":"key 中间插了星号，已还原"}\n'
+        "消息：`sk-abc123ZZZZ`，下一条：`上面那个删掉最后四位才是真的`\n"
+        '{"hit":true,"confidence":85,"kind":"key","extracted":["sk-abc123"],'
+        '"need_human":false,"reason":"按下一条的说明去掉了尾部"}\n'
+        "消息：`/下载 key.txt`\n"
+        '{"hit":true,"confidence":50,"kind":"unreadable","extracted":[],'
+        '"need_human":true,"reason":"key 在附件里，我看不到"}\n'
+        "消息：`今天天气不错啊各位`\n"
+        '{"hit":false,"confidence":95,"kind":"other","extracted":[],'
+        '"need_human":false,"reason":"纯闲聊，没有任何资源"}\n'
+        "\n"
+        "## 三句硬话\n"
+        "1. 看不到就说看不到（need_human=true），**绝对不许编一个密钥出来**——"
+        "编的密钥会让使用者白跑一趟，比漏掉还糟。\n"
+        "2. 不确定就给中间分（40-60），别硬凑 0 或 100。\n"
+        "3. extracted 里只放你**真的在文本里看见过**的字符（去掉插进来的杂物算还原，"
+        "补全缺失的位数不算）——不许补全、不许猜、不许拿例子里的 sk-abc123 顶。"),
     "ai_reply": "你是该频道的助手，用简洁中文回答，不超过 120 字。",
     "ai_summary": "把这段 Discord 对话压成 3-5 条要点中文摘要，标出待办和结论。",
     "ai_extract": "从消息中抽取结构化信息，只输出 JSON。字段自定，找不到就留空。",
@@ -259,7 +305,9 @@ HOOK_FIELDS = {"id": "", "name": "", "url": "", "method": "POST", "content": "js
                "enabled": True, "verified": False}
 HOOK_SIG = ("url", "method", "content", "headers", "body")   # 这几项一改，测试结果就作废
 HOOK_VARS = ("text", "title", "body", "author", "channel", "server", "content",
-             "url", "score", "tags", "todo", "json")
+             "url", "score", "tags", "todo", "json",
+             # AI 复核（B1）：还原出来的密钥 / 要不要人工看。加了字段就得让用户用得上（硬规矩 5）
+             "extracted", "need_human")
 
 
 RAW_VARS = ("json",)      # 本身就是一段 JSON，不能再当字符串转义
@@ -414,6 +462,12 @@ CREATE TABLE IF NOT EXISTS wb_sessions(
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT DEFAULT '', created REAL, updated REAL);
 CREATE TABLE IF NOT EXISTS wb_msgs(
   id INTEGER PRIMARY KEY AUTOINCREMENT, sid INTEGER, r TEXT, t TEXT, acts TEXT, ts REAL);
+-- AI 复核的流水（B1）。存在的意义是「为什么没提醒我」能查得到：
+-- 复核判「不是」而被压掉的消息，用户自己是发现不了的，必须留痕。passed=最终有没有放行通知。
+CREATE TABLE IF NOT EXISTS aicheck(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, rule TEXT, msg_id TEXT,
+  hit INT, conf INT, kind TEXT, human INT, passed INT, extracted TEXT, reason TEXT, err TEXT);
+CREATE INDEX IF NOT EXISTS idx_chk_ts ON aicheck(ts DESC);
 """
 
 
@@ -479,7 +533,21 @@ DEFAULT_RULE = {
     "cooldown_sec": 20,
     "max_per_hour": 30,
     "webhook_url": "",
+    # ---- AI 复核（B1）：命中之后再让模型看一眼，宽进严出 ----
+    # 铁律：复核只减不增（match() 不中的消息永远不进模型，否则额度分分钟见底），
+    # 模型挂了 fail open（照旧通知 + 标记），被压掉的必须留痕（日志 + aicheck 表 + 诊断包）。
+    "ai_check": False,          # 开关：这条规则命中后，交模型复核一遍
+    "ai_check_prompt": "",      # 留空＝用 DEFAULT_PROMPTS["ai_check"]
+    "ai_check_min": 60,         # confidence 低于这个不通知（0 = 只要 hit 就通知）
+    "ai_check_ctx": 3,          # 连同这条一起给模型看的前几条同频道消息（跨消息场景靠它）
+    "ai_check_human": True,     # 模型说「我看不到」时也通知，正文标「需要你人工看」
 }
+
+# 正文里出现这些，说明真内容不在文字里 —— **跳过模型直接判 need_human**。
+# 为什么不走模型：对着 `[附件 key.txt]` 这六个字，模型除了瞎猜没有别的可做，
+# 而它瞎猜的结果就是编一个 key 出来（B1 最怕的失败模式）。省一次调用，还更准。
+UNREADABLE_HINTS = ("[附件", "[图片", "[贴纸", "[文件", "/下载", ".txt", ".json", ".zip",
+                    "[attachment", "[image")
 
 
 ACTIONS = ("notify", "ai_tag", "ai_reply", "ai_summary", "ai_extract", "webhook")
@@ -743,6 +811,10 @@ def sanitize_draft(draft, notes, known_ids, model=""):
         notes.append("没限定频道：现在是所有能收到的地方都会触发。要收窄就把频道 ID 填进「听哪里」")
     if rule["action"].startswith("ai") and not model:
         notes.append("还没设默认模型，这条规则要先在「模型接入」里选一个模型")
+    clamp_rule(rule)
+    if rule.get("ai_check") and not model:
+        notes.append("这条开了 AI 复核，也要先在「模型接入」里选一个模型，否则复核会一直失败"
+                     "（失败时按放行处理，不会吞消息）")
     return rule, notes
 
 
@@ -803,6 +875,7 @@ def sanitize_import_rule(draft):
     if rule["action"] not in ACTIONS:
         notes.append(f"动作「{rule['action']}」不认识，按「只提醒我」处理")
         rule["action"] = "notify"
+    clamp_rule(rule)
     return rule, notes
 
 
@@ -832,7 +905,21 @@ RULE_LABELS = {
     "notify_min_score": "低于此分不提醒", "summary_every": "每 N 条摘要",
     "cooldown_sec": "冷却秒数", "max_per_hour": "每小时上限", "webhook_url": "转发地址",
     "source": "来源",
+    "ai_check": "AI 复核", "ai_check_prompt": "复核提示词", "ai_check_min": "复核门槛",
+    "ai_check_ctx": "带前几条上下文", "ai_check_human": "看不到也提醒",
 }
+
+# 规则里几个整数字段的合理区间。越界不静悄悄夹住就会出现「我设了 3 条上下文，
+# 它却一条都不带」这种查不出原因的行为（跟 norm_params 同一条道理）。
+RULE_CLAMP = {"ai_check_min": (0, 100), "ai_check_ctx": (0, 12)}
+
+
+def clamp_rule(rule):
+    """把规则里越界的整数夹回区间。原地改并返回，方便串在洗规则的末尾。"""
+    for k, (lo, hi) in RULE_CLAMP.items():
+        with contextlib.suppress(Exception):
+            rule[k] = max(lo, min(hi, int(rule.get(k, DEFAULT_RULE[k]))))
+    return rule
 
 
 # ======================================================================
@@ -2236,12 +2323,41 @@ class App:
 
     async def _handle_event(self, ev):
         matched, ai_json, score = [], None, None
+        # AI 复核（B1）：passed 是「脚本命中且复核放行」的规则，通知只看它。
+        # matched 仍记全部脚本命中的规则（那是事实，库里要留着），
+        # 但被复核压掉的不进 passed —— 否则等于复核没生效。
+        passed, chk_res = [], None
         for rule in self.rules():
             ok, _ = self.match(rule, ev)
             if not ok:
                 continue
             matched.append(rule["name"])
             self.db.x("UPDATE rules SET hits=hits+1 WHERE id=?", (rule["id"],))
+            if rule.get("ai_check"):
+                chk = None
+                try:
+                    chk = await self.act_check(rule, ev)
+                except Exception as e:
+                    chk = {"err": str(e)}        # 调用炸了 → 下面 fail open 放行
+                let_go, why = self.check_verdict(rule, chk)
+                self.db.x("INSERT INTO aicheck(ts,rule,msg_id,hit,conf,kind,human,passed,"
+                          "extracted,reason,err) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                          (now(), rule["name"], ev.get("msg_id") or "",
+                           int(bool(chk.get("hit"))), int(chk.get("confidence") or 0),
+                           str(chk.get("kind") or ""), int(bool(chk.get("need_human"))),
+                           int(let_go), " ".join(chk.get("extracted") or []),
+                           str(chk.get("reason") or ""), str(chk.get("err") or "")))
+                if not let_go:
+                    # 静默丢消息是这个程序最不该有的行为：日志必须说清是哪条、压掉了什么。
+                    self.log("info", f"{rule['name']}: AI 复核判「不是」，没提醒 —— {why}"
+                                     f"（消息 {ev.get('msg_id')}，原文前 40 字："
+                                     f"{(ev.get('content') or '')[:40]}）")
+                    continue
+                if chk.get("err"):
+                    self.log("warn", f"{rule['name']}: AI 复核没做成（{str(chk['err'])[:80]}），"
+                                     f"按放行处理照旧提醒你")
+                chk_res = chk_res or chk
+            passed.append(rule["name"])
             act = rule["action"]
             if act in ("ai_tag", "ai_reply", "ai_extract", "ai_summary") and not self.rate_ok(rule):
                 self.log("warn", f"{rule['name']}: 冷却/限流跳过 AI")
@@ -2273,10 +2389,10 @@ class App:
                  json.dumps(ai_json, ensure_ascii=False) if ai_json else None, score,
                  ev.get("account") or "", ev.get("bridge") or "",
                  ev.get("kind") or "msg", int(bool(ev.get("scanned")))))
-        row = dict(ev, id=mid, matched=",".join(matched), ai=ai_json, score=score)
-        alert = bool(matched)
-        if score is not None:
-            mins = [r["notify_min_score"] for r in self.rules() if r["name"] in matched]
+        row = dict(ev, id=mid, matched=",".join(matched), ai=ai_json, score=score, chk=chk_res)
+        alert = bool(passed)                      # 复核压掉的不提醒（但库里 matched 照记）
+        if score is not None and passed:
+            mins = [r["notify_min_score"] for r in self.rules() if r["name"] in passed]
             alert = score >= min(mins or [0])
         row["alert"] = alert
         await self.bus.push("message", row)
@@ -2339,6 +2455,70 @@ class App:
             return json.loads(re.search(r"\{.*\}", out, re.S).group(0))
         except Exception:
             return {"score": 50, "tags": [], "reason": out[:200]}
+
+    async def act_check(self, rule, ev):
+        """AI 复核（B1）：命中之后再让模型看一眼，把藏起来的密钥还原出来。
+
+        返回一个 dict：正常是模型给的六个字段；读不懂 / 调用炸了就带 "err"，
+        由 check_verdict 走 fail open。**只读、只回 JSON，一个工具都不给它**（不许做的事第 4 条）。
+        """
+        content = ev.get("content") or ""
+        low = content.lower()
+        if any(h.lower() in low for h in UNREADABLE_HINTS):
+            # 真内容不在文字里，模型看了也只能瞎猜（还会编 key）。直接转人工，省一次调用。
+            return {"hit": True, "confidence": 50, "kind": "unreadable", "need_human": True,
+                    "extracted": [], "reason": "内容在附件/图片里，程序读不到", "by": "rule"}
+        n = max(0, int(rule.get("ai_check_ctx") or 0))
+        # ts<= 且倒序取 n+1 条再翻回来：要的是「这条 + 它前面几条」，这条排在最后。
+        # 场景②（下一条说「删掉后面才是真的」）就靠这几条上下文才看得懂。
+        rows = self.db.q("SELECT author,content FROM messages WHERE channel_id=? AND ts<=? "
+                         "ORDER BY ts DESC LIMIT ?",
+                         (ev.get("channel_id"), ev.get("ts") or now(), n + 1))[::-1] if n else []
+        lines = [f"{r['author']}: {r['content']}" for r in rows
+                 if str(r["content"] or "") != content]
+        user = (f"频道: {ev.get('channel_name') or '?'}\n作者: {ev.get('author') or '?'}\n")
+        if lines:
+            user += "同频道前面几条（供你连起来读）：\n" + "\n".join(lines[-n:]) + "\n"
+        user += f"要判断的这条：{content}"
+        prov, model = self.pick_model(rule)
+        out = await self.chat(prov, model, [
+            {"role": "system", "content": rule.get("ai_check_prompt") or self.prompt("ai_check")},
+            {"role": "user", "content": user}],
+            json_mode=True, max_tokens=400, rule=rule["name"])
+        try:
+            j = json.loads(re.search(r"\{.*\}", out, re.S).group(0))
+            if not isinstance(j, dict):
+                raise ValueError("不是对象")
+        except Exception:
+            # 模型答了一段散文。**不能猜它想说什么** —— 交给 fail open 照旧通知。
+            return {"err": "模型没按格式答：" + str(out)[:150]}
+        ext = j.get("extracted")
+        if isinstance(ext, str):
+            ext = [ext]
+        return {"hit": bool(j.get("hit", True)),
+                "confidence": int(float(j.get("confidence") or 0)) if str(
+                    j.get("confidence") or "").strip() not in ("", "None") else 0,
+                "kind": str(j.get("kind") or "other")[:20],
+                "extracted": [str(x).strip() for x in (ext or []) if str(x).strip()][:8],
+                "need_human": bool(j.get("need_human")),
+                "reason": str(j.get("reason") or "")[:200], "by": "model"}
+
+    def check_verdict(self, rule, chk):
+        """复核结论 → (放不放行, 为什么)。纯函数，好测。
+
+        fail open 是这条功能的底线：模型挂了宁可吵一次，绝不吞消息（不许做的事第 3 条）。
+        """
+        if not isinstance(chk, dict) or chk.get("err"):
+            return True, "复核失败，按 fail open 放行"
+        if chk.get("need_human") and rule.get("ai_check_human", True):
+            return True, "需要人工看"
+        if chk.get("need_human"):
+            return False, "模型说看不到内容，而你关掉了「看不到也提醒」"
+        lo = int(rule.get("ai_check_min") or 0)
+        conf = int(chk.get("confidence") or 0)
+        if chk.get("hit") and conf >= lo:
+            return True, ""
+        return False, f"hit={chk.get('hit')} 置信 {conf} < 门槛 {lo}"
 
     async def act_reply(self, rule, ev):
         prov, model = self.pick_model(rule)
@@ -2408,7 +2588,7 @@ class App:
         cur = lt.tm_hour * 60 + lt.tm_min
         return lo <= cur < hi if lo <= hi else (cur >= lo or cur < hi)
 
-    def fmt_msg(self, ev, score=None, ai=None):
+    def fmt_msg(self, ev, score=None, ai=None, chk=None):
         where = "#" + (ev.get("channel_name") or "?") + ("（子区）" if ev.get("is_thread") else "")
         head = f"{ev.get('author') or '?'} 在 {where}"
         body = (ev.get("content") or "(无文字)")[:600]
@@ -2419,6 +2599,17 @@ class App:
             extra += ("　" if extra else "\n") + "、".join(str(t) for t in ai["tags"][:4])
         if ai and ai.get("todo"):
             extra += f"\n待办：{ai['todo']}"
+        # AI 复核的结果（B1）：在这一层拼，所有出口（本机通知 / 转发 / {{text}}）就都带上了，
+        # 不用在每个 hook 里各写一遍。
+        if isinstance(chk, dict):
+            if chk.get("err"):
+                head = "[AI 复核失败] " + head
+                extra += f"\n复核没做成：{str(chk['err'])[:60]}——所以照旧提醒你，请自己看一眼"
+            elif chk.get("need_human"):
+                head = "【需要你人工看】" + head
+                extra += f"\n模型说：{chk.get('reason') or '内容我看不到'} —— 你自己去看一眼"
+            if chk.get("extracted"):
+                extra += "\n模型还原出来的：" + " ".join(str(x) for x in chk["extracted"])
         return head, body, extra, ev.get("url") or ""
 
     async def notify(self, ev, row):
@@ -2427,7 +2618,7 @@ class App:
         score = row.get("score")
         if score is not None and score < int(s.get("min_score") or 0):
             return
-        head, body, extra, url = self.fmt_msg(ev, score, row.get("ai"))
+        head, body, extra, url = self.fmt_msg(ev, score, row.get("ai"), row.get("chk"))
         text = f"{head}\n{body}{extra}" + (f"\n{url}" if url else "")
         jobs = {}
         if not self.in_quiet_hours():
@@ -2447,14 +2638,18 @@ class App:
 
     def hook_vars(self, ev, row, head, body, extra, url, text):
         ai = row.get("ai") or {}
-        return {"text": text, "title": head, "body": (body + extra).strip(),
+        chk = row.get("chk") or {}
+        return {"extracted": " ".join(str(x) for x in (chk.get("extracted") or [])),
+                "need_human": "1" if chk.get("need_human") else "",
+                "text": text, "title": head, "body": (body + extra).strip(),
                 "content": ev.get("content") or "", "author": ev.get("author") or "",
                 "channel": ev.get("channel_name") or "", "server": ev.get("guild_name") or "",
                 "url": url, "score": "" if row.get("score") is None else row["score"],
                 "tags": "、".join(str(t) for t in (ai.get("tags") or [])),
                 "todo": ai.get("todo") or "",
                 "json": json.dumps({"event": ev, "score": row.get("score"), "ai": row.get("ai"),
-                                    "matched": row.get("matched")}, ensure_ascii=False)}
+                                    "matched": row.get("matched"), "check": row.get("chk")},
+                                   ensure_ascii=False)}
 
     async def push_hook(self, h, vals):
         """一条出口 = 一个 HTTP 请求。URL / 头 / 体里的 {{占位符}} 换成真值。"""
@@ -4113,6 +4308,10 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
               "| 正则", V(j.get("regex")), "| 最短", j.get("min_len"))
             P("      阈值/节流", "分数≥", j.get("notify_min_score"), "| 冷却", j.get("cooldown_sec"), "秒",
               "| 每小时≤", j.get("max_per_hour"), "| 攒", j.get("summary_every"))
+            P("      AI 复核   ", "[开]" if j.get("ai_check") else "[关]",
+              "| 门槛", j.get("ai_check_min"), "| 上下文", j.get("ai_check_ctx"), "条",
+              "| 看不到也提醒", V(j.get("ai_check_human")),
+              "| 自带提示词" if str(j.get("ai_check_prompt") or "").strip() else "| 用默认提示词")
             if j.get("imported_at"):
                 P("      来路     ", f"{j['imported_at']} 从规则包导入"
                                      f"（{j.get('imported_from') or '来源不明'}）")
@@ -4133,6 +4332,34 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             P("  注：正文只有前 40 字，关键词卡在后半句的话这里会显示成不命中，属正常。")
         if any("@我" in rw["why"] for s in dry for rw in s["rows"]):
             P("  注：试算的样本没带「有没有 @ 你」这个信息，所以勾了「只在@我」的规则在这里一定算不中。")
+        if any(j.get("ai_check") for j in rules):
+            P("  注：有规则开了 AI 复核，上面只算了**脚本条件那一半**。脚本这半都不中的话，"
+              "模型根本不会被叫起来；脚本中了还要过复核那道闸，结果看下面 [4.6]。")
+
+        # AI 复核的战果（B1）。为什么必须有这一段：复核判「不是」而被压掉的消息，
+        # 用户自己**永远发现不了**（他只知道"没提醒我"）。这段是唯一的追查入口。
+        P("\n[4.6] AI 复核最近战果（开了「AI 复核」的规则才有）")
+        chks = app.db.q("SELECT * FROM aicheck ORDER BY id DESC LIMIT 20")
+        if not chks:
+            P("  一次都没跑过。要么没有规则开复核，要么开了的那条还没被脚本条件命中过"
+              "（复核只在脚本命中之后才叫模型 —— 这是省额度的设计，不是 bug）")
+        for c in chks:
+            P("  ", time.strftime("%m-%d %H:%M:%S", time.localtime(c["ts"])),
+              "|", (c["rule"] or "?")[:14],
+              "|", "放行" if c["passed"] else "压掉",
+              "| 置信", c["conf"], "| hit", c["hit"], "|", c["kind"] or "-",
+              "| 提取到", len((c["extracted"] or "").split()) if c["extracted"] else 0, "个",
+              "| 要人工看" if c["human"] else "",
+              "|", ("失败：" + (c["err"] or "")[:50]) if c["err"] else (c["reason"] or "")[:50])
+        if chks:
+            d1 = app.db.q("SELECT COUNT(*) n, SUM(passed) p, SUM(err<>'') e FROM aicheck WHERE ts>?",
+                          (now() - 86400,))[0]
+            n, p, e = d1["n"] or 0, d1["p"] or 0, d1["e"] or 0
+            P(f"  最近 24 小时复核 {n} 次，放行 {p}，压掉 {n - p}，失败 {e}"
+              f"（失败一律按放行处理，宁可吵你一次也不吞消息）")
+            if n and n == e:
+                P("  ⚠ 全都失败了：多半是没选默认模型、Key 错了、或者出网被挡。"
+                  "看 [6] 日志里那条 warn 的原文。这期间等于复核没生效（消息照旧提醒你）。")
 
         P("\n[5] 通知与转发")
         sk = app.cfg.get("sinks", {})
@@ -4260,6 +4487,7 @@ async def housekeeping(app: App):
     while True:
         days = int(app.cfg.get("retention_days", 14))
         app.db.x("DELETE FROM messages WHERE ts < ?", (now() - days * 86400,))
+        app.db.x("DELETE FROM aicheck WHERE ts < ?", (now() - days * 86400,))   # 跟消息同一个保留期
         app.db.x("DELETE FROM logs WHERE ts < ?", (now() - 3 * 86400,))
         # 半小时没心跳的桥就不再列出来（浏览器关了/扩展卸了）
         for bid in [k for k, v in app.bridges.items() if now() - v.get("last", 0) > 1800]:
