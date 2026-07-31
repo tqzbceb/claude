@@ -18,7 +18,7 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.9.1"                               # 服务端版本，界面和扩展都能看到
+VERSION = "1.9.2"                               # 服务端版本，界面和扩展都能看到
 EXT_MIN = "1.8.0"                               # 低于这个版本的扩展要提示用户更新
 # 扩展上报的跳过原因，给人看的说法（诊断结论里要拼成一句话）
 NICE_SKIP = {"history": "历史消息（时间戳太旧）", "render": "整批渲染（切频道/往上滚）",
@@ -856,8 +856,20 @@ WB_TOOLS = [
         "description": "这台机器现在的状况：收信方式、有没有浏览器在旁听、程序自查出来的问题。"
                        "用户说「怎么没提醒我」时先调它。",
         "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "export_rules",
+        "description": "把规则打包成「能搬到另一台机器」的规则包（跟界面「导出规则」按钮同一份）。"
+                       "用户说「我的规则给我看看 / 备份一下 / 发给朋友 / 换台电脑」时用它。"
+                       "转发地址会打码，所以要给别人的完整文件得让他点界面上的「导出规则」按钮。"
+                       "只想看看现有条件用 list_rules 就够，别拿这个包回头当新规则写回去。",
+        "parameters": {"type": "object", "properties": {
+            "ids": {"type": "array", "items": {"type": "string"},
+                    "description": "只导这几条的 id（从 list_rules 拿）；留空=全部"}}}}},
 ]
 
+# **故意没有 import_rules 工具**（硬规矩 10）：导入会覆盖、甚至删掉用户手填了一晚上的规则，
+# 那道「先预览再落库」的闸在界面上（`dry_run` 预览 → 他点确认才第二次请求真写）。
+# 模型自己吃一个文件就绕过了闸。要帮他搬别人的规则：把包念清楚，然后让他点界面上的「导入规则」按钮。
 WB_WRITE_TOOLS = ("update_rule", "create_rule", "set_rule_enabled", "delete_rule")
 
 
@@ -884,6 +896,48 @@ def brief_rule(r):
         if v not in ([], "", 0, None) or k in ("name", "action", "ignore_bots", "kinds"):
             out[k] = v
     return out
+
+
+# 给模型看的规则包 = 界面「导出规则」那一份，加三条差别：转发地址打码（那是个能往外发东西的
+# 密址，不该跟着对话上传到模型厂商那边）、超长提示词截断、整包太大时退化成清单。
+# **完整、可直接导入的文件永远只有一条路**：界面「监听规则」页的「导出规则」按钮。
+WB_MASK = "***（转发地址不给模型看，导出文件里是完整的）"
+WB_PACK_LIMIT = 3500        # 工具结果喂回模型时会被截到 6000 字，超了它看到的是半截 JSON
+
+
+def wb_export_pack(rules, ids=None):
+    """(给模型看的规则包, 提示列表)。ids 只导这几条，留空=全部。"""
+    notes = []
+    if ids:
+        want = [str(x) for x in (ids if isinstance(ids, list) else [ids])]
+        have = {str(r["id"]) for r in rules}
+        miss = [x for x in want if x not in have]
+        rules = [r for r in rules if str(r["id"]) in want]
+        if miss:
+            notes.append("这些 id 不存在，已跳过：" + "、".join(miss[:5]))
+    out, masked = [], 0
+    for r in rules:
+        e = rule_for_export(r)
+        if e.get("webhook_url"):
+            e["webhook_url"], masked = WB_MASK, masked + 1
+        out.append(e)
+    if masked:
+        notes.append(f"有 {masked} 条的转发地址打了码 —— 那是密址，不随对话外发。"
+                     "用户自己点「导出规则」按钮下载到的文件里是完整的")
+    pack = {"schema": RULES_SCHEMA, "app": "dcwatch", "version": VERSION,
+            "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"), "count": len(out), "rules": out}
+    if len(json.dumps(pack, ensure_ascii=False)) > WB_PACK_LIMIT:
+        for e in out:
+            if len(e.get("prompt") or "") > 80:
+                e["prompt"] = e["prompt"][:80] + "…（提示词太长，这里截断了）"
+        notes.append("规则条数多，提示词正文在这里被截断了，导出文件里是完整的")
+    if len(json.dumps(pack, ensure_ascii=False)) > WB_PACK_LIMIT:
+        pack = {"schema": RULES_SCHEMA, "app": "dcwatch", "version": VERSION, "count": len(out),
+                "rules": [{"name": e["name"], "action": e["action"]} for e in out],
+                "truncated": True}
+        notes.append(f"{len(out)} 条规则整包太大，塞不进这轮对话，上面只是清单。"
+                     "要完整的就让用户点「监听规则」页的「导出规则」按钮下载文件")
+    return pack, notes
 
 
 async def run_wb_tool(app, name, args, allow_ids):
@@ -917,6 +971,17 @@ async def run_wb_tool(app, name, args, allow_ids):
                              "fresh": b["fresh"], "ver": b.get("ver")} for b in bl],
                 "findings": app.findings(),
                 "msgs": app.db.q("SELECT COUNT(*) n FROM messages")[0]["n"]}, "", False
+
+    if name == "export_rules":
+        pack, notes = wb_export_pack(rules, args.get("ids"))
+        pack["notes"] = notes
+        pack["how_to_get_the_file"] = (
+            "完整文件在界面「监听规则」页顶部的「导出规则」按钮，点一下就下载，文件名形如 "
+            f"dcwatch-规则{pack['count']}条-v{VERSION}-0731-1740.json")
+        pack["how_to_import"] = ("对方在他那台机器上点旁边的「导入规则」按钮选这个文件，"
+                                 "程序会先给他看「哪几条会被覆盖」再让他确认。"
+                                 "你自己没有导入工具，这一步必须由人点")
+        return pack, "", False
 
     if name == "search_messages":
         q = (args.get("query") or "").strip()
@@ -1022,13 +1087,16 @@ WB_TEXT_PROTO = """## 你可以直接动手（重要）
 - list_channels {}：真实的频道 / 人 ID。
 - search_messages {"query":"key","limit":20}：搜已收到的消息。
 - get_status {}：现在的收信状况和自查结论。
+- export_rules {"ids":["3"]}：把规则整包导出（ids 留空=全部），可以念给用户、或让他搬到另一台机器。
+  **没有导入工具**：导入会覆盖他手填的规则，必须他自己在界面上点「导入规则」看过预览再确认。
 
 """ + RULE_FIELDS_DOC
 
 
 WB_TOOLS_HOWTO = """## 你可以直接动手（重要）
 你有一组工具，能**真的**读写这个程序的配置：list_rules / update_rule / create_rule /
-set_rule_enabled / delete_rule / test_rule / list_channels / search_messages / get_status。
+set_rule_enabled / delete_rule / test_rule / list_channels / search_messages / get_status /
+export_rules。
 
 用户说「帮我改一下这条规则」「让它连表情包也提醒」「把那条停掉」时，**直接调工具改完再回话**，
 不要输出一二三步教他自己去点。他要是想自己点，他不会来问你。
@@ -1039,7 +1107,10 @@ set_rule_enabled / delete_rule / test_rule / list_channels / search_messages / g
 3. 改完用 test_rule 试算一次，然后用一句话告诉他：改了什么、现在会不会命中。
 4. 删除是不可逆的：他没明确说「删」，就用 set_rule_enabled 停用。
 5. 需要频道 / 人的 ID 就调 list_channels，绝不编 ID。
-6. 改完要提醒他：改动已经生效了，去「监听规则」页能看到。"""
+6. 改完要提醒他：改动已经生效了，去「监听规则」页能看到。
+7. 他要「备份 / 换台电脑 / 把规则发给朋友」就调 export_rules 把包念给他，并告诉他
+   「监听规则」页上就有「导出规则」按钮能直接下载完整文件（包里的转发地址你看到的是打码的）。
+   **你没有导入工具**：导入会覆盖他手填的规则，得他自己点「导入规则」，先看预览再确认。"""
 
 
 # 用户在「模型接入」页把「允许模型直接改规则」关掉了。上面那两段都不发，
@@ -1070,7 +1141,7 @@ def strip_text_calls(text):
 
 READ_HUMAN = {"list_rules": "看了一遍你的规则", "list_channels": "查了真实的频道 ID",
               "search_messages": "翻了已经收到的消息", "get_status": "看了现在的收信状况",
-              "test_rule": "拿一条假消息试算了一下"}
+              "test_rule": "拿一条假消息试算了一下", "export_rules": "把你的规则整包导了一份出来"}
 
 
 async def wb_run(app, prov, model, msgs, allow_ids, emit=None, stream=False, max_steps=6):

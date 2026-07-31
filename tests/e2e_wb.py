@@ -277,4 +277,89 @@ ok("原文里有工具清单", "list_rules" in tp["text"] and "update_rule" in t
 ok("也写明了关掉那个勾之后换成什么", "不能动手" in tp["text"], tp["text"][-200:])
 ok("说明了在哪儿关", "允许模型直接改规则" in tp["why"] + tp["text"], tp["why"])
 
+print("14. 模型能把规则整包导出念给用户（但没有导入工具）")
+# 第 6 节把 mock-1 记成「不支持函数调用」了（进程内 no_tools 记着），那条路下工具结果是
+# 当成 role=user 喂回去的，mockllm 的 tool_out 就是空的。这一节要看喂回去的那份包，
+# 所以换一个模型名，把函数调用那条路要回来。
+call("/api/config", {"default_model": {"provider": "mock", "model": "mock-2"}})
+
+
+def wb_pack(prompt="把我的规则导出来", **args):
+    """让假模型调一次 export_rules，把喂回给它的那份包解出来。"""
+    reset()
+    script([{"tools": [{"name": "export_rules", "args": args}]}, {"content": "这是你的规则包。"}])
+    r = ask(prompt)
+    out = calls()[-1]["tool_out"]
+    j = {}
+    for line in out.split("\n"):
+        try:
+            got = json.loads(line.strip())
+        except Exception:
+            continue
+        if isinstance(got, dict) and got.get("schema"):
+            j = got
+    return r, j, out
+
+
+for x in call("/api/state")["rules"]:                    # 这一节要数条数，先清干净
+    call(f"/api/rules/{x['id']}", None, method="DELETE")
+a = mk({"name": "有人发 key", "keywords_any": ["key", "密钥"],
+        "channel_ids": ["700000000000000001"], "min_len": 6, "action": "notify"})
+b = mk({"name": "开新帖就转发", "kinds": ["thread"], "action": "webhook",
+        "webhook_url": "https://sctapi.ftqq.com/SECRET123.send"}, enabled=0)
+# 导入来的痕迹（imported_at/imported_from）是本机的账，跟 hits 一样不该跟着包走
+call("/api/rules", {"id": a, "name": "有人发 key", "keywords_any": ["key", "密钥"],
+                    "channel_ids": ["700000000000000001"], "min_len": 6, "action": "notify",
+                    "imported_at": "2026-07-31 12:00:00", "imported_from": "1.9.0", "enabled": 1})
+
+r, pk, out = wb_pack()
+ok("包认得出是规则包（schema）", pk.get("schema") == "dcwatch.rules/1", out[:200])
+ok("包里带程序版本号", bool(pk.get("version")), pk.get("version"))
+ok("条数跟库里一致", pk.get("count") == 2 and len(pk.get("rules") or []) == 2, pk.get("count"))
+ok("规则的条件都在里面", (pk["rules"][0].get("keywords_any") or []) == ["key", "密钥"], pk["rules"][0])
+ok("停用状态也跟着走", [x["enabled"] for x in pk["rules"]] == [1, 0], pk["rules"])
+ok("不带 id / 命中数（本机的账）", all("id" not in x and "hits" not in x for x in pk["rules"]), pk["rules"][0])
+ok("导入痕迹不跟着包走", "imported_at" not in out and "imported_from" not in out, out[:400])
+ok("转发密址不上传给模型", "SECRET123" not in out, out[:400])
+ok("打码这件事明确告诉模型了", any("打了码" in n for n in (pk.get("notes") or [])), pk.get("notes"))
+ok("告诉模型完整文件从哪拿", "导出规则" in (pk.get("how_to_get_the_file") or ""), pk.get("how_to_get_the_file"))
+ok("说清了导入那一步必须人点", "由人点" in (pk.get("how_to_import") or ""), pk.get("how_to_import"))
+ok("导出不算改动", r.get("changed") is False, r)
+ok("界面上这一步是人话", "整包导" in ((r.get("acts") or [{}])[0].get("human") or ""), r.get("acts"))
+
+r, pk, out = wb_pack("只把第一条导出来", ids=[a])
+ok("ids 只导指定的那几条", pk.get("count") == 1 and pk["rules"][0]["name"] == "有人发 key", pk)
+r, pk, out = wb_pack("导出", ids=[a, "99999"])
+ok("id 不存在时跳过而不是整个失败", pk.get("count") == 1, pk)
+ok("并且明确说了哪几个 id 不存在", any("99999" in n for n in (pk.get("notes") or [])), pk.get("notes"))
+
+call("/api/rules", {"id": a, "name": "有人发 key", "action": "ai_tag", "prompt": "很长的提示词" * 900,
+                    "enabled": 1})
+r, pk, out = wb_pack()
+ok("超长提示词截断，不至于把这轮对话塞爆",
+   (pk.get("rules") or [{}])[0].get("prompt", "").endswith("这里截断了）"), str(pk.get("rules"))[:200])
+ok("截断了要说出来", any("截断" in n for n in (pk.get("notes") or [])), pk.get("notes"))
+
+for i in range(20):
+    mk({"name": f"批量{i}", "keywords_any": [f"k{i}"], "action": "notify"})
+r, pk, out = wb_pack()
+ok("规则太多时退化成清单而不是半截 JSON", pk.get("truncated") is True, pk.get("count"))
+ok("清单里还是能看到规则名", any(x.get("name") == "批量7" for x in (pk.get("rules") or [])), pk.get("rules")[:2])
+ok("并让模型把用户指到「导出规则」按钮", any("导出规则" in n for n in (pk.get("notes") or [])), pk.get("notes"))
+n_before = len(call("/api/state")["rules"])
+
+reset()
+script([{"tools": [{"name": "import_rules", "args": {"data": {"schema": "dcwatch.rules/1",
+                                                             "rules": [{"name": "偷偷塞的"}]}}}]},
+        {"content": "我没有导入的能力，你自己点「导入规则」按钮。"}])
+r = ask("把这个包导进去")
+act = (r.get("acts") or [{}])[0]
+ok("模型没有导入工具", act.get("ok") is False, r.get("acts"))
+ok("错误说清了没这个工具", "没有 import_rules" in (act.get("err") or ""), act)
+ok("规则一条都没被偷偷改掉", len(call("/api/state")["rules"]) == n_before, n_before)
+ok("不算改动", r.get("changed") is False, r)
+pr = [x for x in call("/api/prompts")["builtin"] if x["key"] == "workbench_tools"][0]
+ok("提示词里有 export_rules", "export_rules" in pr["text"], pr["text"][:300])
+ok("提示词里明说没有导入工具", "没有导入工具" in pr["text"], pr["text"][-400:])
+
 print(f"\n通过 {P} / 失败 {F}")

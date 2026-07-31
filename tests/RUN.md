@@ -3,7 +3,7 @@
 这个目录就在项目根下面（`<项目>/tests/`），`runall.sh` 自己会找到 `../server.py`，
 不需要配任何路径。布局不一样时用 `DC=/path/to/dcwatch ./runall.sh ...`。
 
-改完 server.py，**416 条全跑一遍**（一次两三套，命令超时一般 120s）：
+改完 server.py，**443 条全跑一遍**（一次两三套，命令超时一般 120s）：
 
 ```bash
 pip install aiohttp        # 唯一依赖；某些一次性环境每次都要重装
@@ -11,7 +11,7 @@ cd tests
 ./runall.sh e2e.py e2e_ai.py                     # 46 + 27
 ./runall.sh e2e_multi.py e2e_wiz.py              # 26 + 83（wiz 单套约 40s，别再多塞）
 ./runall.sh e2e_v17.py e2e_diag.py                # 46 + 47
-./runall.sh e2e_wb.py e2e_imp.py                 # 67 + 74
+./runall.sh e2e_wb.py e2e_imp.py                 # 94 + 74
 ```
 
 `runall.sh` 做的事：起假 OpenAI（`mockllm.py` :8899）和假 webhook（`echo.py` :8898 → /tmp/bcode/echo.jsonl），
@@ -123,6 +123,19 @@ providers 形状不对回 400 不是 500。
   第 12 节直接调 `__onMsg({type:"dcwatch-pull"})` 断言它同步 reply 一份心跳 body。
 - `e2e_diag.py` 里桥的扩展版本**不再写死**，改成开头 `EXT_OK = /api/state.env.ext_min`。
   写死成 1.7.2 时，EXT_MIN 一提到 1.7.4，「一切正常时不许硬凑问题」那节就假红三条。
+
+## e2e_wb.py 覆盖（AI 工作台的「手」，94 条，v1.8.0 / v1.9.2）
+函数调用改规则 / 不许猜 id / 建停试算删 / 只读工具（状态、频道、搜消息）/ 编的 ID 洗掉 /
+接口不支持 tools 自动退回文本指令 / 「允许模型直接改规则」关掉后两条路都断 / 流式 SSE 与 error 事件 /
+plain 模式不带工具 / 多轮上下文 / env 两个开关 / 提示词页能看到「手」那段 /
+第 14 节（v1.9.2）`export_rules`：包的形状、不带 id 和 hits、导入戳不跟着走、
+**转发地址打码**、ids 只导指定几条、不存在的 id 只跳过、超长提示词截断、条数太多退化成清单、
+**没有 import_rules 这个工具**（模型硬调会失败且一条规则都不动）。
+- **第 6 节之后 `mock-1` 被记成「不支持函数调用」**（`App.no_tools` 是进程内内存，清不掉）。
+  之后要断言「工具结果真喂回给模型了」（mockllm 的 `tool_out` 只收 role=tool）的小节，
+  必须先把 `default_model.model` 换成别的名字（第 14 节换成 `mock-2`），否则 `tool_out` 永远是空的。
+- 给模型看的包有个 `WB_PACK_LIMIT`（3500 字）：喂回去的工具结果会被服务端截到 6000 字、
+  mockllm 又只留 4000 字，包比它大就在测试里解不出 JSON。**改这个常量要一起看这两个上限**。
 
 ## e2e_imp.py 覆盖（规则导入 / 导出，74 条，v1.9.0 / v1.9.1）
 导出包的形状（schema/version/count，不含 id 和 hits）/ 附件头和 no-store /
