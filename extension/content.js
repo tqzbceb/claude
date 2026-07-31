@@ -145,16 +145,27 @@ function send(payload) {
   }).catch(() => { /* dcwatch 没开着就丢掉，不打扰页面 */ });
 }
 
+let lastFlush = 0;
+
 function flush() {
-  flushTimer = null;
+  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
   const messages = queue.splice(0, 50);
   if (!messages.length) return;
+  lastFlush = Date.now();
   const a = myAccount();
   send({ messages, account: a.name, account_id: a.id });
 }
 
+/* 合批：600 毫秒内来的消息并成一个请求发。
+   但**第一条必须立刻发**，不能只靠 setTimeout —— 你在后台标签页里盯着别的帖子时，
+   Chrome 会把隐藏标签页的定时器降频：刚切走时对齐到 1 秒，隐藏超过 5 分钟后
+   直接变成每分钟才跑一次（实测 60001ms）。只靠定时器的话，后台那些帖子最坏要等
+   一分钟才上报，抢名额、发码那种场景等于白盯。
+   MutationObserver 的回调不受这个限制（实测 0ms），而消息内容在回调里就已经解析完了，
+   立刻发不会拿到残缺内容 —— 所以「首条立刻、后续合批」既及时又不会把请求打散。 */
 function enqueue(msg) {
   queue.push(msg);
+  if (Date.now() - lastFlush >= 600) { flush(); return; }
   if (!flushTimer) flushTimer = setTimeout(flush, 600);
 }
 
@@ -329,19 +340,31 @@ observer.observe(document.body, { childList: true, subtree: true });
 /* 心跳：让 dcwatch 界面左下角亮绿灯（服务端判定是 90 秒内有心跳），
    顺手把当前频道名带上，扩展图标的提示里会显示「正在旁听 #xxx」。
    20 秒一次，比 90 秒的判定留足余量，切频道后状态也跟得上。 */
-const ping = () => {
+function pingBody() {
   const a = myAccount();
-  send({ ping: true, where: titleChannelName(), account: a.name, account_id: a.id,
+  return { ping: true, where: titleChannelName(), account: a.name, account_id: a.id,
     // 扩展这边看到的实情：解析了多少、上报了多少、因为什么跳过。
     // 服务端存起来，出问题时「导出诊断」里就有，不用你去点药丸截图。
     stats: { parsed: stats.parsed, sent: stats.sent, skip: stats.skip,
              recent: stats.recent.slice(0, 6),
              url: location.pathname, dm: fromUrl().dm,
-             lis: document.querySelectorAll('li[id^="chat-messages-"]').length } });
-};
+             lis: document.querySelectorAll('li[id^="chat-messages-"]').length } };
+}
+const ping = () => send(pingBody());
 ping();
 setInterval(ping, 20000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) ping(); });
+
+/* 后台脚本每 30 秒会来拉一次（chrome.alarms 不受标签页可见性影响）。
+   这条路是心跳的兜底：上面那个 setInterval 在标签页隐藏久了会被降到每分钟一次，
+   逼近服务端 90 秒的失联判定 —— 明明还在盯，界面上却写「失联」。
+   同时它让后台脚本能一次看到所有 Discord 标签页各自在盯哪个频道。 */
+try {
+  chrome.runtime.onMessage.addListener((m, _s, reply) => {
+    if (m && m.type === "dcwatch-pull") { reply(pingBody()); return true; }
+    return false;
+  });
+} catch (e) { /* 控制台调试时没有扩展环境 */ }
 
 /* ================= 页面右下角的状态药丸 =================
    为什么放在页面里：状态挂在浏览器工具栏图标上，图标没固定出来就等于没有。

@@ -18,11 +18,31 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.7.2"                               # 服务端版本，界面和扩展都能看到
+VERSION = "1.7.3"                               # 服务端版本，界面和扩展都能看到
 EXT_MIN = "1.7.2"                               # 低于这个版本的扩展要提示用户更新
 # 扩展上报的跳过原因，给人看的说法（诊断结论里要拼成一句话）
 NICE_SKIP = {"history": "历史消息（时间戳太旧）", "render": "整批渲染（切频道/往上滚）",
              "dup": "重复", "notext": "没有文字（纯图片/表情）", "quiet": "刚打开页面的头几秒"}
+# match() 返回的卡点代码 → 人话。诊断包的「拿真实消息试算」段和界面试算都用它。
+# 光给一个 "kind" / "channel/thread" 这种代码，用户看了也不知道该改哪个输入框。
+NICE_WHY = {
+    "source": "消息来源对不上（规则听的不是 Discord）",
+    "kind": "触发类型对不上：这条规则只在「开新帖」时触发，普通聊天消息永远不算",
+    "bot": "发的人是机器人，而规则勾了「忽略机器人」",
+    "account": "不是规则指定的那个 Discord 账号",
+    "dm-off": "这是私信，规则没勾「包含私信 DM」",
+    "dm-only": "规则只听私信，这条不是私信",
+    "guild": "服务器 ID 对不上（「听哪里」的服务器那一栏）",
+    "channel/thread": "频道 / 子区 ID 对不上（「听哪里」的频道、子区两栏）",
+    "author": "发的人不在「听谁」的用户 ID 名单里",
+    "author-name": "昵称里没有「昵称含」要求的字",
+    "mention": "规则要求「只在 @我 时」，这条没有 @ 你",
+    "len": "正文字数没到「最短」要求",
+    "kw-any": "正文里一个「任一关键词」都没出现",
+    "kw-all": "「全含关键词」没有全部出现",
+    "regex": "正则没匹配上",
+    "命中": "会命中",
+}
 FROZEN = getattr(sys, "frozen", False)          # True 时 = PyInstaller 打出来的 exe
 # ui.html 在 exe 里是打进包的临时解包目录；数据必须写到真实可写目录
 BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -835,6 +855,15 @@ class App:
                 "让它问你几句就能生成。")
         elif not on_rules:
             add("bad", f"{len(rules)} 条规则全是停用状态", "把要用的那条打开。")
+        elif all("msg" not in (x.get("kinds") or ["msg"]) for x in on_rules):
+            # 「开新帖」和「有人说话」是两回事。规则里第 0 项勾成了只听新帖，
+            # 那么频道里聊翻天也一条都不会响 —— 这是最容易填错、又最看不出来的一格。
+            names = "、".join(x.get("name") or "(没名字)" for x in on_rules[:3])
+            off_msg = [x for x in rules if not x.get("enabled") and "msg" in (x.get("kinds") or ["msg"])]
+            add("bad", f"开着的规则（{names}）只在「有人开新帖」时触发，普通聊天消息一条都不会命中",
+                "到「监听规则」打开那条规则，第 0 项「什么时候触发」把「有人发消息」也勾上。"
+                + (f"（你还有 {len(off_msg)} 条听消息的规则是停用状态，"
+                   f"比如「{off_msg[0].get('name') or '(没名字)'}」，直接打开它也行）" if off_msg else ""))
         elif n_msg and not n_hit:
             add("warn", f"收到过 {n_msg} 条消息，一条都没命中规则",
                 "多半是条件太窄（频道 ID 填错、关键词太长、忘了勾「包含私信」）。"
@@ -851,7 +880,67 @@ class App:
             add("ok", "没查出明显问题",
                 f"在旁听 {len(real)} 个浏览器，{len(on_rules)} 条规则开着，库里 {n_msg} 条消息、"
                 f"命中 {n_hit} 条。")
+        # 致命的排前面。界面顶部就那么几行，「规则永远不会命中」不该排在
+        # 「这个频道最近没人说话」后面 —— 用户只会读第一条。
+        out.sort(key=lambda x: {"bad": 0, "warn": 1}.get(x["level"], 2))
         return out
+
+    def dry_run_samples(self, limit=6):
+        """拿真实见过的消息，逐条对每一条规则跑一遍 match()，报出卡在哪一步。
+
+        为什么要有这个：诊断包能告诉你「规则填了什么」，但填了什么和会不会命中是两回事 ——
+        频道 ID 填进了「子区」那一栏、第 0 项勾成只听新帖、忘了勾私信，看条件本身全都很像对的。
+        所以直接用真消息跑一遍，把「卡在哪个输入框」印出来，别让人靠脑补。
+
+        样本来源两个，优先用库里的真消息；库是空的时候（消息一条都没进来，恰恰是最需要
+        排查的时候）退回用扩展心跳送来的 recent —— 那里有真实正文（前 40 字）和真实频道路径。"""
+        rules = self.rules(False)
+        if not rules:
+            return []
+        out = []
+        for m in self.db.q("SELECT * FROM messages ORDER BY id DESC LIMIT ?", (limit,)):
+            # 库里没有 mentions_me 这一列（存的时候就没留），所以「只在@我」的规则在这里一律算不中，
+            # 下面会单独注一句，免得看的人以为规则坏了
+            out.append({"text": m.get("content") or "", "from": "库里的消息", "cut": False,
+                        "ev": {"source": m.get("source") or "discord", "guild_id": m.get("guild_id") or "",
+                               "channel_id": m.get("channel_id") or "", "parent_id": m.get("parent_id") or "",
+                               "channel_name": m.get("channel_name") or "",
+                               "is_thread": bool(m.get("is_thread")),
+                               "author_id": m.get("author_id") or "", "author": m.get("author") or "",
+                               "is_bot": bool(m.get("is_bot")), "content": m.get("content") or "",
+                               "is_dm": not (m.get("guild_id") or ""), "mentions_me": False,
+                               "ts": m.get("ts") or now(), "msg_id": m.get("msg_id") or "0",
+                               "kind": m.get("kind") or "msg"}})
+        if not out:
+            seen_txt = set()
+            for b in self.bridge_list():
+                st = b.get("stats") or {}
+                url = st.get("url") or ""
+                mt = re.search(r"/channels/(@me|\d+)/(\d+)", url)
+                gid = "" if not mt or mt.group(1) == "@me" else mt.group(1)
+                cid = mt.group(2) if mt else ""
+                for rc in (st.get("recent") or [])[:limit]:
+                    txt = (rc.get("what") or "").strip()
+                    if not txt or txt in seen_txt:
+                        continue
+                    seen_txt.add(txt)
+                    out.append({"text": txt, "cut": True,
+                                "from": f"扩展在 {url or '页面'} 上看到的（正文只留了前 40 字）",
+                                "ev": {"source": "discord", "guild_id": gid, "channel_id": cid,
+                                       "parent_id": "", "channel_name": b.get("where") or "",
+                                       "is_thread": False, "author_id": "", "author": "",
+                                       "is_bot": False, "content": txt, "is_dm": not gid,
+                                       "mentions_me": False, "ts": now(), "msg_id": "0", "kind": "msg"}})
+                if len(out) >= limit:
+                    break
+        for s in out[:limit]:
+            rows = []
+            for j in rules:
+                ok, why = self.match(j, s["ev"])
+                rows.append({"name": j.get("name") or "(没名字)", "on": bool(j.get("enabled")),
+                             "ok": ok, "why": NICE_WHY.get(why, why)})
+            s["rows"] = rows
+        return out[:limit]
 
     def log(self, level, text):
         self.db.x("INSERT INTO logs(ts,level,text) VALUES(?,?,?)", (now(), level, str(text)[:800]))
@@ -2433,6 +2522,9 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         for j in rules:
             P("  -", ("[开]" if j.get("enabled") else "[停]"), j.get("name") or "(没名字)",
               "| 命中", j.get("hits", 0), "次", "| 动作", j.get("action"))
+            kinds = j.get("kinds") or ["msg"]
+            P("      什么时候 ", "、".join(("有人发消息" if k == "msg" else "有人开新帖") for k in kinds)
+              + ("   ← 只听新帖，普通聊天消息不会命中" if "msg" not in kinds else ""))
             P("      听哪里   ", "服务器", V(j.get("guild_ids")), "频道", V(j.get("channel_ids")),
               "子区", V(j.get("thread_ids")),
               "| 含子区" if j.get("include_threads_of_channels") else "", "| 私信" if j.get("dm") else "")
@@ -2442,6 +2534,23 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
               "| 正则", V(j.get("regex")), "| 最短", j.get("min_len"))
             P("      阈值/节流", "分数≥", j.get("notify_min_score"), "| 冷却", j.get("cooldown_sec"), "秒",
               "| 每小时≤", j.get("max_per_hour"), "| 攒", j.get("summary_every"))
+
+        P("\n[4.5] 拿真实消息试算（规则填了什么，和会不会命中，是两回事）")
+        dry = app.dry_run_samples()
+        if not rules:
+            P("  没有规则，跳过")
+        elif not dry:
+            P("  没有可用的样本：库里没消息，扩展也还没送来看到过的正文。")
+        for s in dry:
+            P("  消息：", (s["text"] or "")[:60], "（来源：" + s["from"] + "）")
+            for rw in s["rows"]:
+                P("     ", "[开]" if rw["on"] else "[停]", rw["name"], "→",
+                  ("会命中" if rw["ok"] else "不命中 · " + rw["why"])
+                  + ("" if rw["on"] else "（这条是停用的，就算命中也不会提醒）"))
+        if dry and any(s["cut"] for s in dry):
+            P("  注：正文只有前 40 字，关键词卡在后半句的话这里会显示成不命中，属正常。")
+        if any("@我" in rw["why"] for s in dry for rw in s["rows"]):
+            P("  注：试算的样本没带「有没有 @ 你」这个信息，所以勾了「只在@我」的规则在这里一定算不中。")
 
         P("\n[5] 通知与转发")
         sk = app.cfg.get("sinks", {})
