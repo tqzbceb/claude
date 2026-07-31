@@ -9,6 +9,7 @@ Run:  python server.py            -> http://127.0.0.1:8777
 """
 import asyncio, base64, json, os, re, sqlite3, sys, time, argparse, contextlib, random, shutil, webbrowser
 import urllib.parse
+import html as html_mod
 from pathlib import Path
 
 try:
@@ -17,7 +18,7 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.7.0"                               # 服务端版本，界面和扩展都能看到
+VERSION = "1.7.1"                               # 服务端版本，界面和扩展都能看到
 EXT_MIN = "1.7.0"                               # 低于这个版本的扩展要提示用户更新
 FROZEN = getattr(sys, "frozen", False)          # True 时 = PyInstaller 打出来的 exe
 # ui.html 在 exe 里是打进包的临时解包目录；数据必须写到真实可写目录
@@ -668,6 +669,20 @@ def ext_version():
         return str(json.loads((d / "manifest.json").read_text(encoding="utf-8")).get("version") or "")
     except Exception:
         return ""
+
+
+def cmp_ver(a, b):
+    """1.7.0 vs 1.10.0 这种比较不能用字符串比。界面里也有一份同样的实现。"""
+    def p(s):
+        out = []
+        for x in str(s).split(".")[:3]:
+            try:
+                out.append(int(x))
+            except ValueError:
+                out.append(0)
+        return out + [0] * (3 - len(out))
+    x, y = p(a), p(b)
+    return (x > y) - (x < y)
 
 
 def now():
@@ -1561,7 +1576,65 @@ def routes(app: App):
 
     @r.get("/")
     async def index(_):
-        return web.FileResponse(BASE / "ui.html")
+        # no-store：更新后浏览器必须重新拿 ui.html。
+        # 界面里的版本号是用户核对「装的是哪一版」的凭据，被缓存成旧的就等于说谎。
+        return web.FileResponse(BASE / "ui.html", headers={"Cache-Control": "no-store"})
+
+    @r.get("/version")
+    async def version_page(_):
+        # 独立的自证页：不读 ui.html、不用 JS、不查数据库，所以界面坏了、
+        # 浏览器缓存了旧界面、甚至配置炸了，这一页仍然说实话。
+        # 旧版本没有这个路由 —— 打开是 404 本身就说明「你跑的程序是旧的」。
+        eh = ext_version() or ""
+        rows = [
+            ("这个程序", "v" + VERSION + ("　（exe 打包版）" if FROZEN else "　（直接跑 server.py）"),
+             "就是你现在连着的这个端口"),
+            ("浏览器扩展至少要", "v" + EXT_MIN,
+             "低于这个版本，新帖检测和抓历史不会工作"),
+            ("你这份 extension 文件夹", ("v" + eh) if eh else "没找到",
+             "从界面「下载浏览器扩展」拿到的就是这一份"),
+            ("代码在哪", str(BASE), "启动的是这个文件夹里的 server.py"),
+            ("配置在哪", str(DB_PATH),
+             "全机共享，所以换文件夹跑也会带着同一份模型和规则" if FROZEN
+             else "跟代码放在一起，换文件夹跑＝一份新的空配置"),
+        ]
+        tr = "".join(
+            f'<tr><td>{k}</td><td class="v">{html_mod.escape(str(v))}</td>'
+            f'<td class="n">{html_mod.escape(n)}</td></tr>' for k, v, n in rows)
+        bad = eh and cmp_ver(eh, EXT_MIN) < 0
+        warn = (f'<p class="w">你这份 extension 文件夹是 v{eh}，比程序要求的 v{EXT_MIN} 旧。'
+                f'去 chrome://extensions 删掉旧条目，重新「加载已解压的扩展程序」指向新文件夹，'
+                f'再回 Discord 页面按 F5。</p>') if bad else ""
+        return web.Response(content_type="text/html", headers={"Cache-Control": "no-store"}, text=f"""<!doctype html>
+<html lang="zh"><meta charset="utf-8"><title>dcwatch v{VERSION}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ body{{margin:0;padding:44px 24px;background:#faf9f5;color:#232323;
+  font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}}
+ .b{{max-width:760px;margin:0 auto}}
+ h1{{font:600 46px/1.1 Georgia,"Songti SC",serif;margin:0 0 6px;letter-spacing:-.5px}}
+ h1 span{{color:#c96442}}
+ .s{{color:#6b6b6b;margin:0 0 30px}}
+ table{{border-collapse:collapse;width:100%}}
+ td{{padding:11px 0;border-bottom:1px solid #e8e5dd;vertical-align:top}}
+ td:first-child{{color:#6b6b6b;white-space:nowrap;padding-right:20px;width:1%}}
+ .v{{font:600 14px/1.5 ui-monospace,Consolas,monospace;word-break:break-all;padding-right:20px}}
+ .n{{color:#8a8a8a;font-size:13px}}
+ .w{{background:#fdf0e6;border-left:3px solid #c96442;padding:13px 16px;margin:26px 0 0;border-radius:0 6px 6px 0}}
+ .t{{margin:30px 0 0;padding:16px 18px;background:#fff;border:1px solid #e8e5dd;border-radius:8px;color:#4a4a4a}}
+ a{{color:#c96442}}
+</style>
+<div class="b">
+<h1>dcwatch <span>v{VERSION}</span></h1>
+<p class="s">这一页不用界面、不用 JS、不读配置，所以它不会被缓存骗到。</p>
+<table>{tr}</table>{warn}
+<div class="t"><b>这里的版本和你以为的不一样？</b><br>
+说明你启动的是<b>另一个文件夹</b>里的程序 —— 新文件解压到了别处，而你双击的还是旧位置的
+「启动.bat」或旧的桌面快捷方式。上面「代码在哪」那一行就是真相：
+去那个文件夹，把新版文件覆盖进去，或者直接到新文件夹里双击启动.bat。<br>
+exe 也一样：重新打包前的 exe 永远是旧版本。</div>
+<p style="margin:26px 0 0"><a href="/">← 回到界面</a>　<a href="/diagnose.txt">导出诊断包</a></p>
+</div>""")
 
     @r.get("/api/state")
     async def state(_):
@@ -2399,7 +2472,13 @@ async def main():
                 input("按回车退出…")
         return
     url = f"http://127.0.0.1:{a.port}"
-    print(f"dcwatch -> {url}   (数据: {DB_PATH})", flush=True)
+    # 版本必须是黑窗口的第一行。用户更新完最想确认的就是「我跑的是哪一版」，
+    # 而黑窗口是他一定会看到的地方（界面可能被浏览器缓存成旧的，这里不会骗人）。
+    print(f"dcwatch v{VERSION}{'（exe）' if FROZEN else ''}   扩展应为 v{EXT_MIN} 以上"
+          f"{'，你这份 extension 文件夹是 v' + (ext_version() or '?') if ext_version() else ''}", flush=True)
+    print(f"代码: {BASE}", flush=True)
+    print(f"配置: {DB_PATH}", flush=True)
+    print(f"dcwatch -> {url}     版本核对页：{url}/version", flush=True)
     if (a.open or FROZEN) and not a.no_open:
         with contextlib.suppress(Exception):
             webbrowser.open(url)
