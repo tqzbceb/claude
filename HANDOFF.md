@@ -17,7 +17,35 @@
 - 工作区里的 `claude/` 是**死快照**（没有 `.git`）。干活永远 `git clone` 到 `/tmp` 上改，改完推。
 
 ## 当前状态
-dcwatch 代码侧最新是 **v1.9.3 + A2/A3/A5 修复（未发版）**。
+dcwatch 代码侧最新是 **v1.9.3 + A1–A5 全部修复（都未发版）**。BACKLOG 的 A 类 bug 清零，
+C1 也做完。下一件按顺序：
+
+1. **Claude review A1+C1**（刚施工完，commit `31eea73`）：对照 `PLAN_A1C1.md` 检查 diff +
+   回归结果，PLAN「不许做的事」逐条核对。发现问题直接改完推送。
+2. **出 v1.9.4**：A2 动过 `extension/content.js`（硬规矩 2）——要 bump `server.py` 的
+   `VERSION` 和 `EXT_MIN`、bump `extension/manifest.json` 的 version，**程序 zip + 扩展 zip
+   两个都出**，`release/` 和 `outputs/` 同步（旧版删掉）。出完让用户：①重装扩展并在
+   Discord 页面按 F5；②真机验三条（A2 回复消息的盯人命中、A3 开两个标签页只弹一条、
+   A5 关掉三个开关立刻全停）。
+3. 然后才是 BACKLOG 里的新活：B3+B4+B2（模型接入大轮）→ B1（AI 复核规则）→ C2（动扩展）
+   → C3、B5、B6、D 定稿。优先级建议见 BACKLOG 末尾。
+
+**A1「聊天刷新丢失」+ C1「多开聊天」已修完（施工窗口 Kimi K3，commit `31eea73`，待 review）**：
+wb_sessions/wb_msgs 两张新表 + 五个 `/api/wb/*` 接口 + ask/stream 成功路径落库
+（plain=1 探针和失败分支不进库）+ 前端左侧会话栏（新建/切换/改名/删除）+「清空」改
+「新话题」+ 诊断包 `[5.6] 工作台会话`（只印条数和时间）。回归 **542 条全绿**
+（e2e_chat 42 条本轮新增），浏览器目检全流通过。两个坑已写进 `tests/RUN.md`：
+失败注入要靠 mockllm 回 500（provider 名写错会被兜底）；测「删当前 cur 清零」要先 open。
+
+**A4「转发出口锁死 Discord」已修**（`PLAN_A4.md`）：UX 重做，只动 ui.html，
+演示目检 + 500/500 + 46/16 全绿。
+
+---
+
+<details>
+<summary>各条修复的技术细节（A2/A3/A5/A4/v1.9.3 那轮，点开看）</summary>
+
+
 
 **A3「重复通知」+ A5「关了开关还弹」已修**（施工图 `PLAN_A3A5.md`）。根因是同一个：
 ui.html 的「网页通知」`new Notification` 在 Windows 上也进系统通知中心，用户分不出它和原生 toast——
@@ -50,6 +78,8 @@ A5：`S.cfg` 只在 boot 取一次，`/api/config` 存 sinks 后服务端不广�
 imp 74 + **ext 53，本轮新增**）。`extension/` 一行没动，浏览器侧那 43 + 16 条没重跑。
 交付 `outputs/dcwatch-v1.9.3.zip`，同一份也换进了 `release/`（旧的 1.9.2 删了）。
 **没有出扩展 zip**（扩展没改）。
+
+</details>
 
 ## 已完成
 - 单进程 aiohttp 服务端（server.py）：Discord 监听 / 规则引擎 / OpenAI 兼容模型调用 / SQLite 存储
