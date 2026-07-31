@@ -3,7 +3,7 @@
 这个目录就在项目根下面（`<项目>/tests/`），`runall.sh` 自己会找到 `../server.py`，
 不需要配任何路径。布局不一样时用 `DC=/path/to/dcwatch ./runall.sh ...`。
 
-改完 server.py，**500 条全跑一遍**（一次两三套，命令超时一般 120s）：
+改完 server.py，**542 条全跑一遍**（一次两三套，命令超时一般 120s）：
 
 ```bash
 pip install aiohttp        # 唯一依赖；某些一次性环境每次都要重装
@@ -12,7 +12,7 @@ cd tests
 ./runall.sh e2e_multi.py e2e_wiz.py              # 26 + 83（wiz 单套约 40s，别再多塞）
 ./runall.sh e2e_v17.py e2e_diag.py                # 46 + 47
 ./runall.sh e2e_wb.py e2e_imp.py                 # 96 + 74
-./runall.sh e2e_ext.py                           # 53
+./runall.sh e2e_ext.py e2e_chat.py               # 53 + 42
 ```
 
 `runall.sh` 做的事：起假 OpenAI（`mockllm.py` :8899）和假 webhook（`echo.py` :8898 → /tmp/bcode/echo.jsonl），
@@ -171,3 +171,13 @@ merge 不删本机多的、replace 先列 removes 再问 / 覆盖不换 id（界
 坏 JSON、别人家的 schema 一律 400 且带人话原因。
 - 跟规则包同样的三条铁律，别为「统一」改掉：① `dry_run` 默认真；② 导入戳不进 `DEFAULT_TPL`
   （进了就会被 `tpl_for_export` 导出去）；③ 频道 ID 只要求纯数字，**不按本机 known_ids 洗**。
+
+## e2e_chat.py 覆盖（工作台聊天持久化 + 多会话，42 条，A1+C1）
+两张新表 `wb_sessions` / `wb_msgs`，五个 `/api/wb/*` 接口：
+空库 sessions=[] cur=0 / 新建会话 cur 指过去 / ask 不带 sid 自动建会话并把名字顶成第一句话头 20 字 /
+open 取回消息（最多 60 条、顺序 u,a）/ 带 sid 追加 / 多会话各自独立 /
+rename（空名 400、超长截 40）/ del 连消息一起删、**删当前会话 cur 清零**（测试要先 open 切成当前，
+open 的职责就是记 wb_cur）/ plain=1 探针不进库 / 模型调用失败不进库 / open 不存在 404 /
+用户输入截 4000。
+- 坑：失败注入**不能**靠写错 provider 名 —— `App.provider()` 对未知名字兜底到第一个 provider，
+  调用照样成功。要让 mockllm 真回错：`/__script` 排一条 `{"http":{"status":500,"body":"boom"}}`。

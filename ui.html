@@ -2718,7 +2718,7 @@ async function boot(){
     const ms=await api('/api/messages?limit=300');S.msgs=ms?ms.messages:[];
     $('#modeTag').textContent='';
     wbLoadSessions();}                                // 聊天存库（A1）：连上后端才装会话
-  else{seedDemo();S.demo=true;$('#modeTag').textContent='演示模式（未连上后端）';
+  else{seedDemo();S.demo=true;renderSess();$('#modeTag').textContent='演示模式（未连上后端）';
     console.warn('[dcwatch] 未连上后端：',S.lastErr);}
   S.models={...(S.cfg.models_cache||{})};          // 拉过的模型列表存在配置里，刷新也还在
   renderSources();renderSinkRows();renderList();renderRules();renderNl();

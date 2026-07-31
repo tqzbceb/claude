@@ -18,12 +18,21 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**正在做 A1+C1 施工**（Kimi K3 实现窗口：照 `PLAN_A1C1.md` 敲 server.py + ui.html + e2e_chat.py）。
-步骤：①DB 两表 → ②5 接口+落库 → ③前端会话栏 → ④e2e_chat 30 条 → ⑤530/530 + 目检 → ⑥收尾。
-方案要点：SQLite 新表 wb_sessions + wb_msgs，五个 /api/wb/* 接口，ask/stream 成功路径落库，
-前端工作台左侧会话列表（新建/切换/改名/删除），「清空」改「新话题」。
-测试新增 tests/e2e_chat.py ~30 条，全套要 530/530。诊断包加 [5.6] 段。
-下一件：实现窗口照 PLAN_A1C1.md 施工，再下一件 Claude review。
+**A1+C1 施工完成（Kimi K3 实现窗口），下一件：Claude review**（对照 `PLAN_A1C1.md` 检查
+diff + 回归结果，PLAN 里「不许做的事」逐条核对）。施工记录：
+- server.py：wb_sessions/wb_msgs 两表、`wb_save_pair`、五个 `/api/wb/*`、ask/stream 成功路径
+  落库（plain=1 与失败分支不进库）、诊断包 `[5.6] 工作台会话`（只印条数+时间）
+- ui.html：左侧会话栏（新建/切换/改名/删除）、boot 装载、`wbSend` 带 sid、发送后刷新列表、
+  「清空」改「新话题」语义、演示分支 renderSess() 补一句（不然演示看不到「还没有会话」提示）
+- tests/e2e_chat.py 新建 **42 条**全绿（跑三遍稳定）；**全套回归 542/542 全绿**（500 旧 + 42 新）
+- 浏览器目检：演示模式（会话栏/新话题/演示发消息）✓；live 全流程序（fetch 桥+localStorage 模拟
+  后端，因云浏览器够不到本机 8777、本机出网拦 Cloudflare 隧道）：启动建会话 → 发两条入库顶名 →
+  模拟 F5 完整恢复 → 新会话/切换/改名(prompt)/删除(confirm)/新话题 全部真实点击通过 ✓；
+  真服务端 curl 验证 ask→落库→诊断包 [5.6] 印出 `#1 … | 2 条消息 | 最后 …` ✓
+- 坑已写进 tests/RUN.md：失败注入不能写错 provider 名（`App.provider()` 会兜底到第一个），
+  要用 mockllm `{"http":{"status":500}}`；「删当前会话 cur 清零」的测试要先 open 切成当前
+- RUN.md（542 条+e2e_chat 段）、README（AI 工作台存库+会话列表三行）、BACKLOG（A1/C1 打勾）已更新
+- 没动 extension/、没 bump 版本号、没碰 EXT_MIN（PLAN 写死的三条都遵守）
 
 ### 发版前待办（攒着，哪轮发版哪轮做）
 - 提 `EXT_MIN`（A2 动了 extension/content.js），用户需重装扩展；
