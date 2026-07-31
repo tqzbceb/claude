@@ -122,9 +122,12 @@ dcwatch **v1.9.0**。**这一版没有改扩展**，扩展留在 v1.8.0，`EXT_M
 - 界面绝不能拿假数据冒充成功；`S.live` 一旦为真永不回退。导出/导入按钮在没连上后端时
   会明说「后端没连上」，不会假装成功
 - 微信只走 Server酱 / 企业微信官方通道；火狐已彻底放弃，只支持 Chrome / Edge
-- **推送凭据不在仓库里，也不该在**。换账号接手时直接跟用户要一个新的 GitHub PAT，用一次性 URL 推：
+- **推送凭据不在仓库里，也不该在**。它在**某个 workspace 的私有目录**
+  （`.bcode/agent-workspace/secrets/github_pat_tqzbceb.txt`，工作区里但不在这个仓库里）。
+  换账号 / 换工作区接手时拿不到 —— 那时候直接跟用户要一个新的 PAT。用一次性 URL 推：
   `git push "https://x-access-token:<PAT>@github.com/tqzbceb/claude.git" HEAD:main`，
   输出过一遍 `sed 's/github_pat_[A-Za-z0-9_]*/***TOKEN***/g'`，推完 `grep -rl github_pat_ .git/` 确认无残留。
-  用户 2026-07-31 明确要求「每次任务做完都推」。推前先 `git ls-remote` 看远端到哪了，别信记忆里的 sha
+  用户 2026-07-31 明确要求「**任务做完直接提交并推送，别停下来问**」。
+  推前先 `git ls-remote` 看远端到哪了，别信记忆里的 sha
 - **交付给用户的 zip 里不含 `tests/`、`AGENTS.md`、`CLAUDE.md`、`HANDOFF.md`**（26 个文件，
   只有他要跑的东西）。所以让接手的 AI **从 GitHub clone**，不要拿用户手上的 zip —— zip 里没有交接内容
