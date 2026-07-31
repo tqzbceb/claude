@@ -3,7 +3,7 @@
 这个目录就在项目根下面（`<项目>/tests/`），`runall.sh` 自己会找到 `../server.py`，
 不需要配任何路径。布局不一样时用 `DC=/path/to/dcwatch ./runall.sh ...`。
 
-改完 server.py，**496 条全跑一遍**（一次两三套，命令超时一般 120s）：
+改完 server.py，**498 条全跑一遍**（一次两三套，命令超时一般 120s）：
 
 ```bash
 pip install aiohttp        # 唯一依赖；某些一次性环境每次都要重装
@@ -11,7 +11,7 @@ cd tests
 ./runall.sh e2e.py e2e_ai.py                     # 46 + 27
 ./runall.sh e2e_multi.py e2e_wiz.py              # 26 + 83（wiz 单套约 40s，别再多塞）
 ./runall.sh e2e_v17.py e2e_diag.py                # 46 + 47
-./runall.sh e2e_wb.py e2e_imp.py                 # 94 + 74
+./runall.sh e2e_wb.py e2e_imp.py                 # 96 + 74
 ./runall.sh e2e_ext.py                           # 53
 ```
 
@@ -23,7 +23,7 @@ cd tests
 DCWATCH_DB=/tmp/p.db python3 server.py     # 别用真配置库
 ```
 
-改完 `extension/content.js`：跑 `content_test.mjs` 的 `run()`（43 条）和 `runFresh()`（16 条），
+改完 `extension/content.js`：跑 `content_test.mjs` 的 `run()`（46 条）和 `runFresh()`（16 条），
 要一个 CDP 会话（`browser_execute` 之类）。它默认读 `../extension/content.js`，
 也可以传路径或设 `DCW_CONTENT_JS`。
 
@@ -125,8 +125,10 @@ providers 形状不对回 400 不是 500。
 - `e2e_diag.py` 里桥的扩展版本**不再写死**，改成开头 `EXT_OK = /api/state.env.ext_min`。
   写死成 1.7.2 时，EXT_MIN 一提到 1.7.4，「一切正常时不许硬凑问题」那节就假红三条。
 
-## e2e_wb.py 覆盖（AI 工作台的「手」，94 条，v1.8.0 / v1.9.2）
+## e2e_wb.py 覆盖（AI 工作台的「手」，96 条，v1.8.0 / v1.9.2 / A2）
 函数调用改规则 / 不许猜 id / 建停试算删 / 只读工具（状态、频道、搜消息）/ 编的 ID 洗掉 /
+A2（2026-07-31）：第 3 节加「盯人试算」—— test_rule 不传 author_id 时默认取规则
+author_ids[0]（盯人规则不再必挂「发的人不在名单里」）、显式传别人的 ID 就不命中。
 接口不支持 tools 自动退回文本指令 / 「允许模型直接改规则」关掉后两条路都断 / 流式 SSE 与 error 事件 /
 plain 模式不带工具 / 多轮上下文 / env 两个开关 / 提示词页能看到「手」那段 /
 第 14 节（v1.9.2）`export_rules`：包的形状、不带 id 和 hits、导入戳不跟着走、

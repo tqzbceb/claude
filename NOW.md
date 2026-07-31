@@ -18,13 +18,18 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**A2 方案已写完：`PLAN_A2.md`（施工图，四处修改 + 两套回归 + 验收命令都定死了）。**
-下一个窗口（不管什么模型）发「继续」= 照 `PLAN_A2.md` 施工：
-1. [ ] 修改 1+2：server.py test_rule 加 author_id 参数 + 默认取规则 author_ids[0]
-2. [ ] 修改 3a+3b：content.js 头像跳过回复预览 + 正文按精确 id 取
-3. [ ] 修改 4：gateway 作者名优先 member.nick（一行）
-4. [ ] 回归：content_test.mjs 加回复场景（3 条）、e2e_wb.py 第 3 节加盯人试算（2 条）
-5. [ ] 全套回归 498/498 全绿，RUN.md/HANDOFF.md 收尾，save 推送，更新本页
+**做完了 A2**（照 `PLAN_A2.md` 施工完毕，Kimi K3 实现窗口）：
+1. [x] 修改 1+2：server.py test_rule 加 author_id 参数 + 默认取规则 author_ids[0]
+2. [x] 修改 3a+3b：content.js 头像跳过回复预览 + 正文按精确 id 取
+3. [x] 修改 4：gateway 作者名优先 member.nick
+4. [x] 回归：content_test.mjs 回复场景 3 条（46+16 全绿）、e2e_wb.py 盯人试算 2 条（96/96）
+5. [x] 全套服务端回归 **498/498 全绿**，RUN.md / HANDOFF.md / 本页已收尾推送
+
+**注意**：这次动了 `extension/content.js` —— 下轮发版要提 `EXT_MIN`、用户需重装扩展；
+回复消息在真 Discord 上还没实测，发版前让用户验一条。
+
+**下一件**：按 BACKLOG 优先级是 **A3 + A5**（监听其余失效项）。Claude 窗口接手写 `PLAN_A3A5.md`，
+然后照旧换实现窗口施工。用户说「继续」时：Claude → 出方案；快模型 → 等 PLAN 出来再施工。
 
 ### 根因（已坐实，第二个窗口查明的）
 - **A · 工作台 test_rule 工具没有 author_id 参数**（server.py `run_wb_tool` 里 ev 硬编码
@@ -46,7 +51,8 @@ BACKLOG 其余任务（A1/A3/A4/A5、B、C）不动，等后续窗口按优先�
   回复预览里的原文（其 id 是 message-content-<被回复消息id>）→ PLAN 修改 3b 按精确 id 取。
 
 ## 最后更新
-2026-07-31 · 双模型流程启用；A2 施工图 PLAN_A2.md 写完推送。下一窗口照 PLAN 施工（用户会换 Kimi K2）
+2026-07-31 · A2 施工完成（Kimi K3 照 PLAN_A2.md）：四处修改 + 498/498 + 46/16 全绿，已推送。
+下一件 A3+A5，等 Claude 窗口出方案。
 
 ## 上一轮（v1.9.3）做完了什么
 批量提取的模板 + 整包导出 / 导入，全流程收尾：
