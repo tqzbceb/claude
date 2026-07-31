@@ -24,7 +24,8 @@ Webhook，可选让大模型判分打标签。单进程 aiohttp + SQLite + 单�
    ```
 
    不绿 = 环境问题，不是代码问题（这两套在干净 clone 上反复跑过）。
-3. **读这三份，按顺序**：`AGENTS.md`（项目怎么运作、用户是谁、**十一条硬规矩**、排查
+3. **先读 `NOW.md`** —— 上一个窗口手停在哪一步（粒度到"步"，是聊天记录的替代品）。
+   它说"没有进行中的任务"才去 `HANDOFF.md` 挑新活。然后**读这三份，按顺序**：`AGENTS.md`（项目怎么运作、用户是谁、**十一条硬规矩**、排查
    「它没提醒我」的固定顺序）→ `HANDOFF.md`（上一轮做完了什么、下一步做什么、踩过的坑）→
    `CLAUDE.md`（用户定的工作协议：会话开始/结束各做什么）。`tests/RUN.md` 是回归的说明书。
 4. **跟用户要一份诊断包**。这是**卡了好几轮的唯一一件真事**：到 2026-07-31 为止，
@@ -67,7 +68,7 @@ V=$(grep -oP 'VERSION = "\K[^"]+' server.py)        # 版本号只有一个来�
 rm -rf __pycache__ tests/__pycache__
 rm -rf /tmp/pack && mkdir -p /tmp/pack/dcwatch && cp -r ./. /tmp/pack/dcwatch/
 cd /tmp/pack/dcwatch && rm -rf .git tests release .gitignore .gitattributes __pycache__ \
-    AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md          # README.md 要留下
+    AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md NOW.md agent   # README.md 要留下
 find . -type f | wc -l                              # 必须是 26
 cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch
 ```
@@ -79,9 +80,26 @@ GitHub 网页下载用的。你出了新版本就把里面的旧 zip 换掉（**
 
 ## 5. 这个运行环境的坑（Browser Use Cloud v4 上跑的话）
 
-- **工作区会被整体同步覆盖**：`.bat`、`.gitignore`、`.gitattributes` 会凭空消失。
-  所以**别在同步过来的那份目录里改代码** —— `git clone` 一份到 `/tmp` 上干活，做完推上去。
-- `/tmp` 是临时盘，**跨会话会被清掉**（本轮就丢过一次 clone）。别把唯一副本放那儿。
+**用户的账号是「10x10」：每个窗口 10 条消息，用完必须换窗口，换窗口＝换会话＝聊天记录一句不过来。**
+所以「会话结束前收尾」这种打算是不成立的 —— 会话是被额度掐断的，不会给你收尾的机会。
+**每做完一步就存盘**：`python3 .bcode/agent-workspace/save.py "做了什么"`
+（commit + 推 GitHub + 把 .md 同步回工作区快照），顺手改掉 `NOW.md` 的「手停在哪一步」。
+
+2026-07-31 实测过换窗口到底丢什么（拿工作区的 `.promote-manifest.json` 跟远端 `git ls-files` 对）：
+
+| 换窗口后 | 结果 |
+|---|---|
+| 工作区里的 .md / .py / .json / .zip / .wav / 图片 | 留下 |
+| 工作区根 `AGENTS.md` | 留下，且**每个新会话自动读**（用户看到的"好像有记忆"就是它） |
+| `.bat` / `.sh` | **丢**：`启动.bat`、`停止.bat`、`build.bat`、`tests/runall.sh` 四个全没 |
+| `.git/` | **丢**，所以工作区里的 `claude/` 是死快照，不是仓库 |
+| `outputs/` | **整个清空**（上一轮交付的 zip 就这么没的） |
+| `/tmp` | 临时盘，别把唯一副本放那儿 |
+| 聊天记录 | 一句不过来 |
+
+- 因此**别在工作区那份 `claude/` 里改代码**（没有 .git，还缺 4 个文件）——
+  `git clone https://github.com/tqzbceb/claude.git /tmp/dcw` 干活，做完推上去。
+- 交付 zip **同时**放 `outputs/`（用户能下载）和 `release/`（跟 git 走）。只放 outputs 换窗口就没了。
 - 手动起服务做冒烟测试要用
   `DCWATCH_DB=/tmp/smoke.db setsid nohup python3 server.py >/tmp/smoke.log 2>&1 < /dev/null &`；
   不加 `setsid`，bash 工具一超时就把服务连带杀掉，看着像端口不通。

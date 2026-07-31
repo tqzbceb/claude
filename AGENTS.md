@@ -9,7 +9,7 @@
 （会话开始/结束要做什么），照着执行。
 
 **仓库里的每一份东西都是为了「不需要聊天记录也能接上」而存在的**：
-`START_HERE.md` 换号第一页 · 这份 项目记忆 · `HANDOFF.md` 进度与坑 · `CLAUDE.md` 协议 ·
+`NOW.md` 手停在哪一步 · `START_HERE.md` 换号第一页 · 这份 项目记忆 · `HANDOFF.md` 进度与坑 · `CLAUDE.md` 协议 ·
 `tests/` 401→443 条回归（代码说不了谎的那部分）· `release/` 一份现成的成品 zip
 （用户没有 AI 也能自己下）。发现有什么只存在于聊天里，立刻补进来。
 
@@ -33,6 +33,8 @@ dcwatch：盯 Discord 指定频道的消息，按规则筛，命中了本机弹�
 ## 文件地图
 
 ```
+NOW.md         **进行中**的状态，粒度到"步"（HANDOFF 粒度到"轮"）。换窗口后第一个读
+agent/save.py  存盘：commit + 推 GitHub + 把 .md 同步回工作区快照。不进交付 zip
 START_HERE.md  换号 / 换窗口后第一个读的东西（给 AI 的 5 分钟上手页）
 release/       最新一个打好的交付 zip，供用户直接从 GitHub 网页下载（只留最新一个）
 server.py      单进程后端。Gateway 监听 / 规则引擎 / 模型调用 / SQLite / 所有 HTTP 接口
@@ -84,7 +86,7 @@ V=$(grep -oP 'VERSION = "\K[^"]+' server.py)          # 版本号只有一个来
 rm -rf /tmp/pack && mkdir -p /tmp/pack/dcwatch
 cp -r ./. /tmp/pack/dcwatch/
 cd /tmp/pack/dcwatch && rm -rf .git tests release .gitignore .gitattributes __pycache__ \
-    AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md
+    AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md NOW.md agent
 find . -type f | wc -l                                # 必须是 26，少了就是同步把 .bat 弄丢了
 cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch   # 环境里没有 zip 命令
 ```
