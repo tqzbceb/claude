@@ -285,13 +285,18 @@ ok("关掉流式能存下来", call("/api/state")["env"]["ai"]["stream"] is Fals
 ai(stream=True)
 
 print("13. 提示词页要能看到「手」这段，不然用户不知道它凭什么能改我的规则")
+# v1.10.0（B3）起「手」拆成三条独立可编辑的：函数调用版 / 文本指令版 / 关掉之后
 pr = call("/api/prompts")
 keys = [x["key"] for x in pr["builtin"]]
-ok("多了 workbench_tools 一条", "workbench_tools" in keys, keys)
-tp = [x for x in pr["builtin"] if x["key"] == "workbench_tools"][0]
+ok("六条骨架都在", set(keys) == {"wizard", "compose", "workbench", "wb_tools", "wb_text", "wb_off"}, keys)
+ok("这一页现在是可编辑的", pr.get("editable") is True, pr.get("editable"))
+tp = [x for x in pr["builtin"] if x["key"] == "wb_tools"][0]
 ok("原文里有工具清单", "list_rules" in tp["text"] and "update_rule" in tp["text"], tp["text"][:200])
-ok("也写明了关掉那个勾之后换成什么", "不能动手" in tp["text"], tp["text"][-200:])
-ok("说明了在哪儿关", "允许模型直接改规则" in tp["why"] + tp["text"], tp["why"])
+off = [x for x in pr["builtin"] if x["key"] == "wb_off"][0]
+ok("也写明了关掉那个勾之后换成什么", "不能动手" in off["text"], off["text"][:200])
+ok("说明了在哪儿关", "允许模型直接改规则" in off["why"] + off["text"] + tp["why"], tp["why"])
+ok("每条都带出厂原版，好让界面做「恢复默认」", all(x.get("builtin") for x in pr["builtin"]), "")
+ok("没改过的标成 changed=False", all(x["changed"] is False for x in pr["builtin"]), "")
 
 print("14. 模型能把规则整包导出念给用户（但没有导入工具）")
 # 第 6 节把 mock-1 记成「不支持函数调用」了（进程内 no_tools 记着），那条路下工具结果是
@@ -374,7 +379,7 @@ ok("模型没有导入工具", act.get("ok") is False, r.get("acts"))
 ok("错误说清了没这个工具", "没有 import_rules" in (act.get("err") or ""), act)
 ok("规则一条都没被偷偷改掉", len(call("/api/state")["rules"]) == n_before, n_before)
 ok("不算改动", r.get("changed") is False, r)
-pr = [x for x in call("/api/prompts")["builtin"] if x["key"] == "workbench_tools"][0]
+pr = [x for x in call("/api/prompts")["builtin"] if x["key"] == "wb_tools"][0]
 ok("提示词里有 export_rules", "export_rules" in pr["text"], pr["text"][:300])
 ok("提示词里明说没有导入工具", "没有导入工具" in pr["text"], pr["text"][-400:])
 

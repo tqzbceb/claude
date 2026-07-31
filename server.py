@@ -153,10 +153,12 @@ DEFAULT_CONFIG = {
     "sources": {"discord": True, "browser": True},   # master switch per source
     # 出网设置。proxy 留空＝跟随系统环境变量；填了就强制走它（形如 http://127.0.0.1:7890）
     "net": {"proxy": ""},
-    # AI 工作台的两个开关。
+    # AI 相关开关。
     #   stream = 边想边显示（不然模型思考十几秒，界面上只有一个「…」，看着像卡死）
     #   tools  = 允许模型自己动手改规则（关掉就退回只会讲步骤的老样子）
-    "ai": {"stream": True, "tools": True},
+    #   post   = 提示词后处理模式，见 AI_POST。弱模型不按格式回答时把它调严
+    #   params = 采样参数（温度 / top_p / 惩罚 / 附加 JSON 透传），见 DEFAULT_PARAMS
+    "ai": {"stream": True, "tools": True, "post": "off", "params": {}},
     # 出口：命中并达到 min_score 的消息往哪儿送
     "sinks": {
         "browser": True,            # 网页通知（要开着界面）
@@ -171,6 +173,9 @@ DEFAULT_CONFIG = {
     },
     # 内置提示词：规则里不单独写 prompt 时用这里的。界面上可改、可一键恢复默认。
     "prompts": {},
+    # 骨架提示词的覆盖值（向导 / 出规则 / 工作台 / 工作台的手）。空 = 用程序里的出厂版。
+    # 键只能是 BUILTIN_SYS 里那几个。整包导出导入走 /api/preset/*，见 PRESET_SCHEMA。
+    "sys_prompts": {},
     # AI 工作台上那排快捷按钮。名字和内容全可改，可删可加可排序；空列表 = 一个按钮都不显示。
     "quick_actions": [
         {"id": "q1", "name": "总结选中消息", "text": "把这些消息压成 3-5 条要点，标出需要我行动的部分。"},
@@ -187,14 +192,63 @@ DEFAULT_CONFIG = {
 }
 
 DEFAULT_PROMPTS = {
-    "ai_tag": ("你是消息分流助手。判断这条 Discord 消息对我是否重要。"
-               "只输出 JSON: {\"score\":0-100,\"tags\":[\"...\"],\"reason\":\"一句话\","
-               "\"todo\":\"若需我行动则写，否则空\"}"),
+    # 为什么写这么长：用户拿 DeepSeek v4 pro 都常收到「模型不太会按格式回答」。
+    # 一句话的提示词对便宜模型不够 —— 字段含义、打分标尺、两个正反例（few-shot）
+    # 三件都给齐，格式违规率才降得下来。改短了就会退回老样子。
+    "ai_tag": (
+        "你是 dcwatch 的消息分流助手。判断这条 Discord 消息对使用者是否重要。\n"
+        "\n"
+        "## 输出格式（硬要求）\n"
+        "只输出一个 JSON 对象，不要 markdown 代码块、不要解释、不要前后缀。字段固定四个：\n"
+        '{"score":0-100 的整数,"tags":["短标签",...],"reason":"一句话中文说明为什么给这个分",'
+        '"todo":"需要使用者动手才写，否则空字符串"}\n'
+        "\n"
+        "## 打分标尺\n"
+        "0-29 无关闲聊、表情、+1、单独一个链接没有说明\n"
+        "30-59 有点关系但不用马上看\n"
+        "60-84 值得提醒：有人在发放/转让可用资源、点名找他、有明确时效\n"
+        "85-100 必须立刻看：限量名额、马上过期、直接 @ 他要答复\n"
+        "\n"
+        "## 例子（照这个格式答）\n"
+        "消息：`有多余的 claude 车位一个，要的私`\n"
+        '{"score":88,"tags":["送资源","车位"],"reason":"有人无偿转让可用车位，时效强",'
+        '"todo":"私聊对方要车位"}\n'
+        "消息：`哈哈哈哈笑死`\n"
+        '{"score":5,"tags":["闲聊"],"reason":"纯闲聊，没有可行动内容","todo":""}\n'
+        "\n"
+        "## 拿不准怎么办\n"
+        "看不清（内容在图片/附件里、被截断、疑似有意打乱字符）→ 别猜：score 给 60，"
+        'tags 里加 "需人工看"，reason 写清你看不到什么。宁可让他自己看一眼，也不要漏。'),
     "ai_reply": "你是该频道的助手，用简洁中文回答，不超过 120 字。",
     "ai_summary": "把这段 Discord 对话压成 3-5 条要点中文摘要，标出待办和结论。",
     "ai_extract": "从消息中抽取结构化信息，只输出 JSON。字段自定，找不到就留空。",
-    # 工作台的身份和边界在 WORKBENCH_SYS 里（写死，不让改）。这条只是用户想追加的偏好，默认空。
+    # 工作台的身份和边界在 WORKBENCH_SYS 里（可在界面改，默认是出厂版）。
+    # 这条只是用户想追加的偏好，默认空。
     "ask": "",
+}
+
+# ---------- 采样参数（B4：用户原话「这才是让模型老实的根本」） ----------
+# 只有这几个是白名单，别的想传就写进 extra（一段 JSON，原样并进请求体）。
+# 值为 None / "" 表示「不传这个字段」，让服务商用自己的默认 —— 有些兼容接口
+# 见到 presence_penalty 就 400，所以默认全空，只有温度给了个稳的 0.3。
+DEFAULT_PARAMS = {
+    "temperature": 0.3,        # 越低越死板越听话。判分/出规则这种活就该低
+    "top_p": None,
+    "max_tokens": None,        # 空 = 按用途各自的默认（判分 300、出规则 1600…）
+    "presence_penalty": None,
+    "frequency_penalty": None,
+    "extra": "",               # 例如 {"reasoning_effort":"low"}，透传给服务商
+}
+PARAM_RANGE = {"temperature": (0.0, 2.0), "top_p": (0.0, 1.0), "max_tokens": (16, 32000),
+               "presence_penalty": (-2.0, 2.0), "frequency_penalty": (-2.0, 2.0)}
+
+# ---------- 提示词后处理（B2：抄酒馆 SillyTavern 的 prompt post-processing） ----------
+AI_POST = {
+    "off": "原样发（默认）。system 一条 + 历史照原样，兼容性最好的服务商都吃这套",
+    "merge": "合并同角色：多条 system 并成开头一条，相邻的同角色消息并成一条，"
+             "保证 user / assistant 严格交替、最后一条一定是 user",
+    "strict": "严格：在「合并同角色」之上，把 system 也折进第一条 user 里 —— "
+              "只剩 user/assistant 交替。给那些不认 system、或者认了也不当真的模型用",
 }
 
 # ---------- 转发出口 ----------
@@ -1304,7 +1358,8 @@ async def wb_run(app, prov, model, msgs, allow_ids, emit=None, stream=False, max
                     "human": "这个模型不支持函数调用，改用文本指令模式，功能一样"}
             acts.append(note)
             await send("act", note)
-            msgs[0]["content"] = msgs[0]["content"].replace(WB_TOOLS_HOWTO, WB_TEXT_PROTO)
+            msgs[0]["content"] = msgs[0]["content"].replace(app.sys_prompt("wb_tools"),
+                                                             app.sys_prompt("wb_text"))
             step -= 1               # 这一轮不算数，重来一次
             continue
         text = msg.get("content") or ""
@@ -1394,6 +1449,153 @@ def cmp_ver(a, b):
 
 def now():
     return time.time()
+
+
+# ---------- 骨架提示词：出厂值在这儿，用户可以在界面上覆盖（B3） ----------
+# 以前这四条写死不让改，理由是「改坏了向导会失效」。用户要求「我得看得到内容、然后我可以改」，
+# 所以改成：出厂值留在这里当兜底，cfg["sys_prompts"] 里有非空覆盖就用覆盖的，
+# 界面上一键就能恢复出厂。改坏了最坏的结果是向导变笨，恢复默认即可 —— 不会丢数据。
+BUILTIN_SYS = {
+    "wizard": ("规则向导（会反问你的那个）", "WIZARD_SYS"),
+    "compose": ("一句话直接出规则（老路径）", "COMPOSE_SYS"),
+    "workbench": ("AI 工作台的身份与边界", "WORKBENCH_SYS"),
+    "wb_tools": ("工作台的手·函数调用版", "WB_TOOLS_HOWTO"),
+    "wb_text": ("工作台的手·文本指令版（模型不支持函数调用时）", "WB_TEXT_PROTO"),
+    "wb_off": ("工作台的手·关掉之后", "WB_HANDS_OFF"),
+}
+BUILTIN_SYS_TEXT = {"wizard": WIZARD_SYS, "compose": COMPOSE_SYS, "workbench": WORKBENCH_SYS,
+                    "wb_tools": WB_TOOLS_HOWTO, "wb_text": WB_TEXT_PROTO, "wb_off": WB_HANDS_OFF}
+
+PRESET_SCHEMA = "dcwatch.preset/1"       # 认这个名字才当预设包；字段不兼容了就 /2
+
+
+def norm_params(raw):
+    """校验采样参数。返回 (干净的 dict, 错误话术)；错误话术非空就别存。
+
+    越界不静悄悄夹住 —— 用户以为自己设了 temperature=5，实际被改成 2，
+    行为跟他想的不一样又找不到原因，比直接报错糟得多。
+    """
+    if not isinstance(raw, dict):
+        return {}, "params 必须是对象"
+    out = {}
+    for k, v in raw.items():
+        if k not in DEFAULT_PARAMS:
+            return {}, f"认不出的参数「{k}」。要传别的就写进「附加参数」那一栏"
+        if k == "extra":
+            t = str(v or "").strip()
+            if t:
+                try:
+                    if not isinstance(json.loads(t), dict):
+                        return {}, "「附加参数」要是一个 JSON 对象，形如 {\"seed\":42}"
+                except Exception as e:
+                    return {}, f"「附加参数」不是合法 JSON（{e}）"
+            out["extra"] = t
+            continue
+        if v is None or v == "":
+            out[k] = None                     # 明确表示「不传这个字段」
+            continue
+        try:
+            n = float(v)
+        except Exception:
+            return {}, f"「{k}」要填数字"
+        lo, hi = PARAM_RANGE[k]
+        if not (lo <= n <= hi):
+            return {}, f"「{k}」要在 {lo} ~ {hi} 之间，你填的是 {v}"
+        out[k] = int(n) if k == "max_tokens" else n
+    return out, ""
+
+
+def preset_pack(cfg, name=""):
+    """把「模型怎么被指挥」这件事整包导出：骨架提示词 + 动作提示词 + 采样参数 + 后处理模式。
+
+    不含 API Key、不含服务商地址、不含规则 —— 那些是这台机器的账，换机器必然不一样。
+    """
+    return {
+        "schema": PRESET_SCHEMA, "app": "dcwatch", "version": VERSION,
+        "name": name or f"我的预设 {time.strftime('%m-%d')}",
+        "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "sys_prompts": {k: (cfg.get("sys_prompts") or {}).get(k) or BUILTIN_SYS_TEXT[k]
+                        for k in BUILTIN_SYS},
+        "prompts": {k: (cfg.get("prompts") or {}).get(k) or DEFAULT_PROMPTS[k]
+                    for k in DEFAULT_PROMPTS},
+        "params": dict(DEFAULT_PARAMS, **{k: v for k, v in ((cfg.get("ai") or {})
+                                                           .get("params") or {}).items()
+                                          if k in DEFAULT_PARAMS}),
+        "post": str((cfg.get("ai") or {}).get("post") or "off"),
+    }
+
+
+def diff_preset(cfg, pack):
+    """预设包 vs 现在，逐项列出会变成什么。硬规矩 10：先给他看，再落库。"""
+    ch = []
+    for k, (label, _) in BUILTIN_SYS.items():
+        new = str((pack.get("sys_prompts") or {}).get(k) or "").strip()
+        if not new:
+            continue
+        old = ((cfg.get("sys_prompts") or {}).get(k) or BUILTIN_SYS_TEXT[k]).strip()
+        if new != old:
+            ch.append({"kind": "骨架提示词", "key": k, "label": label,
+                       "old_len": len(old), "new_len": len(new),
+                       "same_as_builtin": new == BUILTIN_SYS_TEXT[k].strip(),
+                       "preview": new[:180]})
+    for k in DEFAULT_PROMPTS:
+        if k not in (pack.get("prompts") or {}):
+            continue
+        new = str(pack["prompts"][k] or "").strip()
+        old = str((cfg.get("prompts") or {}).get(k) or DEFAULT_PROMPTS[k]).strip()
+        if new != old:
+            ch.append({"kind": "动作提示词", "key": k, "label": k,
+                       "old_len": len(old), "new_len": len(new),
+                       "same_as_builtin": new == DEFAULT_PROMPTS[k].strip(),
+                       "preview": new[:180]})
+    if isinstance(pack.get("params"), dict):
+        cur = dict(DEFAULT_PARAMS, **{k: v for k, v in ((cfg.get("ai") or {}).get("params") or {}).items()
+                                     if k in DEFAULT_PARAMS})
+        for k, v in pack["params"].items():
+            if k in DEFAULT_PARAMS and (v if v not in ("",) else None) != cur.get(k):
+                ch.append({"kind": "参数", "key": k, "label": k,
+                           "old_len": 0, "new_len": 0, "same_as_builtin": False,
+                           "preview": f"{cur.get(k)} → {v}"})
+    if pack.get("post") and str(pack["post"]) in AI_POST and \
+            str(pack["post"]) != str((cfg.get("ai") or {}).get("post") or "off"):
+        ch.append({"kind": "后处理", "key": "post", "label": "提示词后处理",
+                   "old_len": 0, "new_len": 0, "same_as_builtin": False,
+                   "preview": f"{(cfg.get('ai') or {}).get('post') or 'off'} → {pack['post']}"})
+    return ch
+
+
+def post_process(msgs, mode):
+    """提示词后处理。抄酒馆（SillyTavern）那个「提示词后处理」下拉：用户实测调严之后
+    模型听话很多。原理不神秘 —— 很多兼容接口对 messages 的形状有隐含要求
+    （system 只能一条且在最前、user/assistant 必须交替、最后一条得是 user），
+    形状不对时模型的注意力就散，输出格式跟着崩。这里把形状规整掉。
+
+    mode: off / merge / strict（见 AI_POST）。不认识的值按 off 处理。
+    只动 role+content 的形状，一个字都不改内容。
+    """
+    if mode not in ("merge", "strict") or not msgs:
+        return msgs
+    sys_txt = "\n\n".join(str(m.get("content") or "").strip()
+                          for m in msgs if m.get("role") == "system" and m.get("content"))
+    rest = [dict(m) for m in msgs if m.get("role") != "system"]
+    # 带 tool_calls / tool 结果的轮次不能合并（合了函数调用就废了），原样让它过
+    if any(m.get("role") == "tool" or m.get("tool_calls") for m in rest):
+        return msgs
+    out = []
+    for m in rest:
+        if out and out[-1]["role"] == m.get("role"):
+            out[-1]["content"] = str(out[-1]["content"]) + "\n\n" + str(m.get("content") or "")
+        else:
+            out.append({"role": m.get("role") or "user", "content": str(m.get("content") or "")})
+    while out and out[0]["role"] == "assistant":
+        out.pop(0)                       # 开头不能是 assistant
+    if not out or out[-1]["role"] != "user":
+        out.append({"role": "user", "content": "请按上面的格式回答。"})
+    if mode == "strict":
+        if sys_txt:
+            out[0]["content"] = sys_txt + "\n\n---\n\n" + out[0]["content"]
+        return out
+    return ([{"role": "system", "content": sys_txt}] if sys_txt else []) + out
 
 
 class Bus:
@@ -1791,13 +1993,31 @@ class App:
         used = self.db.q("SELECT COUNT(*) n FROM aiusage WHERE ts>?", (now() - 86400,))[0]["n"]
         if used >= cap:
             raise RuntimeError(f"已达今日调用上限 {cap}")
-        body = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.3}
+        pr = self.ai_params()
+        # 后处理（B2）：函数调用那条路不能动形状，所以带 tools 时跳过
+        messages = messages if tools else post_process(messages, self.ai_post())
+        body = {"model": model, "messages": messages, "max_tokens": max_tokens}
+        for k in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+            if pr.get(k) is not None and pr.get(k) != "":
+                body[k] = float(pr[k])
+        if pr.get("max_tokens"):            # 用户自己指定了就盖掉各用途的默认
+            body["max_tokens"] = int(pr["max_tokens"])
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         if tools:
             body["tools"], body["tool_choice"] = tools, "auto"
         if stream:
             body["stream"] = True
+        if str(pr.get("extra") or "").strip():
+            # 附加参数：原样并进请求体。写坏了只影响这一次调用，报错会带上原文
+            try:
+                ex = json.loads(pr["extra"])
+                if not isinstance(ex, dict):
+                    raise ValueError("附加参数要是一个 JSON 对象")
+                body.update(ex)
+            except Exception as e:
+                raise RuntimeError(f"「附加参数」不是合法 JSON 对象（{e}）。"
+                                   "去「模型接入」页的「高级参数」里改，或者清空它")
         hdr = {"Content-Type": "application/json"}
         if p.get("api_key"):
             hdr["Authorization"] = "Bearer " + p["api_key"]
@@ -2086,6 +2306,21 @@ class App:
     def prompt(self, key):
         """内置提示词：用户在界面改过就用他的，没改过用出厂值。"""
         return (self.cfg.get("prompts") or {}).get(key) or DEFAULT_PROMPTS[key]
+
+    def sys_prompt(self, key):
+        """骨架提示词（向导 / 出规则 / 工作台 / 工作台的手）。同上：改过用他的。"""
+        v = (self.cfg.get("sys_prompts") or {}).get(key)
+        return v.strip() if isinstance(v, str) and v.strip() else BUILTIN_SYS_TEXT[key]
+
+    def ai_params(self):
+        """采样参数：出厂值 + 用户覆盖。值是 None/'' 的字段不往请求体里塞。"""
+        return dict(DEFAULT_PARAMS, **{k: v for k, v in ((self.cfg.get("ai") or {})
+                                                        .get("params") or {}).items()
+                                      if k in DEFAULT_PARAMS})
+
+    def ai_post(self):
+        m = str((self.cfg.get("ai") or {}).get("post") or "off")
+        return m if m in AI_POST else "off"
 
     def pick_model(self, rule):
         prov = rule.get("provider") or self.cfg["default_model"]["provider"]
@@ -2528,6 +2763,11 @@ def safe_cfg(cfg):
     c["prompt_defaults"] = DEFAULT_PROMPTS      # 界面上「恢复默认」要拿它当占位
     c["quick_defaults"] = DEFAULT_CONFIG["quick_actions"]     # 工作台按钮的「恢复默认」
     c["hook_vars"] = list(HOOK_VARS)
+    # 骨架提示词的出厂值和参数出厂值：界面要拿它们做占位和「恢复默认」（B3 / B4）
+    c["sys_defaults"] = BUILTIN_SYS_TEXT
+    c["sys_meta"] = {k: v[0] for k, v in BUILTIN_SYS.items()}
+    c["param_defaults"] = DEFAULT_PARAMS
+    c["post_modes"] = AI_POST
     return c
 
 
@@ -2658,6 +2898,31 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             patch["sinks"] = merged
         if "quick_actions" in patch:
             patch["quick_actions"] = norm_quick(patch["quick_actions"])
+        if "sys_prompts" in patch:                    # 骨架提示词（B3）：只认已知的键
+            sp, bad = {}, []
+            if not isinstance(patch["sys_prompts"], dict):
+                return web.json_response({"ok": False, "error": "sys_prompts 必须是对象"}, status=400)
+            for k, v in patch["sys_prompts"].items():
+                if k not in BUILTIN_SYS:
+                    bad.append(k)
+                elif isinstance(v, str) and v.strip() and v.strip() != BUILTIN_SYS_TEXT[k].strip():
+                    sp[k] = v.strip()[:20000]         # 跟出厂值一样就不存，省得占地方
+            if bad:
+                return web.json_response({"ok": False, "error": "认不出的提示词名：" + "、".join(bad[:5])},
+                                         status=400)
+            patch["sys_prompts"] = sp
+        if isinstance(patch.get("ai"), dict):         # 采样参数（B4）+ 后处理（B2）
+            merged = dict(app.cfg.get("ai") or {})
+            if "post" in patch["ai"] and patch["ai"]["post"] not in AI_POST:
+                return web.json_response({"ok": False, "error": "post 只能是 " + " / ".join(AI_POST)},
+                                         status=400)
+            if "params" in patch["ai"]:
+                ok, err = norm_params(patch["ai"]["params"])
+                if err:
+                    return web.json_response({"ok": False, "error": err}, status=400)
+                patch["ai"]["params"] = ok
+            merged.update(patch["ai"])
+            patch["ai"] = merged
         if "extract_templates" in patch:
             patch["extract_templates"] = norm_tpls(patch["extract_templates"])
         app.cfg.update(patch)
@@ -2911,37 +3176,130 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
 
     @r.get("/api/prompts")
     async def prompts(_):
-        """把写死在程序里的提示词原样交出来。你有权看见 AI 是被怎么指挥的。
-        这两条不在界面里改（改坏了向导会直接失效），要改就改 server.py 里的常量。"""
-        return web.json_response({"ok": True, "builtin": [
-            {"key": "wizard", "name": "规则向导（反问你的那个）",
-             "when": "「监听规则」页顶部每问你一轮、每出一次规则，都会带上这段",
-             "why": "把「该问什么、什么最容易漏、模糊需求该怎么拆」这些经验写死在这里，"
-                    "这样换成便宜的模型也不至于乱答",
-             "where": "server.py 里的 WIZARD_SYS", "text": WIZARD_SYS},
-            {"key": "compose", "name": "一句话直接出规则（老路径）",
-             "when": "向导之外的快速通道，现在界面默认走向导，这条留着兼容",
-             "why": "只翻译不反问，适合你已经很清楚要什么的时候",
-             "where": "server.py 里的 COMPOSE_SYS", "text": COMPOSE_SYS},
-            {"key": "workbench", "name": "AI 工作台（跟你自由对话的那个）",
-             "when": "「AI 工作台」里你每发一句话都会带上这段，后面还会附上这台机器的实况"
-                     "（收信方式、有没有浏览器在旁听、你有哪些规则、最近哪些频道来过消息、"
-                     "以及你这句话里贴的 Discord 链接拆出来的 ID）",
-             "why": "没有这段的时候，模型不知道自己在一个监听程序里，会回「我无法访问 Discord」"
-                    "然后推荐你去写 Discord 机器人或者用 Zapier —— 而这些功能你手上这个程序本来就有。"
-                    "它也会把「帮我写规则」误解成群聊管理规则。",
-             "where": "server.py 里的 WORKBENCH_SYS，实况部分在 App.workbench_ctx()", "text": WORKBENCH_SYS},
-            {"key": "workbench_tools", "name": "工作台的「手」（让它能直接改规则）",
-             "when": "工作台每次调用都跟着上一条一起发。模型接口支持函数调用时发上面那版，"
-                     "不支持时自动换成文本指令版（```dcwatch 块）",
-             "why": "没有这段，模型只会回「你去点第几个勾」；有了它，它自己就把规则改了。"
-                    "「模型接入」页的「允许模型直接改规则」关掉后，这段不会发出去",
-             "where": "server.py 里的 WB_TOOLS_HOWTO / WB_TEXT_PROTO / WB_HANDS_OFF，工具定义在 WB_TOOLS",
-             "text": WB_TOOLS_HOWTO + "\n\n（不支持函数调用时换成：）\n\n" + WB_TEXT_PROTO
-                     + "\n\n（把那个勾关掉之后换成：）\n\n" + WB_HANDS_OFF},
-        ], "editable_hint": "命中之后那几种动作（打分、摘要、抽取、回复）的提示词是可以改的，"
-                            "在「模型接入」页最下面，工作台的「额外要求」也在那儿（prompts.ask）。"
-                            "这里这三条是骨架，写死在程序里：改坏了向导和工作台会直接失效。"})
+        """把发给模型的每一段原话交出来 —— 现在**还能改**（B3）。
+
+        以前这里是只读的，理由是「改坏了向导会失效」。用户的要求是「我得看得到内容，
+        然后我可以改」，做成酒馆预设那样。所以现在：出厂值在 BUILTIN_SYS_TEXT 里当兜底，
+        改过的存在 cfg["sys_prompts"]，一键恢复默认，整包可导出导入（/api/preset/*）。
+        """
+        cur = app.cfg.get("sys_prompts") or {}
+        meta = {
+            "wizard": {
+                "when": "「监听规则」页顶部每问你一轮、每出一次规则，都会带上这段",
+                "why": "把「该问什么、什么最容易漏、模糊需求该怎么拆」这些经验写死在这里，"
+                       "这样换成便宜的模型也不至于乱答",
+                "risk": "删掉里面的「只输出 JSON」或者字段表，向导会开始答非所问 —— 恢复默认即可"},
+            "compose": {
+                "when": "向导之外的快速通道，现在界面默认走向导，这条留着兼容",
+                "why": "只翻译不反问，适合你已经很清楚要什么的时候",
+                "risk": "同上"},
+            "workbench": {
+                "when": "「AI 工作台」里你每发一句话都会带上这段，后面还会附上这台机器的实况"
+                        "（收信方式、有没有浏览器在旁听、你有哪些规则、最近哪些频道来过消息、"
+                        "以及你这句话里贴的 Discord 链接拆出来的 ID）",
+                "why": "没有这段的时候，模型不知道自己在一个监听程序里，会回「我无法访问 Discord」"
+                       "然后推荐你去写 Discord 机器人或者用 Zapier —— 而这些功能你手上这个程序本来就有。"
+                       "它也会把「帮我写规则」误解成群聊管理规则。",
+                "risk": "把「监听是程序做的，不是你做的」那一段删了，模型立刻退回「我无法访问第三方平台」"},
+            "wb_tools": {
+                "when": "工作台每次调用都跟着「工作台身份」一起发，模型接口支持函数调用时用这版",
+                "why": "没有这段，模型只会回「你去点第几个勾」；有了它，它自己就把规则改了",
+                "risk": "改坏了模型会不敢动手，或者调错工具名"},
+            "wb_text": {
+                "when": "模型接口不支持函数调用时，自动换成这版（```dcwatch 文本块）",
+                "why": "便宜模型多半不支持函数调用，靠约定一个文本块也能让它动手",
+                "risk": "块的格式改了，程序就解析不出来，模型说改了其实没改"},
+            "wb_off": {
+                "when": "「模型接入」页的「允许模型直接改规则」关掉后，换成这段",
+                "why": "明确告诉模型这轮只能讲步骤，不然它会假装自己改了",
+                "risk": "小"},
+        }
+        return web.json_response({"ok": True, "editable": True, "builtin": [
+            dict(meta[k], key=k, name=BUILTIN_SYS[k][0], where="server.py 里的" + BUILTIN_SYS[k][1],
+                 text=app.sys_prompt(k), builtin=BUILTIN_SYS_TEXT[k],
+                 changed=bool(str(cur.get(k) or "").strip()))
+            for k in BUILTIN_SYS], "post": app.ai_post(), "post_modes": AI_POST,
+            "params": app.ai_params(), "param_defaults": DEFAULT_PARAMS,
+            "editable_hint": "这六条是骨架：改坏了向导 / 工作台会变笨，但点「恢复出厂」就回来，不会丢数据。"
+                             "命中之后那几种动作（打分、摘要、抽取、回复）的提示词在「模型接入」页最下面。"})
+
+    @r.get("/api/preset/export")
+    async def exportpreset(_):
+        """整包导出预设（骨架提示词 + 动作提示词 + 采样参数 + 后处理模式）。
+
+        不含 Key、不含服务商地址、不含规则 —— 换机器那些必然不一样。跟提取模板包同一套口径。
+        """
+        pack = preset_pack(app.cfg)
+        fn = f"dcwatch-预设-v{VERSION}-{time.strftime('%m%d-%H%M')}.json"
+        return web.Response(body=json.dumps(pack, ensure_ascii=False, indent=1).encode(),
+                            headers={"Content-Type": "application/json; charset=utf-8",
+                                     "Cache-Control": "no-store",
+                                     "Content-Disposition":
+                                     'attachment; filename="dcwatch-preset.json"; '
+                                     f"filename*=UTF-8\'\'{urllib.parse.quote(fn)}"})
+
+    @r.post("/api/preset/import")
+    async def importpreset(req):
+        """导入预设。**默认只预览不写库**（硬规矩 10）—— 提示词是用户一个字一个字调出来的。
+
+        载荷：{data: 预设包(对象或原始文本), dry_run: true}
+        """
+        b = await req.json()
+        data, dry = b.get("data"), b.get("dry_run", True)
+        if isinstance(data, (str, bytes)):
+            try:
+                data = json.loads(data)
+            except Exception as e:
+                return web.json_response(
+                    {"ok": False, "error": f"这个文件不是 JSON，读不了（{e}）。"
+                                           "请选从「导出预设」下载下来的那个 .json 文件"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"ok": False, "error": "预设包要是一个对象，形如 "
+                                      "{\"schema\":\"dcwatch.preset/1\",\"sys_prompts\":{...}}"},
+                                     status=400)
+        notes, schema = [], str(data.get("schema") or "")
+        if schema and schema.split("/")[0] != PRESET_SCHEMA.split("/")[0]:
+            # 走错门：把规则包 / 提取模板包喂给预设导入
+            which = ("规则包，要去「监听规则」页点「⇣ 导入规则」" if schema.startswith("dcwatch.rules")
+                     else "提取模板包，要去「批量提取」页导入" if schema.startswith("dcwatch.extract")
+                     else f"schema={schema}")
+            return web.json_response({"ok": False, "error": f"这不是预设包（{which}）"}, status=400)
+        if schema and schema != PRESET_SCHEMA:
+            notes.append(f"预设包版本是 {schema}，本程序是 {PRESET_SCHEMA}，认不出的字段会被丢掉")
+        if not schema:
+            notes.append("这个文件没写 schema，按 dcwatch 预设包试着读了")
+        if not any(isinstance(data.get(k), (dict, str)) for k in ("sys_prompts", "prompts", "params", "post")):
+            return web.json_response({"ok": False, "error": "这个预设包里没有任何能用的内容："
+                                      "sys_prompts / prompts / params / post 一个都没有"}, status=400)
+        changes = diff_preset(app.cfg, data)
+        if not dry and changes:
+            sp = dict(app.cfg.get("sys_prompts") or {})
+            for k, v in (data.get("sys_prompts") or {}).items():
+                if k in BUILTIN_SYS and isinstance(v, str) and v.strip():
+                    if v.strip() == BUILTIN_SYS_TEXT[k].strip():
+                        sp.pop(k, None)              # 跟出厂一样就别存
+                    else:
+                        sp[k] = v.strip()[:20000]
+            pm = dict(app.cfg.get("prompts") or {})
+            for k, v in (data.get("prompts") or {}).items():
+                if k in DEFAULT_PROMPTS and isinstance(v, str):
+                    pm[k] = v.strip()[:20000]
+            ai = dict(app.cfg.get("ai") or {})
+            if isinstance(data.get("params"), dict):
+                clean, err = norm_params({k: v for k, v in data["params"].items() if k in DEFAULT_PARAMS})
+                if err:
+                    return web.json_response({"ok": False, "error": "预设里的参数有问题：" + err}, status=400)
+                ai["params"] = dict(ai.get("params") or {}, **clean)
+            if str(data.get("post") or "") in AI_POST:
+                ai["post"] = str(data["post"])
+            app.cfg.update({"sys_prompts": sp, "prompts": pm, "ai": ai})
+            app.save_cfg()
+            app.log("info", f"导入预设「{str(data.get('name') or '未命名')[:40]}」，"
+                            f"{len(changes)} 处改动生效")
+        return web.json_response({"ok": True, "dry_run": bool(dry), "name": str(data.get("name") or "")[:80],
+                                  "from_version": str(data.get("version") or ""),
+                                  "changes": changes, "notes": notes,
+                                  "config": None if dry else safe_cfg(app.cfg)})
 
     @r.post("/api/rules/wizard")
     async def wizard(req):
@@ -2962,7 +3320,7 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         rounds = sum(1 for m in turns if m["role"] == "assistant")
         push = ("\n\n【注意】已经问过 %d 轮了，这一轮**必须**输出 stage=done，缺的信息就用你的推荐值补上，"
                 "把不确定的地方写进 notes。" % rounds) if rounds >= 3 else ""
-        msgs = ([{"role": "system", "content": WIZARD_SYS},
+        msgs = ([{"role": "system", "content": app.sys_prompt("wizard")},
                  {"role": "user", "content": f"现场情况：\n{ctx}{push}\n\n下面是我们的对话。"}]
                 + turns)
         try:
@@ -3021,7 +3379,7 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         model = b.get("model") or app.cfg["default_model"]["model"]
         ctx, known_ids = app.rule_ctx(text)
         try:
-            out = await app.chat(prov, model, [{"role": "system", "content": COMPOSE_SYS},
+            out = await app.chat(prov, model, [{"role": "system", "content": app.sys_prompt("compose")},
                                                {"role": "user", "content": f"{ctx}\n\n需求：{text}"}],
                                  json_mode=True, max_tokens=900, rule="compose")
             raw = json.loads(re.search(r"\{.*\}", out, re.S).group(0))
@@ -3063,9 +3421,9 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         hist = [m for m in (b.get("history") or [])
                 if isinstance(m, dict) and m.get("role") in ("user", "assistant") and m.get("content")][-8:]
         extra = (b.get("system") or app.prompt("ask") or "").strip()
-        hands = WB_HANDS_OFF if not app.acting() else \
-            (WB_TOOLS_HOWTO if app.tools_ok(prov, model) else WB_TEXT_PROTO)
-        sysmsg = WORKBENCH_SYS + "\n\n" + hands \
+        hands = app.sys_prompt("wb_off") if not app.acting() else \
+            app.sys_prompt("wb_tools" if app.tools_ok(prov, model) else "wb_text")
+        sysmsg = app.sys_prompt("workbench") + "\n\n" + hands \
             + "\n\n## 这台机器现在的实况\n" + app.workbench_ctx(text)
         if extra and extra != DEFAULT_PROMPTS["ask"]:
             sysmsg += "\n\n## 用户自己追加的要求（优先照做，但不能违反上面的边界）\n" + extra
@@ -3777,6 +4135,29 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         for s in sess:
             P("  -", f"#{s['id']}", s["name"] or "新会话", "|", cnt.get(s["id"], 0), "条消息",
               "| 最后", time.strftime("%m-%d %H:%M", time.localtime(s["updated"] or 0)))
+
+        # 硬规矩 5 again：提示词和采样参数会直接决定模型的行为，
+        # 「模型答得不对」的排查第一步就是看这里改过什么。不印全文（几千字），只印改没改。
+        P("\n[5.7] 模型怎么被指挥的（提示词 + 采样参数）")
+        P("  提示词后处理     ", app.ai_post(), "—", AI_POST[app.ai_post()][:40])
+        pr = app.ai_params()
+        P("  采样参数         ", " ".join(f"{k}={pr[k]}" for k in
+                                        ("temperature", "top_p", "max_tokens",
+                                         "presence_penalty", "frequency_penalty")
+                                        if pr.get(k) is not None and pr.get(k) != "")
+          or "（全空，用服务商默认）")
+        P("  附加参数         ", (pr.get("extra") or "")[:120] or "（没填）")
+        sp = app.cfg.get("sys_prompts") or {}
+        for k, (label, const) in BUILTIN_SYS.items():
+            t = app.sys_prompt(k)
+            P("  骨架·" + label[:16].ljust(18),
+              (f"用户改过，{len(t)} 字（出厂 {len(BUILTIN_SYS_TEXT[k])} 字）"
+               if str(sp.get(k) or "").strip() else f"出厂原版，{len(t)} 字"))
+        pmc = app.cfg.get("prompts") or {}
+        for k in DEFAULT_PROMPTS:
+            t = app.prompt(k)
+            P("  动作·" + k.ljust(18),
+              (f"用户改过，{len(t)} 字" if str(pmc.get(k) or "").strip() else f"出厂原版，{len(t)} 字"))
 
         P("\n[6] 最近 200 条运行日志（新的在上）")
         lgs = app.db.q("SELECT * FROM logs ORDER BY id DESC LIMIT 200")
