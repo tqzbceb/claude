@@ -18,7 +18,7 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.9.2"                               # 服务端版本，界面和扩展都能看到
+VERSION = "1.9.3"                               # 服务端版本，界面和扩展都能看到
 EXT_MIN = "1.8.0"                               # 低于这个版本的扩展要提示用户更新
 # 扩展上报的跳过原因，给人看的说法（诊断结论里要拼成一句话）
 NICE_SKIP = {"history": "历史消息（时间戳太旧）", "render": "整批渲染（切频道/往上滚）",
@@ -178,6 +178,9 @@ DEFAULT_CONFIG = {
         {"id": "q3", "name": "起草回复", "text": "针对最后一条消息起草一条中文回复，语气专业简洁，≤120 字。"},
         {"id": "q4", "name": "翻译成中文", "text": "把这些消息翻译成中文，保留原作者名。"},
     ],
+    # 「批量提取」存下来的模板。一条 = 一次提取的全套参数（要提取什么、从哪儿找、读多少条）。
+    # 能整包导出 / 导入，走跟规则包一样的预览闸。见 DEFAULT_TPL。
+    "extract_templates": [],
     "models_cache": {},        # 每个服务商拉到过的模型名，纯缓存
     "retention_days": 14,
     "ai_daily_call_cap": 500,
@@ -772,6 +775,117 @@ RULE_LABELS = {
     "cooldown_sec": "冷却秒数", "max_per_hour": "每小时上限", "webhook_url": "转发地址",
     "source": "来源",
 }
+
+
+# ======================================================================
+# 批量提取的模板：把「要提取什么 + 从哪儿找 + 读多少条」存下来，并且能整包搬走
+#
+# 为什么要有：批量提取以前是个每次手打的输入框。同一件事（"把所有兑换码挑出来"）
+# 他每周要重打一遍，换台机器、或者想把用法分享给别人，都只能靠复制粘贴。
+# 走的是跟规则包**完全一样**的那套：schema 头 + dry_run 预览闸 + 认名字不认 id。
+# ======================================================================
+EXTRACT_SCHEMA = "dcwatch.extract/1"      # 认这个名字才当模板包；字段不兼容了就 /2
+
+DEFAULT_TPL = {
+    "name": "",               # 模板名，也是导入时的重名判定依据
+    "want": "",               # 要提取什么（人话）
+    "channel_id": "",         # 只在这个频道找，空 = 全部
+    "limit": 500,             # 最多读几条
+    "only_matched": False,    # 只看规则命中过的
+    "author_contains": "",    # 昵称包含
+    "note": "",               # 给自己看的备注
+}
+TPL_LABELS = {"name": "模板名", "want": "要提取什么", "channel_id": "只在这个频道找",
+              "limit": "最多读几条", "only_matched": "只看规则命中过的",
+              "author_contains": "只看昵称含", "note": "备注"}
+
+# 导入时盖的本机戳。跟规则那边同样的道理：**不在 DEFAULT_TPL 里，所以不会被导出去**。
+# 塞进 DEFAULT_TPL 就等于把「我是从谁那儿导来的」发给下一个人（e2e_imp.py 第 13 节钉过）。
+TPL_MARKS = ("imported_at", "imported_from")
+
+
+def norm_tpl(t: dict, i: int = 0) -> dict:
+    """一条模板洗成合法形状。名字或 want 空的返回 None —— 界面上不该出现空模板。"""
+    if not isinstance(t, dict):
+        return None
+    out = dict(DEFAULT_TPL)
+    for k, d in DEFAULT_TPL.items():
+        v = t.get(k, d)
+        if isinstance(d, bool):
+            out[k] = bool(v)
+        elif isinstance(d, int):
+            with contextlib.suppress(Exception):
+                out[k] = int(v)
+        else:
+            out[k] = str(v if v is not None else d).strip()
+    out["name"] = out["name"][:40]
+    out["want"] = out["want"][:2000]
+    out["note"] = out["note"][:200]
+    out["author_contains"] = out["author_contains"][:80]
+    # 频道 ID 只认纯数字。**不校验本机有没有这个频道** —— 导出方的频道 ID 在导入方
+    # 库里当然查不到（一条消息都还没收到），照 known_ids 洗会把模板洗成"全部消息"，
+    # 用户看到的是"导进来了但范围不对"，比报错更难查。
+    if not out["channel_id"].isdigit():
+        out["channel_id"] = ""
+    out["limit"] = max(1, min(out["limit"] or 500, 2000))
+    if not out["name"] or not out["want"]:
+        return None
+    out["id"] = str(t.get("id") or f"t{i + 1}{random.randrange(16 ** 4):04x}")[:16]
+    for k in TPL_MARKS:                    # 本机戳原样留着，只有导出时才摘掉
+        if t.get(k):
+            out[k] = str(t[k])[:40]
+    return out
+
+
+def norm_tpls(items) -> list:
+    out, seen = [], set()
+    for i, t in enumerate(items if isinstance(items, list) else []):
+        n = norm_tpl(t, i)
+        if not n or n["id"] in seen:
+            continue
+        seen.add(n["id"])
+        out.append(n)
+    return out[:40]
+
+
+def tpl_for_export(t: dict) -> dict:
+    """一条模板 → 导出用的干净字典。id 和本机戳是本机的账，不跟着走。"""
+    return {k: t.get(k, v) for k, v in DEFAULT_TPL.items()}
+
+
+def diff_tpl(old: dict, new: dict) -> list:
+    """两条模板的差异，译成人话给导入预览用（只列真变了的）。"""
+    def show(v):
+        if isinstance(v, bool):
+            return "是" if v else "否"
+        s = str(v)
+        return (s[:60] + "…") if len(s) > 60 else (s or "空")
+    out = []
+    for k in DEFAULT_TPL:
+        a, b = old.get(k, DEFAULT_TPL[k]), new.get(k, DEFAULT_TPL[k])
+        if a != b:
+            out.append(f"{TPL_LABELS.get(k, k)}：{show(a)} → {show(b)}")
+    return out
+
+
+def sanitize_import_tpl(draft):
+    """导入的一条模板 → (模板, 这条的提示)。看不懂的返回 (None, 提示)。"""
+    if not isinstance(draft, dict):
+        return None, ["这一项不是模板对象，已跳过"]
+    notes = []
+    unknown = [k for k in draft if k not in DEFAULT_TPL and k not in ("id",) + TPL_MARKS]
+    if unknown:
+        notes.append(f"不认识的字段已丢掉：{', '.join(unknown[:5])}")
+    raw_ch = str(draft.get("channel_id") or "").strip()
+    t = norm_tpl({k: v for k, v in draft.items() if k not in TPL_MARKS})
+    if t is None:
+        return None, notes + ["这一项没有名字或者没写要提取什么，已跳过"]
+    if raw_ch and not t["channel_id"]:
+        notes.append(f"「只在这个频道找」里那个值不像频道 ID（{raw_ch[:20]}），已改成不限频道")
+    elif t["channel_id"]:
+        notes.append(f"限定了频道 {t['channel_id']} —— 那是对方机器上的频道，"
+                     "你这边不一定收得到；不对就把它清空")
+    return t, notes
 
 
 # ======================================================================
@@ -2537,6 +2651,8 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             patch["sinks"] = merged
         if "quick_actions" in patch:
             patch["quick_actions"] = norm_quick(patch["quick_actions"])
+        if "extract_templates" in patch:
+            patch["extract_templates"] = norm_tpls(patch["extract_templates"])
         app.cfg.update(patch)
         app.save_cfg()
         if "discord" in patch:
@@ -3004,6 +3120,119 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
 - value 必须是消息里**原样出现**的内容，一个字都不许改、不许补全、不许猜。
 - 整批都没有就给 {"rows":[]}。宁可漏，不许编 —— 编出来的东西会让用户白跑一趟。"""
 
+    @r.get("/api/extract/export")
+    async def exporttpls(_):
+        """把批量提取的模板整包导出成一个文件，可以发给别人或搬到另一台机器。
+
+        跟规则包同一套口径：带 schema 名和版本号，id 和「导入来的」戳是本机的账，不导出。
+        """
+        tpls = [tpl_for_export(t) for t in norm_tpls(app.cfg.get("extract_templates"))]
+        pack = {"schema": EXTRACT_SCHEMA, "app": "dcwatch", "version": VERSION,
+                "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "count": len(tpls), "templates": tpls}
+        fn = f"dcwatch-提取模板{len(tpls)}个-v{VERSION}-{time.strftime('%m%d-%H%M')}.json"
+        return web.Response(body=json.dumps(pack, ensure_ascii=False, indent=1).encode(),
+                            headers={"Content-Type": "application/json; charset=utf-8",
+                                     "Cache-Control": "no-store",
+                                     "Content-Disposition":
+                                     'attachment; filename="dcwatch-extract.json"; '
+                                     f"filename*=UTF-8''{urllib.parse.quote(fn)}"})
+
+    @r.post("/api/extract/import")
+    async def importtpls(req):
+        """导入提取模板。**默认只预览不写库**（硬规矩 10），界面拿这份预览问用户。
+
+        载荷：{data: 模板包(对象或原始文本), mode: "merge"|"replace", dry_run: true}
+        重名认 name 不认 id —— 用户能看懂的只有名字，id 在两台机器上必然不同。
+        """
+        b = await req.json()
+        data, mode = b.get("data"), (b.get("mode") or "merge")
+        dry = b.get("dry_run", True)
+        if mode not in ("merge", "replace"):
+            return web.json_response({"ok": False, "error": "mode 只能是 merge 或 replace"}, status=400)
+        if isinstance(data, (str, bytes)):
+            try:
+                data = json.loads(data)
+            except Exception as e:
+                return web.json_response(
+                    {"ok": False, "error": f"这个文件不是 JSON，读不了（{e}）。"
+                                           "请选从「导出模板」下载下来的那个 .json 文件"}, status=400)
+        notes = []
+        if isinstance(data, list):
+            incoming, schema, from_ver = data, "", ""
+            notes.append("这个文件没有 schema 头，按「一串模板」处理了")
+        elif isinstance(data, dict) and isinstance(data.get("templates"), list):
+            incoming = data["templates"]
+            schema, from_ver = str(data.get("schema") or ""), str(data.get("version") or "")
+            if schema and schema.split("/")[0] != EXTRACT_SCHEMA.split("/")[0]:
+                # 最容易发生的走错门：把规则包喂给模板导入。明说是哪一种，别让他自己猜
+                which = "规则包" if schema.startswith("dcwatch.rules") else f"schema={schema}"
+                return web.json_response(
+                    {"ok": False, "error": f"这不是提取模板包（{which}）。"
+                     + ("规则包要去「监听规则」页点「⇣ 导入规则」"
+                        if schema.startswith("dcwatch.rules") else "")}, status=400)
+            if schema and schema != EXTRACT_SCHEMA:
+                notes.append(f"模板包版本是 {schema}，本程序是 {EXTRACT_SCHEMA}，认不出的字段会被丢掉")
+            if not schema:
+                notes.append("这个文件没写 schema，按 dcwatch 模板包试着读了")
+        else:
+            return web.json_response(
+                {"ok": False, "error": "看不出这是模板包：要么是 {\"schema\":\"dcwatch.extract/1\","
+                                       "\"templates\":[...]}，要么是一个模板数组"}, status=400)
+        if not incoming:
+            return web.json_response({"ok": False, "error": "这个模板包里一个模板都没有"}, status=400)
+
+        have = norm_tpls(app.cfg.get("extract_templates"))
+        by_name = {}
+        for x in have:
+            by_name.setdefault(x["name"], x)
+        plan, seen, merged = [], set(), list(have)
+        for raw in incoming:
+            t, tnotes = sanitize_import_tpl(raw)
+            if t is None:
+                notes.extend(tnotes)
+                continue
+            old = by_name.get(t["name"])
+            item = {"name": t["name"], "want": t["want"][:120], "notes": tnotes}
+            if old and old["id"] not in seen:
+                seen.add(old["id"])
+                d = diff_tpl(old, t)
+                item["act"], item["changes"] = ("same", []) if not d else ("overwrite", d)
+                item["target_id"] = old["id"]
+                if d:
+                    for i, m in enumerate(merged):
+                        if m["id"] == old["id"]:
+                            merged[i] = dict(t, id=old["id"])
+            else:
+                item["act"], item["changes"] = "new", []
+                merged.append(t)
+            plan.append(item)
+        removes = ([{"id": x["id"], "name": x["name"]} for x in have if x["id"] not in seen]
+                   if mode == "replace" else [])
+        if mode == "replace":
+            gone = {x["id"] for x in removes}
+            merged = [m for m in merged if m["id"] not in gone]
+        summary = {k: sum(1 for p in plan if p["act"] == k) for k in ("new", "overwrite", "same")}
+        summary["remove"] = len(removes)
+
+        if not dry:
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            names = {p["name"] for p in plan if p["act"] != "same"}
+            for m in merged:
+                if m["name"] in names:
+                    m["imported_at"] = stamp
+                    m["imported_from"] = f"v{from_ver}" if from_ver else "不带版本号的模板包"
+            app.cfg["extract_templates"] = norm_tpls(merged)
+            app.save_cfg()
+            app.log("info", f"导入提取模板：新增 {summary['new']} 个、覆盖 {summary['overwrite']} 个、"
+                            f"没变 {summary['same']} 个、删除 {summary['remove']} 个"
+                            + (f"（来自 v{from_ver} 的模板包）" if from_ver else ""))
+        return web.json_response({"ok": True, "dry_run": bool(dry), "mode": mode,
+                                  "schema": schema, "from_version": from_ver,
+                                  "plan": plan, "removes": removes, "summary": summary,
+                                  "notes": notes,
+                                  "templates": norm_tpls(app.cfg.get("extract_templates"))})
+
     @r.post("/api/batch")
     async def batch(req):
         """批量提取：把一批消息分组喂给模型，挑出用户要的东西，汇总成表。
@@ -3416,6 +3645,22 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
               "→", mask(h.get("url")), "| 测过" if h.get("verified") else "| 没测过")
         if not sk.get("hooks"):
             P("  出口             （一个都没配）")
+
+        # 硬规矩 5：新增了字段就得在诊断包里印出来，不然排查时只能靠猜。
+        # 模板不参与"为什么没提醒我"，所以只占一小段：有几个、限没限频道、是不是导入来的。
+        P("\n[5.5] 批量提取的模板")
+        tpls = norm_tpls(app.cfg.get("extract_templates"))
+        if not tpls:
+            P("  一个都没有（批量提取每次手打也能用，模板只是存下来省事）")
+        for t in tpls:
+            P("  -", t["name"], "| 读", t["limit"], "条",
+              "| 频道 " + (t["channel_id"] or "不限"),
+              "| 只看命中过的" if t["only_matched"] else "",
+              "| 昵称含 " + t["author_contains"] if t["author_contains"] else "")
+            P("      要提取   ", (t["want"] or "")[:80])
+            if t.get("imported_at"):
+                P("      来路     ", f"{t['imported_at']} 从模板包导入"
+                                     f"（{t.get('imported_from') or '来源不明'}）")
 
         P("\n[6] 最近 200 条运行日志（新的在上）")
         lgs = app.db.q("SELECT * FROM logs ORDER BY id DESC LIMIT 200")
