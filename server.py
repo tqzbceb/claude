@@ -17,8 +17,8 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.6.3"                               # 服务端版本，界面和扩展都能看到
-EXT_MIN = "1.6.0"                               # 低于这个版本的扩展要提示用户更新
+VERSION = "1.7.0"                               # 服务端版本，界面和扩展都能看到
+EXT_MIN = "1.7.0"                               # 低于这个版本的扩展要提示用户更新
 FROZEN = getattr(sys, "frozen", False)          # True 时 = PyInstaller 打出来的 exe
 # ui.html 在 exe 里是打进包的临时解包目录；数据必须写到真实可写目录
 BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -316,7 +316,9 @@ CREATE TABLE IF NOT EXISTS messages(
   source TEXT, msg_id TEXT UNIQUE, guild_id TEXT, channel_id TEXT, channel_name TEXT,
   parent_id TEXT, is_thread INT, author_id TEXT, author TEXT, is_bot INT,
   content TEXT, ts REAL, matched TEXT, ai_json TEXT, score INT, unread INT DEFAULT 1,
-  account TEXT DEFAULT '', bridge TEXT DEFAULT '');
+  account TEXT DEFAULT '', bridge TEXT DEFAULT '',
+  -- kind: msg=普通消息 thread=新帖/新子区。scanned=1 是历史回扫抓来的，不触发规则也不提醒
+  kind TEXT DEFAULT 'msg', scanned INT DEFAULT 0);
 CREATE INDEX IF NOT EXISTS idx_msg_ts ON messages(ts DESC);
 CREATE TABLE IF NOT EXISTS rules(
   id INTEGER PRIMARY KEY AUTOINCREMENT, json TEXT, enabled INT DEFAULT 1, hits INT DEFAULT 0);
@@ -336,6 +338,10 @@ class DB:
         for col in ("account", "bridge"):
             if col not in have:
                 self.c.execute(f"ALTER TABLE messages ADD COLUMN {col} TEXT DEFAULT ''")
+        if "kind" not in have:
+            self.c.execute("ALTER TABLE messages ADD COLUMN kind TEXT DEFAULT 'msg'")
+        if "scanned" not in have:
+            self.c.execute("ALTER TABLE messages ADD COLUMN scanned INT DEFAULT 0")
         self.c.execute("PRAGMA journal_mode=WAL")
         self.c.commit()
 
@@ -363,6 +369,8 @@ DEFAULT_RULE = {
     "name": "新规则",
     "source": "discord",
     # ---- WHERE to listen (empty list = don't care) ----
+    # 触发类型：msg=有人发消息 thread=开了新帖/新子区（论坛频道的新帖也算）
+    "kinds": ["msg"],
     "guild_ids": [], "channel_ids": [], "thread_ids": [],
     "include_threads_of_channels": True,   # channel_ids also match its threads (子区)
     "dm": False,
@@ -454,6 +462,12 @@ WIZARD_SYS = """你是 dcwatch 的「规则向导」。用户通常说不清自�
 - 用户已经说过的，不要再问一遍。别问跟规则无关的（比如用哪个模型）。
 
 ## 你必须自己过一遍的维度（缺哪个才问）
+0 触发类型 kinds：`["msg"]` 有人发消息（默认）/ `["thread"]` 有人开新帖或新子区 / 两个都要就都写。
+  他说「有新帖就告诉我」「谁发了新贴子」→ 只要 `["thread"]`，这种规则**不需要关键词**，
+  开帖本身就是事件；想按标题筛才加 keywords_any（新帖的"内容"就是帖子标题）。
+  他说的是帖子**里面**的聊天 → 那还是 `["msg"]` + include_threads_of_channels。
+  另外：他要的若是「已经发过的消息里找东西」，规则做不到 —— 直接告诉他去用「抓历史 + 批量提取」，
+  别硬造一条规则糊弄他。
 1 范围：哪个服务器 / 频道 / 子区（帖子）？要不要连这个频道下面的帖子一起？私信算不算（默认不算）
 2 人：任何人 / 只某几个人 / 排除机器人（默认排除）/ 要不要连他自己发的也算
 3 触发内容 —— 这里最容易做错：
@@ -549,6 +563,18 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
 向导，会一步步问清楚再生成；同时你自己也可以先问他一两个关键的（盯哪个频道、什么词、要不要算机器人）。
 你在这里说的规则内容不会自动生效 —— 规则必须在「监听规则」页保存，这点要讲明白。
 
+## 两件容易答错的事：新帖，和已经过去的消息
+1. **「有人开了新帖就提醒我」** —— 这个程序做得到，别说做不到。规则里第 0 项「什么时候触发」
+   有两个勾：「有人发消息」和「有人开了新帖 / 新子区」。只想要开帖提醒就只勾第二个。
+   前提是那个**论坛频道的帖子列表**在他浏览器里开着（旁听只看得见开着的页面）。
+2. **「把这个帖子里所有人发的密钥都挑出来」** —— 这是**已经过去的消息**，规则管不着
+   （规则只管以后新来的）。正确指路是两步：
+   a. 在 Discord 那个帖子页面，点右下角 dcwatch 药丸里的**「抓历史」**，它会自动往上翻并把消息存进来；
+   b. 到侧栏**「批量提取」**页，选上那个频道、写清要挑什么，点开始。结果能导成 CSV。
+   抓历史进来的消息**只入库、不会触发规则也不弹通知**，所以不会突然刷屏。
+   批量提取还会核对每条结果是否真的在原文里出现过，没对上的会标红 —— 提醒他别直接用标红的。
+判断标准很简单：他要的是「以后」→ 规则；「已经有的」→ 抓历史 + 批量提取。
+
 ## 你能做和不能做
 能：解读下面给你的消息、总结、抽待办、起草回复、解释这个程序里的功能和设置在哪、帮他想规则怎么写、
 把他贴的链接拆成 ID 告诉他填哪里。
@@ -603,6 +629,13 @@ def sanitize_draft(draft, notes, known_ids, model=""):
                 rule[k] = int(v)
         else:
             rule[k] = str(v)
+    kinds = [k for k in rule.get("kinds") or [] if k in ("msg", "thread")]
+    if not kinds:
+        kinds = ["msg"]
+    rule["kinds"] = kinds
+    if kinds == ["thread"]:
+        notes.append("这条只在**有人开新帖/新子区**时触发，帖子里后续聊什么都不管。"
+                     "要认出新帖，那个论坛频道的帖子列表得在浏览器里开着")
     if rule["action"] not in ACTIONS:
         notes.append(f"模型给的动作「{rule['action']}」不认识，先按「只提醒我」处理")
         rule["action"] = "notify"
@@ -929,6 +962,8 @@ class App:
         """ev: normalized event dict. returns (ok, reason)"""
         if rule.get("source", "discord") != ev["source"]:
             return False, "source"
+        if (ev.get("kind") or "msg") not in (rule.get("kinds") or ["msg"]):
+            return False, "kind"
         if rule["ignore_bots"] and ev["is_bot"]:
             return False, "bot"
         acc = rule.get("accounts") or []
@@ -1033,13 +1068,15 @@ class App:
         with contextlib.suppress(sqlite3.IntegrityError):
             mid = self.db.x(
                 """INSERT INTO messages(source,msg_id,guild_id,channel_id,channel_name,parent_id,
-                   is_thread,author_id,author,is_bot,content,ts,matched,ai_json,score,account,bridge)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   is_thread,author_id,author,is_bot,content,ts,matched,ai_json,score,account,bridge,
+                   kind,scanned)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (ev["source"], ev["msg_id"], ev["guild_id"], ev["channel_id"], ev["channel_name"],
                  ev["parent_id"], int(ev["is_thread"]), ev["author_id"], ev["author"], int(ev["is_bot"]),
                  ev["content"], ev["ts"], ",".join(matched),
                  json.dumps(ai_json, ensure_ascii=False) if ai_json else None, score,
-                 ev.get("account") or "", ev.get("bridge") or ""))
+                 ev.get("account") or "", ev.get("bridge") or "",
+                 ev.get("kind") or "msg", int(bool(ev.get("scanned")))))
         row = dict(ev, id=mid, matched=",".join(matched), ai=ai_json, score=score)
         alert = bool(matched)
         if score is not None:
@@ -1050,6 +1087,21 @@ class App:
         if alert:
             # 通知/转发不能拖住收信循环：丢后台跑，失败只记日志
             asyncio.create_task(self.notify(ev, row))
+
+    def store_only(self, ev):
+        """历史回扫专用：只入库，不跑规则、不提醒、不调 AI。
+        抓历史的目的是「事后拿这批内容去问模型」，不是把三个月前的消息重新推一遍。"""
+        mid = None
+        with contextlib.suppress(sqlite3.IntegrityError):
+            mid = self.db.x(
+                """INSERT INTO messages(source,msg_id,guild_id,channel_id,channel_name,parent_id,
+                   is_thread,author_id,author,is_bot,content,ts,matched,account,bridge,kind,scanned,unread)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'',?,?,?,1,0)""",
+                (ev["source"], ev["msg_id"], ev["guild_id"], ev["channel_id"], ev["channel_name"],
+                 ev["parent_id"], int(ev["is_thread"]), ev["author_id"], ev["author"], int(ev["is_bot"]),
+                 ev["content"], ev["ts"], ev.get("account") or "", ev.get("bridge") or "",
+                 ev.get("kind") or "msg"))
+        return mid
 
     def ctx_text(self, ev, n=12):
         rows = self.db.q("SELECT author,content FROM messages WHERE channel_id=? ORDER BY ts DESC LIMIT ?",
@@ -1525,7 +1577,12 @@ def routes(app: App):
             "status": {"discord": st, "browser": br},
             "env": {"win": IS_WIN, "frozen": FROZEN, "data_dir": str(DATA_DIR), "port": app.port,
                     "ver": VERSION, "ext_min": EXT_MIN, "ext_have": ext_version(),
-                    "autostart": autostart_state(), "pyver": sys.version.split()[0]},
+                    "autostart": autostart_state(), "pyver": sys.version.split()[0],
+                    # 「我这份配置到底存在哪」必须能在界面上看见：
+                    # 不然用户换个文件夹跑，看到旧的模型配置，只能怀疑是密钥泄露了
+                    "code_dir": str(BASE), "db_path": str(DB_PATH),
+                    "db_exists": Path(DB_PATH).exists(),
+                    "shared_data": FROZEN},
             "rules": app.rules(enabled_only=False),
             "stats": {
                 "msgs": app.db.q("SELECT COUNT(*) n FROM messages")[0]["n"],
@@ -1635,7 +1692,10 @@ def routes(app: App):
               "is_thread": bool(s.get("parent_id")), "author_id": s.get("author_id", ""),
               "author": s.get("author", "someone"), "is_bot": bool(s.get("is_bot")),
               "content": s.get("content", ""), "is_dm": bool(s.get("is_dm")),
-              "mentions_me": bool(s.get("mentions_me")), "ts": now(), "msg_id": "0"}
+              "mentions_me": bool(s.get("mentions_me")), "ts": now(), "msg_id": "0",
+              # 试算必须带上触发类型，否则「只在开新帖时」的规则永远算不出命中，
+              # 用户会以为规则坏了
+              "kind": s.get("kind") or "msg"}
         ok, why = app.match(rule, ev)
         return web.json_response({"match": ok, "why": why})
 
@@ -1826,6 +1886,78 @@ def routes(app: App):
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)})
 
+    BATCH_SYS = """你在批量翻一批 Discord 消息，把用户要的东西挑出来。
+
+只输出 JSON：{"rows":[{"msg_id":"...","value":"挑出来的东西","note":"一句话说明/上下文"}]}
+- 一条消息里有多个就拆成多行；没有就**不要**给这条消息编一行出来。
+- value 必须是消息里**原样出现**的内容，一个字都不许改、不许补全、不许猜。
+- 整批都没有就给 {"rows":[]}。宁可漏，不许编 —— 编出来的东西会让用户白跑一趟。"""
+
+    @r.post("/api/batch")
+    async def batch(req):
+        """批量提取：把一批消息分组喂给模型，挑出用户要的东西，汇总成表。
+        规则引擎是「新消息来了怎么办」，这里是「已经攒下的这堆里有什么」。"""
+        b = await req.json()
+        want = (b.get("want") or "").strip()
+        if not want:
+            return web.json_response({"ok": False, "error": "没说要提取什么"}, status=400)
+        where, args = ["content<>''"], []
+        if b.get("channel_id"):
+            where.append("(channel_id=? OR parent_id=?)")
+            args += [str(b["channel_id"])] * 2
+        if b.get("since"):
+            where.append("ts>=?")
+            args.append(float(b["since"]))
+        if b.get("author_contains"):
+            where.append("lower(author) LIKE ?")
+            args.append("%" + str(b["author_contains"]).lower() + "%")
+        if b.get("only_matched"):
+            where.append("matched<>'' AND matched IS NOT NULL AND matched<>'0'")
+        limit = max(1, min(int(b.get("limit") or 300), 2000))
+        rows = app.db.q("SELECT id,msg_id,author,content,ts,channel_name FROM messages WHERE "
+                        + " AND ".join(where) + " ORDER BY ts DESC LIMIT ?", args + [limit])
+        rows.reverse()
+        if not rows:
+            return web.json_response({"ok": True, "rows": [], "scanned": 0, "calls": 0,
+                                      "note": "这个范围里一条消息都没有。先去 Discord 页面用「抓历史」把内容抓进来。"})
+        prov = b.get("provider") or app.cfg["default_model"]["provider"]
+        model = b.get("model") or app.cfg["default_model"]["model"]
+        chunk = max(1, min(int(b.get("chunk") or 20), 60))
+        groups = [rows[i:i + chunk] for i in range(0, len(rows), chunk)]
+        out, errs, byid = [], [], {str(r["msg_id"]): r for r in rows}
+        for gi, g in enumerate(groups):
+            body = "\n\n".join(f"[{r['msg_id']}] {r['author']}（#{r['channel_name']}）：{r['content']}"
+                               for r in g)
+            try:
+                txt = await app.chat(prov, model, [
+                    {"role": "system", "content": BATCH_SYS},
+                    {"role": "user", "content": f"要挑出来的是：{want}\n\n消息：\n{body}"}],
+                    json_mode=True, max_tokens=1500, rule="batch")
+                got = loose_json(txt).get("rows") or []
+            except Exception as e:
+                errs.append(f"第 {gi + 1} 批失败：{e}")
+                continue
+            for x in got if isinstance(got, list) else []:
+                if not isinstance(x, dict):
+                    continue
+                mid = str(x.get("msg_id") or "")
+                src = byid.get(mid)
+                val = str(x.get("value") or "").strip()
+                if not val:
+                    continue
+                # 模型偶尔会把提取物改写或者干脆编一个。原文里找不到的一律标出来，不装作没事
+                verified = bool(src) and val in (src["content"] or "")
+                out.append({"value": val, "note": str(x.get("note") or "")[:200],
+                            "msg_id": mid, "author": src["author"] if src else "",
+                            "channel": src["channel_name"] if src else "",
+                            "ts": src["ts"] if src else None,
+                            "content": (src["content"] if src else "")[:300],
+                            "verified": verified})
+        app.log("info", f"批量提取「{want[:20]}」：翻了 {len(rows)} 条，{len(groups)} 次调用，挑出 {len(out)} 条")
+        return web.json_response({"ok": True, "rows": out, "scanned": len(rows), "calls": len(groups),
+                                  "errors": errs,
+                                  "unverified": sum(1 for x in out if not x["verified"])})
+
     @r.post("/api/reply")
     async def reply(req):
         b = await req.json()
@@ -1858,23 +1990,33 @@ def routes(app: App):
             app.touch_bridge(b, err="旁听开关是关的，消息被丢弃")
             return web.json_response({"ok": False, "error": "浏览器旁听已关闭"}, headers=CORS)
         items = b.get("messages") or [b]
+        # history=1：这一批是「抓历史」抓来的，只入库不提醒（否则一次回扫能弹几百条通知）
+        history = bool(b.get("history"))
         n = 0
         for m in items:
             if not m.get("msg_id") or not (m.get("content") or "").strip():
                 continue
             cid = str(m.get("channel_id") or "")
             ev = {"source": "discord", "via": "browser",
+                  "kind": ("thread" if m.get("kind") == "thread" else "msg"),
+                  "scanned": history,
                   "msg_id": "b" + str(m["msg_id"]), "guild_id": str(m.get("guild_id") or ""),
                   "channel_id": cid, "channel_name": m.get("channel_name") or cid,
                   "parent_id": str(m.get("parent_id") or ""), "is_thread": bool(m.get("is_thread")),
                   "author_id": str(m.get("author_id") or ""), "author": m.get("author") or "?",
-                  "is_bot": bool(m.get("is_bot")), "content": m["content"], "ts": now(),
+                  "is_bot": bool(m.get("is_bot")), "content": m["content"],
+                  # 抓历史时用消息自己的时间（扩展从 snowflake 解出来），别让三个月前的消息
+                  # 全挤在「刚刚」——收信箱和批量提取都按时间排
+                  "ts": float(m["ts"]) if str(m.get("ts") or "").replace(".", "", 1).isdigit() else now(),
                   "is_dm": bool(m.get("is_dm")), "mentions_me": bool(m.get("mentions_me")),
                   "url": m.get("url") or "",
                   # 哪个号收到的：单条上带的优先，否则用这一批的（多号监控靠它区分）
                   "account": str(m.get("account") or b.get("account") or ""),
                   "bridge": str(b.get("bridge") or "")}
-            await app.handle_event(ev)
+            if history:
+                app.store_only(ev)
+            else:
+                await app.handle_event(ev)
             n += 1
         app.ingest_count += n
         br = app.touch_bridge(b, n=n)
@@ -2053,6 +2195,9 @@ def routes(app: App):
         P("  磁盘上的扩展版本", ext_version() or "（没找到 extension 文件夹）")
         P("  打包运行(exe)   ", getattr(sys, "frozen", False))
         P("  Python          ", sys.version.split()[0], "|", sys.platform)
+        P("  代码目录        ", str(BASE))
+        P("  数据目录        ", str(DATA_DIR),
+          "（exe 模式：全机共享，换文件夹跑也是同一份配置）" if FROZEN else "（跟代码同目录）")
         P("  数据库          ", DB_PATH, "(", os.path.getsize(DB_PATH) // 1024 if os.path.exists(DB_PATH) else 0, "KB )")
         P("  已跑            ", round((now() - app.started) / 60, 1), "分钟")
         n_msg = (app.db.q("SELECT COUNT(*) c FROM messages") or [{"c": 0}])[0]["c"]

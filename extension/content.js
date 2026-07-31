@@ -144,18 +144,131 @@ function enqueue(msg) {
   if (!flushTimer) flushTimer = setTimeout(flush, 600);
 }
 
+/* ---------- 新帖 / 新子区 ----------
+   论坛频道里「有人发了新帖」根本不是一条消息，页面上不会出现 chat-messages-*，
+   所以光盯消息永远等不到。帖子本身也有 snowflake ID，用它的时间戳判断是不是刚开的 ——
+   这样即使选择器多认了一堆老帖子（切频道时会一次渲染几十个），也会被时间挡在外面。 */
+const seenThreads = new Set();
+const THREAD_MAX_AGE_MS = 10 * 60 * 1000;   // 帖子比消息宽松些：滚到才看得见，晚几分钟很正常
+
+function threadIdOf(el) {
+  const d = el.getAttribute && (el.getAttribute("data-item-id") || el.getAttribute("data-list-item-id"));
+  if (d) {
+    const m = /(\d{15,25})/.exec(d);
+    if (m) return m[1];
+  }
+  const a = el.matches && el.matches('a[href*="/channels/"]') ? el : (el.querySelector
+    ? el.querySelector('a[href*="/channels/"]') : null);
+  if (a) {
+    const m = /\/channels\/[^/]+\/(\d{15,25})/.exec(a.getAttribute("href") || "");
+    if (m) return m[1];
+  }
+  return "";
+}
+
+function threadTitleOf(el, id) {
+  for (const sel of ['[class*="titleText"]', '[class*="postTitle"]', 'h3', '[class*="name"]']) {
+    const v = txt(el.querySelector && el.querySelector(sel)).split("\n")[0].trim();
+    if (v) return v.slice(0, 120);
+  }
+  return (txt(el).split("\n")[0] || "").trim().slice(0, 120) || id;
+}
+
+function scanThreads(nodes) {
+  const u = fromUrl();
+  for (const n of nodes) {
+    if (n.nodeType !== 1) continue;
+    const cands = [];
+    if (threadIdOf(n)) cands.push(n);
+    if (n.querySelectorAll) {
+      n.querySelectorAll('[data-item-id],[data-list-item-id],a[href*="/channels/"]')
+        .forEach(x => cands.push(x));
+    }
+    for (const el of cands) {
+      const id = threadIdOf(el);
+      if (!id || id === u.channel_id || seenThreads.has(id)) continue;
+      seenThreads.add(id);
+      if (seenThreads.size > 4000) seenThreads.clear();
+      const ms = snowflakeMs(id);
+      if (!ms) continue;                                  // 不是 snowflake，多半不是帖子
+      if (Date.now() - ms > THREAD_MAX_AGE_MS) continue;  // 老帖子，只是被渲染出来而已
+      const title = threadTitleOf(el, id);
+      enqueue({
+        kind: "thread",
+        msg_id: "t" + id, channel_id: id, guild_id: u.guild_id,
+        parent_id: u.channel_id, is_thread: true,
+        channel_name: title,
+        author: "", author_id: "", is_bot: false,
+        content: "【新帖】" + title,
+        ts: ms / 1000, age_ms: Date.now() - ms,
+        is_dm: u.dm, mentions_me: false,
+        url: `https://discord.com/channels/${u.guild_id || "@me"}/${id}`,
+      });
+      stats.parsed++; stats.sent++; stats.lastSentAt = Date.now();
+      note("新帖：" + title, "已上报");
+    }
+  }
+}
+
+/* ---------- 抓历史 ----------
+   平时故意不报历史消息（不然一切频道就刷屏）。但「把这个帖子从头翻一遍，
+   让 AI 把里面的密钥/链接挑出来」是另一回事，得能主动抓。
+   抓来的消息带 history 标记：只入库，不触发规则、不弹通知。 */
+let scanning = false;
+async function scanHistory(want = 300, onProgress = () => {}) {
+  if (scanning) return { ok: false, error: "已经在抓了" };
+  scanning = true;
+  const got = new Map();
+  try {
+    const lis = () => [...document.querySelectorAll('li[id^="chat-messages-"]')];
+    let scroller = null;
+    for (const el of document.querySelectorAll('[class*="scroller"]')) {
+      if (el.querySelector('li[id^="chat-messages-"]')) { scroller = el; break; }
+    }
+    if (!scroller) return { ok: false, error: "没找到消息区，先点开一个频道或帖子" };
+    let idle = 0;
+    for (let round = 0; round < 120 && got.size < want && idle < 4; round++) {
+      const before = got.size;
+      for (const li of lis()) {
+        const m = parseLi(li);
+        if (m) got.set(m.msg_id, m);
+      }
+      onProgress(got.size);
+      if (got.size === before) idle++; else idle = 0;
+      const top = scroller.scrollTop;
+      scroller.scrollTop = Math.max(0, top - scroller.clientHeight * 0.9);
+      if (scroller.scrollTop === top && top === 0) idle++;   // 已经到顶了
+      await new Promise(r => setTimeout(r, 700));
+    }
+    const all = [...got.values()].sort((a, b) => a.ts - b.ts).slice(-want);
+    const a = myAccount();
+    for (let i = 0; i < all.length; i += 50) {
+      send({ messages: all.slice(i, i + 50), account: a.name, account_id: a.id, history: true });
+      await new Promise(r => setTimeout(r, 250));
+    }
+    note("抓历史 " + all.length + " 条", "已上报（只入库不提醒）");
+    return { ok: true, n: all.length };
+  } finally {
+    scanning = false;
+  }
+}
+
 const observer = new MutationObserver(muts => {
   if (location.pathname !== lastPath) { lastPath = location.pathname; boot = Date.now(); }
   const fresh = Date.now() - boot > BOOT_QUIET_MS;
   const lis = [];
+  const added = [];
   for (const mu of muts) {
     for (const n of mu.addedNodes) {
       if (n.nodeType !== 1) continue;
+      added.push(n);
       if (n.tagName === "LI" && n.id.startsWith("chat-messages-")) lis.push(n);
       else if (n.querySelectorAll) n.querySelectorAll('li[id^="chat-messages-"]').forEach(x => lis.push(x));
     }
   }
+  if (fresh && !scanning) scanThreads(added);    // 新帖：跟消息是两条独立的路
   if (!lis.length) return;
+  if (scanning) return;                          // 抓历史时别把翻出来的旧消息当新消息报
 
   /* 一批冒出一大堆 = Discord 在渲染（切频道、点开子区面板、往上滚加载旧消息）。
      这种情况顺手把静默期重新计时：侧栏点开子区时 URL 不变，只能靠这个认出来。 */
@@ -326,7 +439,10 @@ function paint() {
         <div class="tip">发了消息但这里没出现？说明扩展根本没看见它 —— 检查这个标签页是不是正停在那个频道／帖子上。
         出现了写「已上报」但没提醒你？那是规则没命中，去 dcwatch 界面「监听规则」点试算。</div>
       </div>
+      <div class="tip">要把这个帖子/频道**已经有的**内容交给 AI 翻一遍（比如挑出所有密钥），
+        点下面的「抓历史」。抓来的只入库，不会弹通知。</div>
       <div class="btns">
+        <button class="s">抓历史</button>
         <button class="t">发测试消息</button>
         <button class="o">打开界面</button>
         <button class="h">不再显示</button>
@@ -337,6 +453,14 @@ function paint() {
     const r = await tell("dcwatch-test", {});
     e.target.textContent = r && r.ok ? "已发送 ✓" : "失败";
     setTimeout(refreshUI, 600);
+  };
+  p.querySelector(".s").onclick = async e => {
+    const btn = e.target;
+    btn.disabled = true;
+    btn.textContent = "往上翻…";
+    const r = await scanHistory(300, n => { btn.textContent = "已抓 " + n + " 条…"; });
+    btn.textContent = r.ok ? "抓完 " + r.n + " 条 ✓" : (r.error || "失败");
+    setTimeout(() => { btn.disabled = false; refreshUI(); }, 2500);
   };
   p.querySelector(".o").onclick = () =>
     window.open(`http://127.0.0.1:${(st && st.port) || 8777}/`, "_blank");
@@ -353,5 +477,6 @@ refreshUI();
 setInterval(() => { if (!document.hidden) refreshUI(); }, 10000);
 
 globalThis.__dcwatch = { parseLi, seen, queue, refreshUI, stats, snowflakeMs,
+  scanHistory, scanThreads, seenThreads, threadIdOf,
   show: () => { localStorage.removeItem(HIDE_KEY); mountUI(); refreshUI(); } };
 console.log("[dcwatch] bridge 已挂载，转发到", ENDPOINT, "，右下角有状态药丸；隐藏了就在控制台跑 __dcwatch.show()");

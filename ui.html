@@ -50,11 +50,17 @@ button{cursor:pointer;background:none;border:none}
 .brand .glyph svg{width:15px;height:15px;display:block}
 /* 版本号常驻在名字旁边。以前只印在设置页下载按钮边上，用户根本找不到，
    而「我装的到底是哪一版」是他每次更新后第一个要确认的事。 */
-.brand .bver{font:500 11.5px/1 var(--sans);color:var(--text3);background:transparent;
-  border:1px solid var(--line2);border-radius:999px;padding:3px 7px;margin-left:-2px;
+.brand .bver{font:600 11.5px/1 var(--mono);color:var(--text2);background:var(--bg-sunk);
+  border:1px solid var(--line2);border-radius:999px;padding:4px 8px;margin-left:-2px;
   cursor:pointer;letter-spacing:0}
 .brand .bver:hover{color:var(--text);border-color:var(--text3)}
 .brand .bver.old{background:#fdf0e6;border-color:var(--accent);color:#7a3a1e}
+.tb{border-collapse:collapse;width:100%;font-size:13px}
+.tb th{text-align:left;font:500 11px var(--sans);color:var(--text3);letter-spacing:.05em;
+  text-transform:uppercase;padding:6px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;
+  background:var(--bg-elev)}
+.tb td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.tb tr:hover td{background:var(--bg-hover)}
 .nav{display:flex;flex-direction:column;gap:1px}
 .nav b{font:500 11px var(--sans);color:var(--text3);letter-spacing:.06em;text-transform:uppercase;
   padding:14px 10px 5px}
@@ -376,6 +382,7 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
     <a href="#" class="on" data-v="inbox"><span class="ic">◍</span><span class="lb">收信箱</span><span class="cnt" id="cInbox">0</span></a>
     <a href="#" data-v="ai"><span class="ic">✧</span><span class="lb">AI 工作台</span></a>
     <b>配置</b>
+    <a href="#" data-v="batch"><span class="ic">▦</span><span class="lb">批量提取</span></a>
     <a href="#" data-v="rules"><span class="ic">◆</span><span class="lb">监听规则</span><span class="cnt mute" id="cRules">0</span></a>
     <a href="#" data-v="models"><span class="ic">✦</span><span class="lb">模型接入</span></a>
     <a href="#" data-v="notify"><span class="ic">◔</span><span class="lb">通知与转发</span></a>
@@ -404,6 +411,7 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
     <span class="sub" id="vSub">实时监听命中的消息</span>
     <span class="sp"></span>
     <span class="demotag" id="modeTag"></span>
+    <button class="btn sm" id="topVer" title="点一下：版本、代码在哪、配置存在哪">v–</button>
     <button class="btn sm" id="btnHelp" title="帮助 / 这些字段都是什么">帮助</button>
     <button class="icbtn" id="btnTheme" title="浅色/深色">◐</button>
     <button class="icbtn" id="btnReload" title="刷新">⟳</button>
@@ -615,6 +623,10 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
   <section class="view" id="v-settings">
     <div class="pad narrow">
       <div class="card" style="margin-bottom:16px">
+        <h3>我在跑的是哪一份 <em>版本、代码在哪、你的密钥存在哪</em></h3>
+        <div class="bd" id="whoami"></div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
         <h3>消息从哪来</h3>
         <div class="bd">
           <label class="f"><span>接入方式</span>
@@ -674,6 +686,37 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
   </section>
 
   <!-- ============ logs ============ -->
+  <section class="view" id="v-batch">
+    <div class="pad">
+      <div class="card" style="margin-bottom:16px">
+        <h3>把一堆消息一次过筛 <em>规则是「以后来的消息」，这里是「已经收到的消息」</em></h3>
+        <div class="bd">
+          <div class="hint" style="margin-bottom:12px">典型用法：某个帖子里几百条聊天，你要把里面
+            <b>所有人发过的密钥</b>挑出来。先在 Discord 页面右下角药丸点<b>「抓历史」</b>把那个帖子翻一遍，
+            再回这里选上它、写清要什么，模型会分批读完并只留下真的出现过的内容。</div>
+          <label class="f"><span>从哪儿找 <em>留空 = 所有已收到的消息</em></span>
+            <select id="bScope"><option value="">全部消息</option></select></label>
+          <label class="f"><span>要提取什么 <em>说人话，越具体越好</em></span>
+            <textarea id="bWhat" rows="3" placeholder="例：所有人发出来的兑换码/密钥，连同是谁发的、什么时候发的"></textarea></label>
+          <div class="row" style="flex-wrap:wrap;gap:10px;margin-top:4px">
+            <label class="f" style="max-width:150px;margin:0"><span>最多读几条</span>
+              <input id="bLimit" type="number" value="500" min="1" max="2000"></label>
+            <label class="row" style="gap:6px;margin:0;font-size:13px;color:var(--text2)">
+              <input type="checkbox" id="bOnlyMatched" style="width:15px;height:15px">只看规则命中过的</label>
+            <span class="sp" style="flex:1"></span>
+            <button class="btn pri" id="bRun">开始提取</button>
+          </div>
+          <div class="hint" id="bNote" style="margin-top:10px">会按每批 60 条分几次调模型，条数多就慢一点，别关页面。</div>
+        </div>
+      </div>
+      <div class="card" id="bResCard" style="display:none">
+        <h3>结果 <em id="bResSub"></em>
+          <button class="btn ghost sm" id="bCsv" style="margin-left:auto">⬇ 导出 CSV</button></h3>
+        <div class="bd" style="max-height:56vh;overflow:auto" id="bRes"></div>
+      </div>
+    </div>
+  </section>
+
   <section class="view" id="v-logs">
     <div class="pad">
       <div class="stat" id="stats"></div>
@@ -794,15 +837,103 @@ function seedDemo(){S.cfg={discord:{token:'',enabled:false,mode:'browser'},provi
   S.status={discord:{state:'stopped'},browser:{state:'online',count:37}};S.rules=DEMO_RULES;S.msgs=DEMO_MSGS;
   S.stats={msgs:1284,matched:96,ai_today:23,ai_cap:500,rss_mb:46.2,db_mb:3.4,uptime:9300};}
 
+/* ================= 「我在跑的是哪一份」 =================
+   用户从 GitHub 重新拉了一份、换了文件夹跑，却看到上次配好的模型，
+   第一反应是「我的密钥被推到 GitHub 了？」。真相是配置在 dcwatch.db 里，
+   而 exe 模式下这个 db 是全机共享的。这块必须把路径直接摊开给他看。 */
+function renderWhoami(){
+  const e=(S.env||{}),box=$('#whoami');if(!box)return;
+  const row=(k,v,sub)=>`<div class="row" style="align-items:flex-start;gap:10px;padding:6px 0;
+      border-bottom:1px solid var(--line)">
+    <span style="min-width:104px;color:var(--text3);font-size:12.5px">${k}</span>
+    <div style="flex:1;min-width:0"><b style="font:500 12.5px var(--mono);word-break:break-all">${esc(v||'?')}</b>
+      ${sub?`<div style="font-size:11.5px;color:var(--text3);margin-top:2px">${sub}</div>`:''}</div></div>`;
+  box.innerHTML=
+    row('版本',(e.ver?'v'+e.ver:'?')+(e.frozen?'（打包好的 exe）':'（直接跑 server.py）'),
+      '这个数字也在左上角 dcwatch 旁边的小圆角按钮上，点它能看历史版本')+
+    row('代码在哪',e.code_dir,e.frozen?'exe 运行时自己解包的临时目录，正常':'你双击启动.bat 的那个文件夹')+
+    row('你的配置和密钥在哪',e.db_path,
+      (e.shared_data
+        ? '<b style="color:var(--warn)">注意：exe 模式下这个位置是全机共享的</b> —— '+
+          '所以你换到哪个文件夹跑，看到的都是同一份配置（模型、密钥、规则都在里面）。'+
+          '这解释了「新拉的文件夹为什么带着旧模型」。'
+        : '就在代码同一个文件夹里。换文件夹跑＝一份新的空配置；'+
+          '如果你换了文件夹却看到旧配置，说明你其实在跑 exe，或者把新文件覆盖进了旧文件夹。')+
+      ' 这个文件<b>从来不上传</b>，也在 .gitignore 里，不会进 GitHub。')+
+    row('扩展','磁盘上那份是 '+(e.ext_have||'没找到')+'，程序要求 ≥ '+(e.ext_min||'?'),
+      '不一致就去「设置」里重新下载扩展，装完在 Discord 页面按 F5')+
+    `<div class="hint" style="margin-top:12px">想确认自己拉的是新版？看上面「版本」。
+      想让配置干净重来？<b>关掉程序，把上面那个 ${esc((e.db_path||'dcwatch.db').split(/[\\/]/).pop())} 改个名</b>，
+      再启动就是全新的（改名而不是删除，万一想找回规则还在）。</div>`;
+}
+
+/* ================= 批量提取 ================= */
+let BROWS=[];
+function renderBatch(){
+  // 频道下拉直接从已收到的消息里长出来：用户不必去别处找 ID
+  const seen=new Map();
+  for(const m of S.msgs||[]){
+    const id=m.channel_id||'';if(!id||seen.has(id))continue;
+    seen.set(id,(m.is_thread?'⤷ ':'#')+(m.channel_name||id));
+  }
+  const sel=$('#bScope');const keep=sel.value;
+  sel.innerHTML='<option value="">全部消息（不限频道）</option>'+
+    [...seen].map(([id,nm])=>`<option value="${esc(id)}">${esc(nm)}</option>`).join('');
+  if(keep)sel.value=keep;
+  if(!seen.size)$('#bNote').innerHTML='<b>现在库里还没有消息。</b>先装扩展并在 Discord 页面按 F5，'+
+    '要翻旧内容就点页面右下角药丸里的「抓历史」。';
+}
+$('#bRun').onclick=async()=>{
+  const want=$('#bWhat').value.trim();
+  if(!want)return toast('先写清要提取什么');
+  const btn=$('#bRun');btn.disabled=true;btn.textContent='模型在读…';
+  $('#bNote').textContent='正在分批调用模型，条数多会等一会儿，别关页面。';
+  const r=await api('/api/batch','POST',{want,channel_id:$('#bScope').value||'',
+    limit:+$('#bLimit').value||500,only_matched:$('#bOnlyMatched').checked});
+  btn.disabled=false;btn.textContent='开始提取';
+  if(!r){$('#bNote').textContent='调用失败：'+(S.lastErr||'连不上程序');return;}
+  if(r.ok===false){$('#bNote').textContent='失败：'+(r.error||'未知');return;}
+  BROWS=r.rows||[];
+  $('#bNote').innerHTML=`翻了 <b>${r.scanned}</b> 条消息，调了 ${r.calls} 次模型。`+
+    (r.note?' '+esc(r.note):'')+
+    ((r.errors||[]).length?`<br><span style="color:var(--warn)">有 ${r.errors.length} 批失败：${esc(r.errors[0])}</span>`:'');
+  $('#bResCard').style.display=BROWS.length?'':'none';
+  $('#bResSub').textContent=BROWS.length?`挑出 ${BROWS.length} 条`+
+    (r.unverified?`，其中 ${r.unverified} 条在原文里没找到（标红了，别直接用）`:'，都能在原文里对上'):'';
+  $('#bRes').innerHTML=BROWS.length?`<table class="tb"><thead><tr>
+      <th>提取到</th><th>谁 / 哪儿</th><th>说明</th><th>原文</th></tr></thead><tbody>${
+    BROWS.map(x=>`<tr><td><b style="font-family:var(--mono)${x.verified?'':';color:var(--err)'}">${esc(x.value)}</b>${
+        x.verified?'':'<div style="font-size:11px;color:var(--err)">原文里没找到</div>'}</td>
+      <td>${esc(x.author||'?')}<div style="font-size:11px;color:var(--text3)">#${esc(x.channel||'')} ${
+        x.ts?new Date(x.ts*1000).toLocaleString():''}</div></td>
+      <td style="font-size:12px">${esc(x.note||'')}</td>
+      <td style="font-size:12px;color:var(--text2);max-width:320px">${esc(x.content||'')}</td></tr>`).join('')}
+    </tbody></table>`:'';
+  if(!BROWS.length&&r.scanned)$('#bNote').innerHTML+='<br>模型说里面没有符合的东西。'+
+    '可以把「要提取什么」写得更具体，或者把范围/条数放大。';
+};
+$('#bCsv').onclick=()=>{
+  const esc2=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  const csv=['提取到,是否在原文核对上,谁,频道,时间,说明,原文',
+    ...BROWS.map(x=>[x.value,x.verified?'是':'否',x.author,x.channel,
+      x.ts?new Date(x.ts*1000).toLocaleString():'',x.note,x.content].map(esc2).join(','))].join('\r\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));
+  a.download='dcwatch-提取结果.csv';a.click();
+};
+
 /* ================= shell ================= */
 const TITLES={inbox:['收信箱','实时监听命中的消息'],rules:['监听规则','决定“听谁、听哪、听到什么就做什么”'],
-  ai:['AI 工作台','拿收到的消息直接喂给你接入的模型'],models:['模型接入','填端点 → 拉取模型 → 设为默认'],
+  ai:['AI 工作台','拿收到的消息直接喂给你接入的模型'],
+  batch:['批量提取','把已经收到的一大堆消息交给模型，挑出你要的东西，导成表格'],models:['模型接入','填端点 → 拉取模型 → 设为默认'],
   notify:['通知与转发','命中的消息怎么提醒你、往哪儿转'],
   settings:['设置','Token、收信开关、保留与用量'],logs:['运行日志','连接状态与每次动作的痕迹']};
 function go(v){S.view=v;$$('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+v));
   $$('.nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
   $('#vTitle').textContent=TITLES[v][0];$('#vSub').textContent=TITLES[v][1];
   if(v==='logs')loadLogs();if(v==='ai'){renderQuick();renderWb();}if(v==='rules')renderNl();
+  if(v==='batch')renderBatch();
+  if(v==='settings')renderWhoami();
   if(v==='notify'){renderNotify();renderSinkRows();bindEyes();}
   if(v==='models'){renderPrompts();bindEyes();}}
 $$('.nav a').forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.v)});
@@ -901,7 +1032,7 @@ const ACTIONS={
  ai_summary:{n:'AI 攒够 N 条做摘要',d:'不逐条调用，攒满 N 条一次性总结，适合水群频道。'},
  ai_extract:{n:'AI 抽取结构化字段',d:'把消息里的信息抽成 JSON 存库（价格、地址、单号…），可导出。'},
  webhook:{n:'转发到 Webhook',d:'原样 POST 给飞书/钉钉/n8n，不调模型。'}};
-const BLANK={name:'新规则',source:'discord',guild_ids:[],channel_ids:[],thread_ids:[],
+const BLANK={name:'新规则',source:'discord',kinds:['msg'],guild_ids:[],channel_ids:[],thread_ids:[],
  include_threads_of_channels:true,dm:false,accounts:[],author_ids:[],author_name_contains:'',ignore_bots:true,
  mention_only:false,keywords_any:[],keywords_all:[],regex:'',min_len:0,action:'notify',model:'',provider:'',
  prompt:'',reply_in_thread:true,notify_min_score:0,summary_every:20,cooldown_sec:20,max_per_hour:30,webhook_url:''};
@@ -914,6 +1045,9 @@ const PRESETS=[
  {name:'水群频道每 30 条出摘要',action:'ai_summary',summary_every:30}];
 function ruleDesc(r){
   const wh=[];
+  const kk=r.kinds||['msg'];
+  if(!kk.includes('msg'))wh.push('<span class="seg">只在开新帖时</span>');
+  else if(kk.includes('thread'))wh.push('<span class="seg">消息 + 新帖</span>');
   if(r.guild_ids?.length)wh.push(`<span class="seg">服务器 ${r.guild_ids.length} 个</span>`);
   if(r.channel_ids?.length)wh.push(`<span class="seg">频道 ${r.channel_ids.map(esc).join(', ')}${r.include_threads_of_channels?' + 其子区':''}</span>`);
   if(r.thread_ids?.length)wh.push(`<span class="seg">子区 ${r.thread_ids.map(esc).join(', ')}</span>`);
@@ -1151,6 +1285,14 @@ function editRule(r){
   <div class="db">
     <label class="f"><span>规则名</span><input id="e_name" type="text" value="${esc(E.name)}"></label>
 
+    <div class="sect"><div class="st"><b>0 · 什么时候触发</b><span>「有人开了新帖」和「有人发消息」是两件事</span></div>
+      <div class="chk"><input type="checkbox" id="e_k_msg" ${(E.kinds||['msg']).includes('msg')?'checked':''}>
+        <label for="e_k_msg"><b>有人发消息</b>（默认。频道/子区里的正常聊天）</label></div>
+      <div class="chk"><input type="checkbox" id="e_k_thr" ${(E.kinds||['msg']).includes('thread')?'checked':''}>
+        <label for="e_k_thr"><b>有人开了新帖 / 新子区</b>（论坛频道发新帖也算）</label></div>
+      <div class="hint">只勾第二个 = 只在开新帖时提醒你，帖子里后续聊什么都不管。
+        浏览器旁听要认出新帖，得让那个<b>论坛频道的帖子列表</b>在标签页里开着。</div></div>
+
     <div class="sect"><div class="st"><b>1 · 听哪里</b><span>留空 = 不限。ID 从下面「挑」或 Discord 右键复制 ID</span></div>
       <label class="f"><span>服务器 ID <em>guild_id</em></span>${chipsHtml('guild_ids','粘贴服务器 ID，回车')}</label>
       <label class="f"><span>频道 ID <em>channel_id，可多个</em></span>
@@ -1230,6 +1372,10 @@ function editRule(r){
   bindField('#e_prompt','prompt');bindField('#e_hook','webhook_url');bindField('#e_act','action');
   bindField('#e_prov','provider');bindField('#e_model','model');
   bindField('#e_incthr','include_threads_of_channels','bool');bindField('#e_dm','dm','bool');
+  const syncKinds=()=>{const k=[];if($('#e_k_msg').checked)k.push('msg');
+    if($('#e_k_thr').checked)k.push('thread');E.kinds=k.length?k:['msg'];
+    if(!k.length)$('#e_k_msg').checked=true;};
+  $('#e_k_msg').onchange=syncKinds;$('#e_k_thr').onchange=syncKinds;
   $$('[data-acc]').forEach(c=>c.onchange=()=>{
     E.accounts=$$('[data-acc]').filter(x=>x.checked).map(x=>x.dataset.acc);});
   bindField('#e_nobot','ignore_bots','bool');bindField('#e_ment','mention_only','bool');
@@ -1863,6 +2009,9 @@ function renderBrandVer(){
   el.classList.toggle('old',old.length>0);
   el.title=old.length?`程序 v${v}，但有浏览器还在跑旧版扩展 v${old[0].ver} —— 点开看怎么办`
                      :`程序版本 v${v}（点一下看扩展版本）`;
+  const tv=$('#topVer');            // 顶栏那个同步显示，任何页面都看得到
+  if(tv){tv.textContent=v?('v'+v):(S.demo?'演示':'v–');
+    tv.style.color=old.length?'var(--accent)':'';tv.title=el.title;}
 }
 function seeVersions(){
   const e=S.env||{},v=e.ver||'?',eh=e.ext_have||'',emin=e.ext_min||'';
@@ -1896,6 +2045,17 @@ function seeVersions(){
         刷新箭头读的是卡片上写的那个<b>文件夹路径</b>。如果你把新扩展解压到了别的地方，
         刷新读到的还是老文件夹 —— 那就删掉这个扩展条目，重新「加载已解压的扩展程序」指到新文件夹。
         卡片上的版本号要变成 v${esc(emin)}。</div>`:''}
+      <div class="wizres" style="margin:14px 0 0">
+        <b>这份程序在哪、你的配置在哪</b>（换文件夹跑却看到旧模型时看这里）<br>
+        代码：<code style="word-break:break-all">${esc(e.code_dir||'?')}</code><br>
+        配置和密钥：<code style="word-break:break-all">${esc(e.db_path||'?')}</code><br>
+        ${e.shared_data
+          ? '你在跑 <b>exe</b>，这个配置文件是<b>全机共享</b>的 —— 不管把 exe 放在哪个文件夹，'+
+            '读的都是同一份，所以新解压的文件夹会「带着」你上次配好的模型和密钥。这是正常的，不是泄露。'
+          : '你在<b>直接跑 server.py</b>，配置就在代码同一个文件夹里。'+
+            '换一个新文件夹跑＝一份全新的空配置；如果新文件夹里也有旧配置，'+
+            '说明你把新文件覆盖进了旧文件夹（或者你其实在跑 exe）。'}
+        <br>这个文件<b>不会上传到任何地方</b>，也被 .gitignore 排除，不可能进 GitHub 仓库。</div>
       <div class="hint" style="margin:14px 0 0">另外两个地方也能看：Chrome 的
         <code>chrome://extensions</code> 卡片上写着扩展版本；Discord 页面右下角那个药丸点开也有。
         程序版本还会写在导出的诊断包第一行。</div>
@@ -2011,6 +2171,7 @@ async function seePrompts(){
 }
 $('#btnSeePrompt').onclick=seePrompts;
 $('#brandVer').onclick=seeVersions;
+$('#topVer').onclick=seeVersions;
 const diagUrl=()=>'/diagnose.txt?text='+($('#diagText').checked?'1':'0');
 $('#btnDiag').onclick=()=>{
   if(!S.live){toast('演示模式没有诊断包，跑起来才有');return;}
