@@ -45,12 +45,13 @@ python3 server.py            # → http://127.0.0.1:8777
 DCWATCH_DB=/tmp/x.db python3 server.py    # 测试时用，别污染真配置
 ```
 
-回归（**改 server.py 必跑**，共 342 条）：
+回归（**改 server.py 必跑**，共 401 条）：
 
 ```bash
 cd tests && ./runall.sh e2e.py e2e_ai.py           # 一次两三套，别全塞一批（会超时）
 ./runall.sh e2e_multi.py e2e_wiz.py
-./runall.sh e2e_v17.py e2e_diag.py e2e_wb.py
+./runall.sh e2e_v17.py e2e_diag.py
+./runall.sh e2e_wb.py e2e_imp.py
 ```
 
 改 `extension/content.js` 必跑浏览器侧回归（43 + 16 条，需要一个 CDP 会话）：
@@ -111,7 +112,10 @@ python3 -c "d=open('启动.bat','rb').read(); print(b'\r\n' in d, d.decode('gbk'
 9. **Windows 的 .bat 必须存成 GBK + CRLF**。存 UTF-8 的话中文控制台按 GBK 解析，乱码里会蹦出
    `&`，cmd 当成命令分隔符，用户看到的报错是「'aiohttp' 不是内部或外部命令」。
    echo 文本里的 `>` 要写成 `^>`。`.gitattributes` 里 `*.bat -text` 别删。
-10. **PyInstaller 打 exe 只能在用户本机做**（不能在 Linux 交叉编译），而且它很重：
+10. **任何会覆盖或删除用户手填内容的操作，先预览再落库**。`/api/rules/import` 的 `dry_run`
+    默认就是真，界面必须先把「哪几条会被覆盖、覆盖掉什么、哪几条会被删」摆给他看，
+    点确认才第二次请求真写。他填规则填了一晚上，不能被一个文件默默盖掉。
+11. **PyInstaller 打 exe 只能在用户本机做**（不能在 Linux 交叉编译），而且它很重：
     `build.bat` 有防重复运行的锁，因为用户曾经「没反应」就双击第二次，两个 PyInstaller
     同时啃内存把整机卡死一小时。
 
