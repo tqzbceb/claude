@@ -153,6 +153,14 @@ DEFAULT_CONFIG = {
     "sources": {"discord": True, "browser": True},   # master switch per source
     # 出网设置。proxy 留空＝跟随系统环境变量；填了就强制走它（形如 http://127.0.0.1:7890）
     "net": {"proxy": ""},
+    # 自动点开新帖（C2）。**默认全关**：论坛一天开 50 个帖，全自动点开就是 50 个标签页。
+    #   auto_open          总开关。关着＝完全是老行为，扩展一个标签页都不会开
+    #   max_tabs           同时最多让程序开着几个（超了就不再开新的）
+    #   per_hour           每小时最多开几个（防论坛刷帖把浏览器打爆）
+    #   only_rule_channels 只开「有启用规则在盯的父频道」下面的新帖
+    #   close_idle_min     帖子闲置这么久就让扩展关掉那个标签页；0 = 不自动关
+    "browser": {"auto_open": False, "max_tabs": 6, "per_hour": 8,
+                "only_rule_channels": True, "close_idle_min": 30},
     # AI 相关开关。
     #   stream = 边想边显示（不然模型思考十几秒，界面上只有一个「…」，看着像卡死）
     #   tools  = 允许模型自己动手改规则（关掉就退回只会讲步骤的老样子）
@@ -468,6 +476,13 @@ CREATE TABLE IF NOT EXISTS aicheck(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, rule TEXT, msg_id TEXT,
   hit INT, conf INT, kind TEXT, human INT, passed INT, extracted TEXT, reason TEXT, err TEXT);
 CREATE INDEX IF NOT EXISTS idx_chk_ts ON aicheck(ts DESC);
+-- 自动点开新帖（C2）。要持久化：重启后不能忘了自己开过哪些，否则会重复开一遍。
+-- wanted=排队时间 opened_at=扩展回报开成功的时间 closed_at=已关 tries=试过几次 err=最后一次失败原因
+-- bridge=哪个浏览器开的（多浏览器时关闭指令要发回给同一个）
+CREATE TABLE IF NOT EXISTS threads_open(
+  tid TEXT PRIMARY KEY, url TEXT, name TEXT, parent_id TEXT, guild_id TEXT,
+  wanted REAL, opened_at REAL, closed_at REAL, tries INT DEFAULT 0, last_msg REAL,
+  err TEXT DEFAULT '', bridge TEXT DEFAULT '');
 """
 
 
@@ -1126,6 +1141,13 @@ WB_TOOLS = [
         "parameters": {"type": "object", "properties": {
             "ids": {"type": "array", "items": {"type": "string"},
                     "description": "只导这几条的 id（从 list_rules 拿）；留空=全部"}}}}},
+    {"type": "function", "function": {
+        "name": "list_open_threads",
+        "description": "程序替用户自动点开着哪些论坛帖子（标签页），每个开了多久、最后一条消息多久前、"
+                       "收到过几条。用户问「现在开着哪些帖子 / 哪些可以关了 / 是不是开太多了」时用它。"
+                       "**只读**：你没有关标签页的工具 —— 该关哪些你可以建议，"
+                       "真正的关闭由程序按「闲置多久自动关」那个设置来做，或者他自己点。",
+        "parameters": {"type": "object", "properties": {}}}},
 ]
 
 # **故意没有 import_rules 工具**（硬规矩 10）：导入会覆盖、甚至删掉用户手填了一晚上的规则，
@@ -1223,6 +1245,26 @@ async def run_wb_tool(app, name, args, allow_ids):
     if name == "list_channels":
         txt, known = app.rule_ctx()
         return {"known": txt}, "", False
+
+    if name == "list_open_threads":
+        c = app.br_cfg()
+        rows = []
+        for x in app.open_rows():
+            last = app.thread_last(x["tid"], x["opened_at"])
+            n = app.db.q("SELECT COUNT(*) n FROM messages WHERE channel_id=? AND kind!='thread'",
+                         (x["tid"],))[0]["n"]
+            rows.append({"tid": x["tid"], "name": x["name"], "parent_id": x["parent_id"],
+                         "opened": ago_txt(x["opened_at"]), "last_msg": ago_txt(last) if last else "还没有消息",
+                         "idle_min": int((now() - last) / 60) if last else None, "msgs": n})
+        pend = app.db.q("""SELECT COUNT(*) n FROM threads_open
+                           WHERE opened_at IS NULL AND closed_at IS NULL""")[0]["n"]
+        return {"auto_open": c["auto_open"], "open": rows, "queued": pend,
+                "max_tabs": c["max_tabs"], "close_idle_min": c["close_idle_min"],
+                "note": ("自动点开新帖是关着的，所以这里是空的 —— 论坛里的帖子他不点开，"
+                         "网页里就没有帖内消息，扩展也读不到。要开在「设置」页的"
+                         "「自动点开新帖」那一块" if not c["auto_open"] else
+                         "你只能念和建议，不能关标签页。闲置超过 "
+                         f"{c['close_idle_min']} 分钟程序会自己关（0=不自动关）")}, "", False
 
     if name == "get_status":
         bl = app.bridge_list()
@@ -1349,6 +1391,7 @@ WB_TEXT_PROTO = """## 你可以直接动手（重要）
 - list_channels {}：真实的频道 / 人 ID。
 - search_messages {"query":"key","limit":20}：搜已收到的消息。
 - get_status {}：现在的收信状况和自查结论。
+- list_open_threads {}：程序自动开着哪些帖子标签页（只读，你不能关，只能建议）。
 - export_rules {"ids":["3"]}：把规则整包导出（ids 留空=全部），可以念给用户、或让他搬到另一台机器。
   **没有导入工具**：导入会覆盖他手填的规则，必须他自己在界面上点「导入规则」看过预览再确认。
 
@@ -1358,7 +1401,7 @@ WB_TEXT_PROTO = """## 你可以直接动手（重要）
 WB_TOOLS_HOWTO = """## 你可以直接动手（重要）
 你有一组工具，能**真的**读写这个程序的配置：list_rules / update_rule / create_rule /
 set_rule_enabled / delete_rule / test_rule / list_channels / search_messages / get_status /
-export_rules。
+export_rules / list_open_threads。
 
 用户说「帮我改一下这条规则」「让它连表情包也提醒」「把那条停掉」时，**直接调工具改完再回话**，
 不要输出一二三步教他自己去点。他要是想自己点，他不会来问你。
@@ -1403,7 +1446,8 @@ def strip_text_calls(text):
 
 READ_HUMAN = {"list_rules": "看了一遍你的规则", "list_channels": "查了真实的频道 ID",
               "search_messages": "翻了已经收到的消息", "get_status": "看了现在的收信状况",
-              "test_rule": "拿一条假消息试算了一下", "export_rules": "把你的规则整包导了一份出来"}
+              "test_rule": "拿一条假消息试算了一下", "export_rules": "把你的规则整包导了一份出来",
+              "list_open_threads": "看了一遍现在开着哪些帖子"}
 
 
 async def wb_run(app, prov, model, msgs, allow_ids, emit=None, stream=False, max_steps=6):
@@ -1555,6 +1599,35 @@ BUILTIN_SYS_TEXT = {"wizard": WIZARD_SYS, "compose": COMPOSE_SYS, "workbench": W
 
 PRESET_SCHEMA = "dcwatch.preset/1"       # 认这个名字才当预设包；字段不兼容了就 /2
 PRESET_DIR = BASE / "presets"            # 程序自带的预设包放这儿，用户能直接用记事本打开改
+
+
+BROWSER_RANGE = {"max_tabs": (1, 20), "per_hour": (1, 60), "close_idle_min": (0, 1440)}
+
+
+def norm_browser(raw):
+    """洗「自动点开新帖」的设置。返回 (干净的 dict, 错误话术)；错误话术非空就别存。
+
+    跟 norm_params 一个口径：越界**不静悄悄夹住**。用户以为自己设了「最多开 100 个」，
+    实际被改成 20，行为跟他想的不一样又看不出原因，比直接报错糟。
+    """
+    if not isinstance(raw, dict):
+        return {}, "browser 必须是对象"
+    out = {}
+    for k, v in raw.items():
+        if k not in DEFAULT_CONFIG["browser"]:
+            return {}, f"认不出的设置「{k}」"
+        if k in ("auto_open", "only_rule_channels"):
+            out[k] = bool(v)
+            continue
+        try:
+            n = int(float(v))
+        except Exception:
+            return {}, f"「{k}」要填整数"
+        lo, hi = BROWSER_RANGE[k]
+        if not (lo <= n <= hi):
+            return {}, f"「{k}」要在 {lo} ~ {hi} 之间，你填的是 {v}"
+        out[k] = n
+    return out, ""
 
 
 def norm_params(raw):
@@ -1759,6 +1832,141 @@ class App:
                             ago=round(now() - br.get("last", 0), 1)))
         return out
 
+    # ---------- 自动点开新帖（C2） ----------
+    # 背景（用户问对了）：浏览器旁听是「读网页 DOM」，Discord 只把**点开过的**频道/帖子
+    # 渲染进 DOM。所以论坛里的新帖，不点开就一条帖内消息都读不到 —— 现在能看到的
+    # 「有人开新帖」只是列表页上的标题。想读正文只有两条路：用户自己点开挂着，
+    # 或者程序替他点开（就是这一块）。决策全在服务端：扩展只执行 + 回报，它不知道规则在盯什么。
+    MAX_ORDERS = 3          # 一次最多给 3 条 open / close 指令（一次开 20 个标签页就是脚本行为）
+
+    def br_cfg(self):
+        c = dict(DEFAULT_CONFIG["browser"])
+        c.update({k: v for k, v in (self.cfg.get("browser") or {}).items() if k in c})
+        return c
+
+    def rule_parents(self):
+        """所有**启用**规则盯着的频道 ID（第 3 层频道 + 第 4 层帖子都算）。
+        only_rule_channels 开着时，只有落在这里面的新帖才值得自动点开。"""
+        out = set()
+        for r in self.rules():
+            for k in ("channel_ids", "thread_ids"):
+                for x in r.get(k) or []:
+                    out.add(str(x))
+        return out
+
+    def queue_thread(self, ev):
+        """「有人开新帖」这条路径顺手排一次队。不开自动开帖就什么都不做。
+
+        只排队，不在这里开 —— 开标签页得等扩展下一次心跳来拿指令（它才是有手的那个）。
+        """
+        c = self.br_cfg()
+        if not c["auto_open"]:
+            return False
+        tid = str(ev.get("channel_id") or "")
+        if not tid.isdigit():
+            return False
+        parent = str(ev.get("parent_id") or "")
+        if c["only_rule_channels"]:
+            keep = self.rule_parents()
+            if not (parent in keep or tid in keep):
+                return False
+        if self.db.q("SELECT 1 FROM threads_open WHERE tid=? LIMIT 1", (tid,)):
+            return False        # 幂等：同一个帖子只排一次（哪怕两个桥各报了一次）
+        gid = str(ev.get("guild_id") or "")
+        self.db.x("""INSERT INTO threads_open(tid,url,name,parent_id,guild_id,wanted,tries)
+                     VALUES(?,?,?,?,?,?,0)""",
+                  (tid, ev.get("url") or f"https://discord.com/channels/{gid or '@me'}/{tid}",
+                   (ev.get("channel_name") or tid)[:120], parent, gid, now()))
+        self.log("info", f"新帖「{(ev.get('channel_name') or tid)[:40]}」排进自动打开队列")
+        return True
+
+    def thread_last(self, tid, fallback=0.0):
+        """这个帖子最后一条消息的时间。没有消息就用兜底值（一般是 opened_at）。
+        判断「很久没人说话」用 SQL 就够了，不需要模型（PLAN_C2 第 1 节：模型每 30 秒判一次是纯烧钱）。"""
+        r = self.db.q("SELECT MAX(ts) t FROM messages WHERE channel_id=? AND kind!='thread'", (str(tid),))
+        return float((r and r[0]["t"]) or 0) or float(fallback or 0)
+
+    def open_rows(self):
+        return self.db.q("SELECT * FROM threads_open WHERE opened_at IS NOT NULL AND closed_at IS NULL")
+
+    def lead_bridge(self):
+        """多浏览器时谁负责执行指令。取「最近 90 秒有心跳的桥里 id 最小的那个」——
+        必须是确定性的：按「最后活跃」选会来回抖，两个浏览器就会各开一遍同一个帖子。"""
+        live = sorted(b["id"] for b in self.bridge_list() if b.get("fresh"))
+        return live[0] if live else ""
+
+    def tab_orders(self, bridge=""):
+        """给扩展的指令。纯逻辑、可单测（e2e_tabs.py 把闸门一条条打过）。"""
+        c = self.br_cfg()
+        opened = self.open_rows()
+        hour = self.db.q("SELECT COUNT(*) n FROM threads_open WHERE opened_at>?", (now() - 3600,))[0]["n"]
+        out = {"open": [], "close": [], "limits": dict(
+            c, open_now=len(opened), opened_this_hour=hour,
+            open_left_this_hour=max(0, c["per_hour"] - hour),
+            tabs_left=max(0, c["max_tabs"] - len(opened)))}
+        if not c["auto_open"]:
+            return out
+        lead = self.lead_bridge()
+        mine = (not bridge) or (not lead) or bridge == lead
+        room = min(c["max_tabs"] - len(opened), c["per_hour"] - hour, self.MAX_ORDERS)
+        if mine and room > 0:
+            for r in self.db.q("""SELECT * FROM threads_open
+                                  WHERE opened_at IS NULL AND closed_at IS NULL AND tries<2
+                                  ORDER BY wanted ASC LIMIT ?""", (room,)):
+                out["open"].append({"tid": r["tid"], "url": r["url"],
+                                    "why": f"新帖：{r['name'] or r['tid']}"})
+        if c["close_idle_min"] > 0:
+            cut = now() - c["close_idle_min"] * 60
+            for r in opened:
+                if len(out["close"]) >= self.MAX_ORDERS:
+                    break
+                if (r["opened_at"] or 0) > now() - 300:
+                    continue          # 刚开的不关，否则开了就关来回抖
+                if r["bridge"] and bridge and r["bridge"] != bridge and r["bridge"] in \
+                        [b["id"] for b in self.bridge_list() if b.get("fresh")]:
+                    continue          # 是别的浏览器开的，而那个浏览器还活着，让它自己关
+                last = self.thread_last(r["tid"], r["opened_at"])
+                if last < cut:
+                    out["close"].append({"tid": r["tid"],
+                                         "why": f"闲置 {int((now() - last) / 60)} 分钟"})
+        return out
+
+    def tabs_report(self, b):
+        """扩展回报「我开了/关了哪些」。**服务端不猜**——用户手动关掉标签页服务端不知道，
+        所以「现在到底开着哪些」这个事实只认扩展的回报（PLAN_C2 第 2 节）。"""
+        bid = str(b.get("bridge") or "")[:64]
+        n_open = n_close = n_fail = 0
+        for tid in [str(x) for x in (b.get("opened") or [])][:20]:
+            self.db.x("""UPDATE threads_open SET opened_at=?, closed_at=NULL, err='', bridge=?
+                         WHERE tid=? AND opened_at IS NULL""", (now(), bid, tid))
+            r = self.db.q("SELECT name FROM threads_open WHERE tid=?", (tid,))
+            self.log("info", f"程序替你点开了帖子「{(r[0]['name'] if r else tid)[:40]}」")
+            n_open += 1
+        for tid in [str(x) for x in (b.get("closed") or [])][:20]:
+            self.db.x("UPDATE threads_open SET closed_at=? WHERE tid=? AND closed_at IS NULL",
+                      (now(), tid))
+            r = self.db.q("SELECT name FROM threads_open WHERE tid=?", (tid,))
+            self.log("info", f"关掉了闲置的帖子标签页「{(r[0]['name'] if r else tid)[:40]}」")
+            n_close += 1
+        for f in (b.get("failed") or [])[:20]:
+            if not isinstance(f, dict):
+                continue
+            tid, err = str(f.get("tid") or ""), str(f.get("err") or "?")[:200]
+            if not tid:
+                continue
+            if f.get("gone"):
+                # 「要关的那个标签页找不到了」= 用户自己关了。这不算失败，是事实同步
+                self.db.x("UPDATE threads_open SET closed_at=? WHERE tid=? AND closed_at IS NULL",
+                          (now(), tid))
+                continue
+            self.db.x("UPDATE threads_open SET tries=tries+1, err=? WHERE tid=?", (err, tid))
+            n_fail += 1
+            row = self.db.q("SELECT name,tries FROM threads_open WHERE tid=?", (tid,))
+            if row and (row[0]["tries"] or 0) >= 2:
+                self.log("warn", f"帖子「{(row[0]['name'] or tid)[:40]}」自动打开失败两次了"
+                                 f"（{err[:60]}），你手动点一下这个帖子就行")
+        return {"opened": n_open, "closed": n_close, "failed": n_fail}
+
     def findings(self):
         """一眼结论：把「为什么它没提醒我」这个问题的常见答案自动查一遍。
 
@@ -1799,7 +2007,10 @@ class App:
             for b in real:
                 if b.get("ver") and cmp_ver(b["ver"], EXT_MIN) < 0:
                     add("warn", f"扩展是旧版 v{b['ver']}（程序要求 v{EXT_MIN}）",
-                        "chrome://extensions 点这个扩展卡片上的刷新箭头，再回 Discord 按 F5。")
+                        "chrome://extensions 点这个扩展卡片上的刷新箭头，再回 Discord 按 F5。"
+                        + ("你还开着「自动点开新帖」——那个功能全靠新版扩展执行指令，"
+                           "旧版根本不认，所以现在一个帖子都不会被打开。"
+                           if self.br_cfg()["auto_open"] else ""))
                     break
         elif self.dc and self.dc.state != "online":
             add("bad", f"Discord 直连状态是 {self.dc.state}",
@@ -2322,6 +2533,11 @@ class App:
             self._inflight.discard(mid_key)
 
     async def _handle_event(self, ev):
+        # 「有人开新帖」顺手排一次自动打开的队（C2）。跟规则命中无关：
+        # 不点开就读不到帖内消息，而「值不值得点开」由 browser.only_rule_channels 决定。
+        if ev.get("kind") == "thread" and not ev.get("scanned"):
+            with contextlib.suppress(Exception):
+                self.queue_thread(ev)
         matched, ai_json, score = [], None, None
         # AI 复核（B1）：passed 是「脚本命中且复核放行」的规则，通知只看它。
         # matched 仍记全部脚本命中的规则（那是事实，库里要留着），
@@ -3119,6 +3335,16 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                 patch["ai"]["params"] = ok
             merged.update(patch["ai"])
             patch["ai"] = merged
+        if "browser" in patch:                        # 自动点开新帖（C2）
+            clean, err = norm_browser(patch["browser"])
+            if err:
+                return web.json_response({"ok": False, "error": err}, status=400)
+            patch["browser"] = dict(app.br_cfg(), **clean)
+            if not patch["browser"]["auto_open"]:
+                # 关掉总开关时把「排着队还没开的」一笔勾销。否则过一周他再打开，
+                # 程序会突然点开一堆早就凉了的老帖子。已经开着的标签页不动（他可以自己关）。
+                app.db.x("UPDATE threads_open SET closed_at=? WHERE opened_at IS NULL "
+                         "AND closed_at IS NULL", (now(),))
         if "extract_templates" in patch:
             patch["extract_templates"] = norm_tpls(patch["extract_templates"])
         app.cfg.update(patch)
@@ -4056,6 +4282,70 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         return web.json_response({"ok": True, "accepted": n, "bridge": br["id"],
                                   "server_ver": VERSION}, headers=CORS)
 
+    @r.options("/api/ext/hb")
+    async def hb_pre(_):
+        return web.Response(headers=CORS)
+
+    @r.options("/api/ext/tabs")
+    async def tabs_pre(_):
+        return web.Response(headers=CORS)
+
+    async def _hb_body(req):
+        if req.method == "POST":
+            with contextlib.suppress(Exception):
+                return await req.json()
+        return {}
+
+    @r.route("*", "/api/ext/hb")
+    async def ext_hb(req):
+        """扩展每 30 秒问一次「有什么要我干的」（C2）。
+
+        为什么挂在这里而不是塞进 /api/state：/api/state 是界面也在轮询的公共状态，
+        把「去开这个标签页」的指令混进去，等于每个开着界面的标签页都收到一遍。
+        指令必须点对点发给**一个**桥，见 lead_bridge()。
+        """
+        if req.method not in ("GET", "POST"):
+            return web.json_response({"ok": False, "error": "用 GET 或 POST"}, status=405,
+                                     headers=CORS)
+        b = await _hb_body(req)
+        bid = str(b.get("bridge") or req.query.get("bridge") or "")[:64]
+        if b.get("ver") or req.query.get("ver"):
+            # 顺手记一下这个桥还活着（不带 n，不影响消息计数）
+            app.touch_bridge({"bridge": bid, "ver": b.get("ver") or req.query.get("ver")})
+        o = app.tab_orders(bid)
+        return web.json_response({"ok": True, "server_ver": VERSION, "ext_min": EXT_MIN,
+                                  "open": o["open"], "close": o["close"], "limits": o["limits"]},
+                                 headers=CORS)
+
+    @r.post("/api/ext/tabs")
+    async def ext_tabs(req):
+        """扩展回报执行结果。这一条是整个自动开帖功能的准确性来源 ——
+        服务端不许自己猜「现在开着哪些」（用户手动关了标签页，服务端不会知道）。"""
+        b = await req.json()
+        if not isinstance(b, dict):
+            return web.json_response({"ok": False, "error": "要一个对象"}, status=400, headers=CORS)
+        got = app.tabs_report(b)
+        o = app.tab_orders(str(b.get("bridge") or "")[:64])
+        return web.json_response({"ok": True, **got, "open_now": o["limits"]["open_now"]},
+                                 headers=CORS)
+
+    @r.get("/api/ext/threads")
+    async def ext_threads(_):
+        """界面用：现在程序开着哪些帖子标签页（「自动点开新帖」那一块的状态行）。"""
+        rows = []
+        for r_ in app.db.q("SELECT * FROM threads_open ORDER BY COALESCE(opened_at,wanted) DESC LIMIT 50"):
+            last = app.thread_last(r_["tid"], r_["opened_at"])
+            rows.append({"tid": r_["tid"], "name": r_["name"], "url": r_["url"],
+                         "parent_id": r_["parent_id"],
+                         "state": ("已关" if r_["closed_at"] else "开着" if r_["opened_at"]
+                                   else ("打开失败" if (r_["tries"] or 0) >= 2 else "排队中")),
+                         "opened_ago": ago_txt(r_["opened_at"]) if r_["opened_at"] else "",
+                         "idle": ago_txt(last) if last else "", "tries": r_["tries"] or 0,
+                         "err": r_["err"] or ""})
+        o = app.tab_orders()
+        return web.json_response({"ok": True, "threads": rows, "limits": o["limits"],
+                                  "ext_min": EXT_MIN})
+
     @r.post("/api/sinks/test")
     async def sinktest(req):
         """按一下就知道通不通。which = toast / sound / hook:<id> / all。
@@ -4418,6 +4708,30 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             t = app.prompt(k)
             P("  动作·" + k.ljust(18),
               (f"用户改过，{len(t)} 字" if str(pmc.get(k) or "").strip() else f"出厂原版，{len(t)} 字"))
+
+        # C2：用户会问「它到底替我开了什么」。这是信任问题，必须能自证，别只留在日志里。
+        # （段号用 5.8 而不是 PLAN 写的 [6]：[6] 早就是运行日志了，重新编号会让老诊断包对不上。）
+        P("\n[5.8] 自动点开新帖")
+        bc = app.br_cfg()
+        P("  总开关          ", "开" if bc["auto_open"] else "关（默认；关着＝完全是老行为）")
+        P("  上限            ", f"同时最多 {bc['max_tabs']} 个 · 每小时最多 {bc['per_hour']} 个 · "
+                               + ("只开有规则在盯的父频道下面的" if bc["only_rule_channels"] else "所有新帖都开"))
+        P("  闲置自动关      ", f"{bc['close_idle_min']} 分钟" if bc["close_idle_min"] else "不自动关")
+        lim = app.tab_orders()["limits"]
+        P("  现在开着        ", lim["open_now"], "个 | 这一小时已开", lim["opened_this_hour"], "个")
+        for x in app.open_rows():
+            last = app.thread_last(x["tid"], x["opened_at"])
+            P("   - ", (x["name"] or x["tid"])[:36].ljust(38), "开了", ago_txt(x["opened_at"]),
+              "| 最后一条消息", ago_txt(last) if last else "还没有", "| 桥", x["bridge"] or "-")
+        recent = app.db.q("""SELECT * FROM threads_open ORDER BY COALESCE(opened_at,wanted) DESC
+                             LIMIT 10""")
+        if not recent:
+            P("  （一个都没排过队。总开关关着就是这样）")
+        for x in recent:
+            P("   ·", (x["name"] or x["tid"])[:30].ljust(32),
+              ("已关 " + time.strftime("%m-%d %H:%M", time.localtime(x["closed_at"]))) if x["closed_at"]
+              else ("开着" if x["opened_at"] else f"排队中（试过 {x['tries'] or 0} 次）"),
+              ("| 失败：" + x["err"][:60]) if x["err"] else "")
 
         P("\n[6] 最近 200 条运行日志（新的在上）")
         lgs = app.db.q("SELECT * FROM logs ORDER BY id DESC LIMIT 200")
