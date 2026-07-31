@@ -3176,6 +3176,14 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             if not schema:
                 notes.append("这个文件没写 schema，按 dcwatch 模板包试着读了")
         else:
+            # 最容易发生的走错门：把规则包喂给模板导入口。两个包长得几乎一样，
+            # 只有 rules / templates 这一个键不同 —— 明说是哪一种并指路，别让他自己猜。
+            sch = str((data or {}).get("schema") or "") if isinstance(data, dict) else ""
+            if isinstance(data, dict) and (isinstance(data.get("rules"), list)
+                                           or sch.startswith("dcwatch.rules")):
+                return web.json_response(
+                    {"ok": False, "error": "这是**规则包**，不是提取模板包。"
+                                           "规则要去「监听规则」页点「⇣ 导入规则」"}, status=400)
             return web.json_response(
                 {"ok": False, "error": "看不出这是模板包：要么是 {\"schema\":\"dcwatch.extract/1\","
                                        "\"templates\":[...]}，要么是一个模板数组"}, status=400)

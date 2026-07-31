@@ -8,7 +8,7 @@
 进行中
 
 ## 最后更新
-2026-07-31 18:05（北京时间）· 由「换窗口不丢记忆」这一轮写
+2026-07-31 18:40（北京时间）· 服务端 + 回归已完成，界面还没动
 
 ## 正在做什么
 两件事并行：
@@ -20,13 +20,12 @@
 - [x] 摸清现状：`批量提取`（ui.html 的 `v-batch`）现在**根本没有模板这回事**，
       "要提取什么"是个每次手打的 textarea（`#bWhat`），换台机器 / 换个人就得重打
 - [x] 连续性加固（NOW.md / 根 AGENTS.md / save.py）
-- [ ] server.py：`EXTRACT_SCHEMA = "dcwatch.extract/1"`、`DEFAULT_TPL`、`norm_tpl`、
-      `tpl_for_export`、`diff_tpl`、`sanitize_import_tpl`
-- [ ] server.py：`/api/extract/export`（下载）、`/api/extract/import`（**dry_run 默认真**）
-- [ ] `/api/config` 里给 `extract_templates` 加 `norm_tpls`（照 `quick_actions` 那条）
-- [ ] 诊断包加一行模板情况（硬规矩 5）
+- [x] server.py：`EXTRACT_SCHEMA`、`DEFAULT_TPL`、`norm_tpl(s)`、`tpl_for_export`、
+      `diff_tpl`、`sanitize_import_tpl`；`/api/extract/export` + `/api/extract/import`
+      （**dry_run 默认真**）；`/api/config` 认 `extract_templates`；诊断包 `[5.5]` 段
+- [x] `tests/e2e_ext.py` **53 条全绿**
 - [ ] ui.html：批量提取页加「存为模板 / 选模板 / 导出 / 导入」+ 预览抽屉（照规则那套）
-- [ ] `tests/e2e_ext.py` 新回归，跑绿
+- [ ] 回归全套重跑一遍（443 + 53 = 496 条）
 - [ ] bump 版本到 v1.9.3、README / RUN.md / HANDOFF.md、出 zip 进 `outputs/` + `release/`
 - [ ] 提交推送
 
