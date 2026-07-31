@@ -127,6 +127,22 @@ r = ask("这条现在会命中吗")
 ok("试算这一步不算改动", r.get("changed") is False, r)
 ok("试算说了人话", "试算" in ((r.get("acts") or [{}])[0].get("human") or ""), r.get("acts"))
 
+aid = mk({"name": "盯着张三", "author_ids": ["444100000000001"], "action": "notify"})
+reset()
+script([{"tools": [{"name": "test_rule", "args": {"id": aid, "content": "随便说点什么"}}]},
+        {"content": "会命中。"}])
+ask("盯人这条现在会命中吗")
+out = json.loads(calls()[-1]["tool_out"])
+ok("盯人试算默认用规则里第一个人，不再必挂 author", out.get("match") is True, out)
+reset()
+script([{"tools": [{"name": "test_rule", "args": {"id": aid, "content": "x",
+                                                  "author_id": "555000000000000001"}}]},
+        {"content": "不会命中。"}])
+ask("换个人发呢")
+out = json.loads(calls()[-1]["tool_out"])
+ok("指定别人就不命中，且 why 说的是人的问题", out.get("match") is False and "名单" in str(out.get("why")), out)
+call(f"/api/rules/{aid}", None, method="DELETE")
+
 reset()
 script([{"tools": [{"name": "set_rule_enabled", "args": {"id": nid, "enabled": False}}]},
         {"content": "已经停了。"}])
