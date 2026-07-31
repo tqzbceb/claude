@@ -1273,7 +1273,8 @@ const ACTIONS={
 const BLANK={name:'新规则',source:'discord',kinds:['msg'],guild_ids:[],channel_ids:[],thread_ids:[],
  include_threads_of_channels:true,dm:false,accounts:[],author_ids:[],author_name_contains:'',ignore_bots:true,
  mention_only:false,keywords_any:[],keywords_all:[],regex:'',min_len:0,action:'notify',model:'',provider:'',
- prompt:'',reply_in_thread:true,notify_min_score:0,summary_every:20,cooldown_sec:20,max_per_hour:30,webhook_url:''};
+ prompt:'',reply_in_thread:true,notify_min_score:0,summary_every:20,cooldown_sec:20,max_per_hour:30,webhook_url:'',
+ ai_check:false,ai_check_prompt:'',ai_check_min:60,ai_check_ctx:3,ai_check_human:true};
 const PRESETS=[
  {name:'盯某个人（任何频道）',author_ids:[],action:'notify'},
  {name:'盯某个频道 + 它的所有子区',channel_ids:[],include_threads_of_channels:true,action:'ai_tag',notify_min_score:55},
@@ -1311,6 +1312,7 @@ function renderRules(){
      <div class="body">
        <div class="nm">${esc(r.name)} ${r.hits?`<span class="tag">命中 ${r.hits}</span>`:''}
          ${r.imported_at?`<span class="tag" title="${esc(r.imported_at)} 从规则包导入（${esc(r.imported_from||'来源不明')}）">导入</span>`:''}
+         ${r.ai_check?`<span class="tag a" title="命中的消息先交模型复核一遍：模型说「不是」就不提醒，说「看不到」就转你人工看">AI 复核</span>`:''}
          ${r.action.startsWith('ai')?`<span class="tag a">✧ ${esc(r.model||S.cfg?.default_model?.model||'默认模型')}</span>`:''}</div>
        ${ruleDesc(r)}
      </div>
@@ -1655,6 +1657,30 @@ function editRule(r){
       </div>
     </div>
 
+    <details class="sect" ${E.ai_check?'open':''}>
+      <summary style="cursor:pointer"><div class="st" style="display:inline-flex;gap:10px">
+        <b>AI 复核（让模型再看一眼）</b><span>${E.ai_check?'已开启':'默认关闭，点开看看什么时候用得上'}</span></div></summary>
+      <div style="margin-top:10px">
+        <div class="banner" style="background:var(--bg-sunk);color:var(--text2)"><span>
+          脚本只会认死字：<code>sk-</code> 中间被插了星号、key 后面加了一坨杂物、或者 key 干脆在附件里，
+          脚本都筛不出来。开了这个之后：条件先粗筛，命中的再交模型看一眼，
+          模型能把真 key 还原出来写在通知里；它要是说「我看不到」（比如 key 在附件里），
+          就给你发一条「需要你人工看」。<b>模型调用失败时照旧提醒你</b>，不会把消息吞掉。</span></div>
+        <div class="chk"><input type="checkbox" id="e_aicheck" ${E.ai_check?'checked':''}>
+          <label for="e_aicheck"><b>开启 AI 复核</b>（命中这条规则的消息，先交模型判一遍再说）</label></div>
+        <div id="e_aicfg" style="display:${E.ai_check?'block':'none'};margin-top:6px">
+          <label class="f"><span>复核门槛 <em id="e_aicmin_t"></em></span>
+            <input id="e_aicmin" type="range" min="0" max="100" step="5" value="${E.ai_check_min}"></label>
+          <label class="f"><span>带前几条同频道消息给模型看 <em>「删掉后面才是真 key」这种跨消息场景靠它，0–12</em></span>
+            <input id="e_aicctx" type="number" min="0" max="12" value="${E.ai_check_ctx}"></label>
+          <div class="chk"><input type="checkbox" id="e_aichuman" ${E.ai_check_human?'checked':''}>
+            <label for="e_aichuman">模型说「我看不到」（key 在附件/图片里）也提醒我，通知标「需要你人工看」</label></div>
+          <label class="f"><span>复核提示词 <em>留空用内置</em></span>
+            <textarea id="e_aicprompt" placeholder="留空 = 用内置的 AI 复核提示词（「提示词与预设」抽屉里能看、能改）">${esc(E.ai_check_prompt)}</textarea></label>
+        </div>
+      </div>
+    </details>
+
     <div class="sect"><div class="st"><b>5 · 试算</b><span>不连 Discord 也能验证匹配逻辑</span></div>
       <div class="tester">
         <div class="grid3">
@@ -1686,6 +1712,16 @@ function editRule(r){
     E.accounts=$$('[data-acc]').filter(x=>x.checked).map(x=>x.dataset.acc);});
   bindField('#e_nobot','ignore_bots','bool');bindField('#e_ment','mention_only','bool');
   bindField('#e_thr','reply_in_thread','bool');
+  /* B1 · AI 复核五字段（照 PLAN_B1 §3.2） */
+  bindField('#e_aicheck','ai_check','bool');bindField('#e_aicprompt','ai_check_prompt');
+  bindField('#e_aicmin','ai_check_min','num');bindField('#e_aicctx','ai_check_ctx','num');
+  bindField('#e_aichuman','ai_check_human','bool');
+  $('#e_aicheck').addEventListener('change',()=>{
+    $('#e_aicfg').style.display=E.ai_check?'block':'none';});
+  const aicT=()=>{const v=+($('#e_aicmin').value||0);
+    $('#e_aicmin_t').textContent=v<=0?'0 = 只要模型说「是」就提醒（不看把握）':
+      v>=100?'100 = 模型有十足把握才提醒你':`${v} = 模型有${v/10}成以上把握才提醒你`;};
+  $('#e_aicmin').addEventListener('input',aicT);aicT();
   if($('#pickBtn'))$('#pickBtn').onclick=openPicker;
   $('#t_run').onclick=async()=>{
     const sample={author:$('#t_au').value,author_id:$('#t_aid').value,channel_id:$('#t_cid').value,

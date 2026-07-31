@@ -34,9 +34,13 @@
 
 ## B. AI 能力（用户的核心诉求：脚本筛不住，得让模型上）
 
-- [ ] **B1 · 监听规则接 AI 判定** —— **施工图 `PLAN_B1.md`；服务端已落地**（E 窗口 `5b8d34c`：规则 5 字段
-      ai_check/prompt/min/ctx/human、aicheck 表、三场景 few-shot 提示词、UNREADABLE_HINTS 直接转人工、
-      fail open、诊断 [4.6] 战果段）。**只剩 ui.html 规则里「AI 复核」开关那一小块，E 窗口收尾中。**
+- [x] **B1 · 监听规则接 AI 判定** ✅ **全落地**。服务端（E 窗口 `5b8d34c`：规则 5 字段
+      ai_check/prompt/min/ctx/human、aicheck 表、三场景 few-shot、UNREADABLE_HINTS 直接转人工、
+      fail open、诊断 [4.6]）+ **界面开关（J 窗口）**：规则编辑页动作块下「AI 复核」折叠区
+      （五控件 + 照抄的人话说明 + 门槛滑杆实时文案「60 = 模型有6成以上把握才提醒你」），
+      规则列表加 `AI 复核` 标签。演示目检：折叠区/开关联动/滑杆文案/保存后标签出现，全过
+      （banner 撞了 .banner 是 flex 的坑，长文案要包一层 span）。e2e 50 + imp 74 复跑绿。
+      **遗留：PLAN_B1 §3.3 的 tests/e2e_chk.py（≥40 条专项）E 窗口没写，仍是债。**
       场景（用户原话概括，都是发 key 的人的反侦察手段）：
       ① key 中间插字符，正则筛不到；② key 后面加杂物，下一条消息说「删掉后面 xxx 才是真 key」，
       要跨消息理解；③ 用类脑社区的 `/下载` 命令发 txt 附件，key 在附件里——模型也提不到时

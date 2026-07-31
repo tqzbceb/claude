@@ -107,11 +107,17 @@ CDP 转发本机 8777，真 live 目检通了）。
 随内容长高（160px 封顶）、发送后缩回、点盒子空白处聚焦 —— 两家都复现不了他的现象
 （空 textarea 点击落点恒为 (0,0)），真凶最可能是「高空盒造成的字与点击位置错位感」，
 单行盒从根上消除；演示目检 26→98→26 + 聚焦全过。若他还说不行，请他发截图。
-**J 窗口环境发现**：`Page.setDocumentContent` **会执行**内联脚本，演示目检不用桥 ——
-先导航到任意 https 真源再注入，localStorage 就能用（about:blank 上 localStorage 抛错，
-app 脚本会同步崩在中段）。Fetch 拦截桥（mjs 版）反复重连后会拖死 CDP 消息泵，慎用。
-**下一个窗口只剩：B1 界面开关**（照 PLAN_B1 §3.2，纯 ui.html）+ 全套回归出包；
-C2 扩展侧仍是单独一轮（动 extension 要 bump manifest + EXT_MIN）。
+**J 窗口做完 B1 界面开关**（最后一块）：规则编辑页动作块下「AI 复核」折叠区（五控件 +
+人话说明照抄 PLAN + 滑杆实时文案）+ 规则列表 `AI 复核` 标签，演示目检全过，e2e 50 + imp 74 绿。
+**B1 至此全落地；遗留债：PLAN_B1 §3.3 的 tests/e2e_chk.py（≥40 条专项）E 窗口没写。**
+**J 窗口环境发现二则**：① `Page.setDocumentContent` 会执行内联脚本，演示目检不用桥 ——
+先导航到任意 https 真源再注入（about:blank 上 localStorage 抛错，app 脚本会同步崩在中段）；
+② **同一标签页重复注入会 SyntaxError（const 重复声明），旧 JS 全局残留 —— 每次注入前必须
+先重新导航刷掉全局**，不然改完的代码根本不生效，目检会骗你。Fetch 拦截桥（mjs 版）反复
+重连后会拖死 CDP 消息泵，慎用。
+**下一个窗口只剩：全套回归 + 出 v1.10.0 包**（A6/C4/B6/B1 全是程序侧，扩展没动 → 只 bump
+VERSION，不碰 manifest/EXT_MIN，不出扩展包）；C2 扩展侧仍是单独一轮（动 extension 才
+bump manifest + EXT_MIN）；e2e_chk.py 专项债有余力就还。
 本窗口进度：① 接手/PAT/指针 ✓ → ②③④⑤ 代码已写完（提示词抽屉可编辑+预设导入导出、
 采样参数折叠区+后处理三档、模型选择进服务卡片、presets/教模型写规则.json + /api/presets 两个接口）
 → 现在做 ⑥ 回归 + 目检 + 出包。
