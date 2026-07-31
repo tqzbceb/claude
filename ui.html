@@ -323,6 +323,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
   background:#fdf0e6;border:1px solid var(--accent);color:#7a3a1e}
 #connBar .cb b{font-weight:700}
 #connBar .cb.ok{background:var(--bg-sunk);border-color:var(--line);color:var(--text2)}
+#connBar .cb.w{background:#fdf8ec;border-color:#dcb473;color:#6b4a12}
+#connBar .cb .hd{font-weight:700;display:flex;gap:6px;align-items:baseline}
+#connBar .cb .hd i{font-style:normal;flex:none}
+#connBar .cb .wy{margin-top:2px;opacity:.92}
 .sb{position:relative;transition:width .16s,flex-basis .16s}
 html[data-sb="mini"] .sb{width:56px;flex-basis:56px;padding:14px 6px 10px}
 html[data-sb="mini"] .sb .lb,html[data-sb="mini"] .brand .txt,html[data-sb="mini"] .brand .bver,
@@ -971,7 +975,9 @@ function renderList(){
        <button class="btn ghost sm addctx" data-id="${m.id}" title="加入 AI 上下文">${S.ctx.has(m.id)?'✓ 已选':'✧'}</button>
      </div>
    </div>`).join(''):`<div class="empty"><span class="big">◍</span><div>还没有消息</div>
-     <div style="font-size:12.5px;max-width:240px">先在「设置」填 Bot Token，再到「监听规则」建一条规则</div></div>`;
+      <div style="font-size:12.5px;max-width:260px">${(S.cfg?.discord?.mode||'browser')==='browser'
+        ?'装好浏览器扩展、在 Discord 页面按一次 F5，收到的消息就会出现在这里。上面的提示条会说清缺哪一步。'
+        :'先在「设置」填 Bot Token，再到「监听规则」建一条规则'}</div></div>`;
   $$('#mlist .mi').forEach(e=>e.onclick=ev=>{
     if(ev.target.closest('.addctx'))return;openMsg(+e.dataset.id)});
   $$('#mlist .addctx').forEach(b=>b.onclick=()=>{const id=+b.dataset.id;
@@ -2079,6 +2085,20 @@ function renderSources(){
   const live=bl.filter(x=>x.fresh);
   const extOld=live.filter(x=>x.ver&&(S.env||{}).ext_min&&cmpVer(x.ver,(S.env||{}).ext_min)<0);
   let cb='';
+  /* 服务端的「一眼结论」优先：跟导出的诊断包第 [0] 段是同一份判断。
+     以前这里只判断连没连上，所以「一条规则都没有」这种真正的原因界面上根本不说，
+     用户只能觉得「装好了但没反应」。 */
+  const fnd=(S.findings||[]).filter(f=>f.level!=='ok').slice(0,4);
+  if(fnd.length){
+    cb=fnd.map(f=>`<div class="cb ${f.level==='bad'?'':'w'}">
+      <div class="hd"><i>${f.level==='bad'?'✗':'!'}</i><span>${esc(f.what)}</span></div>
+      <div class="wy">${esc(f.why)}</div></div>`).join('');
+    $('#connBar').innerHTML=cb;
+    const any0=on||bon;
+    $('#btnPause').classList.toggle('paused',!any0);
+    $('#btnPause').querySelector('.lb').textContent=any0?'全部暂停':'已暂停 · 恢复';
+    return;
+  }
   if(!bon)cb=`<div class="cb">浏览器旁听<b>已关闭</b>，左下角开关打开才会收信。</div>`;
   else if(!bl.length)cb=`<div class="cb">还<b>没有任何浏览器</b>在旁听。装好扩展后，
     <b>必须回到 Discord 页面按一次 F5</b> —— 内容脚本只在页面加载时注入，装完不刷新＝完全没生效。
@@ -2281,6 +2301,7 @@ function connectSSE(){
 async function boot(){
   const st=await api('/api/state');
   if(st){S.cfg=st.config;S.status=st.status;S.rules=st.rules;S.stats=st.stats;S.env=st.env||{};
+    S.findings=st.findings||[];
     const ms=await api('/api/messages?limit=300');S.msgs=ms?ms.messages:[];
     $('#modeTag').textContent='';}
   else{seedDemo();S.demo=true;$('#modeTag').textContent='演示模式（未连上后端）';
@@ -2296,7 +2317,7 @@ async function boot(){
     setInterval(async()=>{
       if(document.hidden)return;
       const st=await api('/api/state');
-      if(st){S.status=st.status;S.env=st.env||S.env;renderSources();}
+      if(st){S.status=st.status;S.env=st.env||S.env;S.findings=st.findings||[];renderSources();}
     },15000);}
 }
 boot();

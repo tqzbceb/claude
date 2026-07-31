@@ -18,8 +18,11 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.7.1"                               # 服务端版本，界面和扩展都能看到
-EXT_MIN = "1.7.0"                               # 低于这个版本的扩展要提示用户更新
+VERSION = "1.7.2"                               # 服务端版本，界面和扩展都能看到
+EXT_MIN = "1.7.2"                               # 低于这个版本的扩展要提示用户更新
+# 扩展上报的跳过原因，给人看的说法（诊断结论里要拼成一句话）
+NICE_SKIP = {"history": "历史消息（时间戳太旧）", "render": "整批渲染（切频道/往上滚）",
+             "dup": "重复", "notext": "没有文字（纯图片/表情）", "quiet": "刚打开页面的头几秒"}
 FROZEN = getattr(sys, "frozen", False)          # True 时 = PyInstaller 打出来的 exe
 # ui.html 在 exe 里是打进包的临时解包目录；数据必须写到真实可写目录
 BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -742,6 +745,9 @@ class App:
         br["last"] = now()
         br["count"] += n
         br["err"] = err
+        # 页面里的旧脚本直连（扩展重载过但那个 Discord 标签页没按 F5）。
+        # 它还能转发消息，看着像在工作，所以必须显式记下来，否则没人能看出问题。
+        br["stale_ctx"] = bool(b.get("stale_ctx"))
         if isinstance(b.get("stats"), dict):      # 扩展侧的实情，导出诊断时要用
             br["stats"] = b["stats"]
         self.last_ingest = now()
@@ -752,6 +758,99 @@ class App:
         for br in sorted(self.bridges.values(), key=lambda x: -x.get("last", 0)):
             out.append(dict(br, fresh=now() - br.get("last", 0) < 90,
                             ago=round(now() - br.get("last", 0), 1)))
+        return out
+
+    def findings(self):
+        """一眼结论：把「为什么它没提醒我」这个问题的常见答案自动查一遍。
+
+        诊断包第 [0] 段和界面「收信箱」顶部都用它。这是刻意加的：一份诊断包有几百行，
+        真正的原因往往是「一条规则都没建」或者「扩展重载了但页面没按 F5」这种一句话的事，
+        不该指望用户（或者看诊断的人）拿肉眼在几百行里找线索。
+        每条结论 = 现象 + 该做什么，不写「可能有问题」这种没用的话。"""
+        out = []
+        add = lambda lv, what, why: out.append({"level": lv, "what": what, "why": why})
+        brs = self.bridge_list()
+        live = [b for b in brs if b["fresh"]]
+        stale = [b for b in live if b.get("stale_ctx")]
+        real = [b for b in live if not b.get("stale_ctx")]
+        mode = self.cfg["discord"].get("mode", "browser")
+        rules = self.rules(False)
+        on_rules = [x for x in rules if x.get("enabled")]
+        n_msg = (self.db.q("SELECT COUNT(*) c FROM messages") or [{"c": 0}])[0]["c"]
+        n_hit = (self.db.q("SELECT COUNT(*) c FROM messages WHERE matched<>'' AND matched<>'0'")
+                 or [{"c": 0}])[0]["c"]
+
+        # ---- 消息进不进得来 ----
+        if mode == "browser":
+            if not self.cfg["sources"].get("browser", True):
+                add("bad", "浏览器旁听的开关是关的", "左下角把「浏览器旁听」打开，否则扩展送来的消息全被丢掉。")
+            elif not brs:
+                add("bad", "没有任何浏览器在旁听",
+                    "扩展没装上，或者装完没在 Discord 页面按 F5 —— 内容脚本只在页面加载时注入。")
+            elif not live:
+                add("bad", f"扩展装过，但最近 90 秒没有心跳（最后一次 {int(brs[0]['ago'] / 60)} 分钟前）",
+                    "Discord 标签页关了/睡了，或扩展被停用。打开 Discord 按 F5 就恢复。")
+            if stale and not real:
+                add("bad", "这个 Discord 页面里跑的是旧脚本",
+                    "扩展重载/更新过，但那个标签页没刷新。它还能直连转发，所以看着像在工作，"
+                    "实际上扩展的改动全都没生效。到 Discord 标签页按一次 F5。")
+            elif stale:
+                add("warn", "有一个 Discord 标签页需要按 F5",
+                    "那个页面还连着旧脚本（扩展重载过）。按 F5 后这条就没了。")
+            for b in real:
+                if b.get("ver") and cmp_ver(b["ver"], EXT_MIN) < 0:
+                    add("warn", f"扩展是旧版 v{b['ver']}（程序要求 v{EXT_MIN}）",
+                        "chrome://extensions 点这个扩展卡片上的刷新箭头，再回 Discord 按 F5。")
+                    break
+        elif self.dc and self.dc.state != "online":
+            add("bad", f"Discord 直连状态是 {self.dc.state}",
+                "Token 模式下这里必须是 online，看下面 [2] 段的报错。")
+
+        # ---- 扩展看见了却没上报 ----
+        parsed = sent = 0
+        skips = {}
+        # 同一个页面可能同时以「后台脚本」和「页面直连」两个身份出现（扩展重载过），
+        # 两边的 stats 是同一份，加起来会翻倍 —— 有正常桥时就只看正常桥
+        for b in (real or live):
+            st = b.get("stats") or {}
+            parsed += st.get("parsed", 0) or 0
+            sent += st.get("sent", 0) or 0
+            for k, v in (st.get("skip") or {}).items():
+                skips[k] = skips.get(k, 0) + (v or 0)
+        if parsed and not sent:
+            why = "、".join(f"{NICE_SKIP.get(k, k)} {v} 条" for k, v in skips.items() if v)
+            add("warn", f"扩展解析到 {parsed} 条，但一条都没上报",
+                (f"跳过原因：{why}。" if why else "")
+                + "「整批渲染」和「历史消息」都是故意跳的（切频道、往上滚不该刷屏）；"
+                  "要把已经发过的内容弄进来，用药丸面板里的「抓历史」。"
+                  "如果你确认刚刚有人发了新消息却没上报，把这份诊断发出去。")
+        if live and not n_msg:
+            add("warn", "库里一条消息都没有",
+                "从程序启动到现在，你正在看的那个频道可能就是没有新消息 —— 自己发一条测试最快。")
+
+        # ---- 有消息之后，规则和出口 ----
+        if not rules:
+            add("bad", "一条规则都没有",
+                "没有规则 = 消息进来了也不会有任何提醒。到「监听规则」点「◆ 帮我建一条」，"
+                "让它问你几句就能生成。")
+        elif not on_rules:
+            add("bad", f"{len(rules)} 条规则全是停用状态", "把要用的那条打开。")
+        elif n_msg and not n_hit:
+            add("warn", f"收到过 {n_msg} 条消息，一条都没命中规则",
+                "多半是条件太窄（频道 ID 填错、关键词太长、忘了勾「包含私信」）。"
+                "到「监听规则」用「试算」把真实消息贴进去，它会告诉你卡在哪一条。")
+        sk = self.cfg.get("sinks", {})
+        hooks_on = [h for h in sk.get("hooks", []) if h.get("enabled")]
+        if on_rules and not sk.get("toast") and not sk.get("sound") and not hooks_on:
+            add("warn", "命中了也不会有动静", "弹窗和提示音都关着，也没有开着的转发出口。")
+        errs = self.db.q("SELECT COUNT(*) c FROM logs WHERE level='error' AND ts>?", (now() - 3600,))
+        if errs and errs[0]["c"]:
+            add("warn", f"最近一小时有 {errs[0]['c']} 条报错", "看下面 [6] 段的日志。")
+
+        if not out:
+            add("ok", "没查出明显问题",
+                f"在旁听 {len(real)} 个浏览器，{len(on_rules)} 条规则开着，库里 {n_msg} 条消息、"
+                f"命中 {n_hit} 条。")
         return out
 
     def log(self, level, text):
@@ -1648,6 +1747,9 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         return web.json_response({
             "config": safe_cfg(app.cfg),
             "status": {"discord": st, "browser": br},
+            # 一眼结论：跟诊断包第 [0] 段同一份判断，界面上直接显示，
+            # 别让用户先怀疑程序坏了、再去导出文件、再等人看
+            "findings": app.findings(),
             "env": {"win": IS_WIN, "frozen": FROZEN, "data_dir": str(DATA_DIR), "port": app.port,
                     "ver": VERSION, "ext_min": EXT_MIN, "ext_have": ext_version(),
                     "autostart": autostart_state(), "pyver": sys.version.split()[0],
@@ -2263,6 +2365,11 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         P("生成时间", time.strftime("%Y-%m-%d %H:%M:%S"), "（本机时间）")
         P("=" * 62)
 
+        P("\n[0] 一眼结论（程序自己查的，下面几段是原始数据）")
+        for f in app.findings():
+            P("  " + {"bad": "✗", "warn": "!", "ok": "✓"}.get(f["level"], "-"), f["what"])
+            P("      →", f["why"])
+
         P("\n[1] 程序")
         P("  版本            ", VERSION, " / 要求扩展至少", EXT_MIN)
         P("  磁盘上的扩展版本", ext_version() or "（没找到 extension 文件夹）")
@@ -2305,6 +2412,8 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
               "（", b["ago"], "秒前）| 报过", b.get("count", 0), "条",
               ("| 错误: " + b["err"]) if b.get("err") else "")
             P("      在盯     ", b.get("where") or "（不知道）")
+            if b.get("stale_ctx"):
+                P("      注意      这是页面里的旧脚本直连（扩展重载/更新过，那个标签页没按 F5）")
             st = b.get("stats") or {}
             if st:
                 sk = st.get("skip") or {}

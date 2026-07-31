@@ -4,8 +4,11 @@
 const ENDPOINT = "http://127.0.0.1:8777/api/ingest";
 const BOOT_QUIET_MS = 4000;   // 刚打开/刚切频道时已有的历史消息不算“新消息”
 const MSG_MAX_AGE_MS = 3 * 60 * 1000;  // 消息自己的时间戳超过这么久 = 历史，不上报
-const RENDER_BURST = 8;       // 一批就冒出这么多条 = Discord 在渲染/回填，不是真的来了这么多消息
+const RENDER_BURST = 8;       // 一批冒出这么多条才怀疑是渲染/回填（还要看消息本身新不新）
+const FLOOD_MAX = 25;         // 一批里真·新消息超过这么多 = 不正常，宁可不报（防刷屏）
 const DISCORD_EPOCH = 1420070400000;
+/* 脚本注入时扩展还是活的，这时候把版本记下来；之后扩展被重载就取不到了 */
+const EXT_VER = (() => { try { return chrome.runtime.getManifest().version; } catch (e) { return ""; } })();
 
 /* Discord 的消息 ID（snowflake）高位就是毫秒时间戳。
    这是判断「新消息还是历史」最可靠的依据 —— 比「页面加载后 4 秒」靠谱得多：
@@ -117,17 +120,28 @@ function parseLi(li) {
 }
 
 /* 交给后台脚本去发：内容脚本自己发会被 Chrome 按「discord.com 访问本地网络」拦。
-   后台脚本不在时（比如你在控制台手动调试）退回直接 fetch。 */
+   后台脚本不在时退回直接 fetch —— 两种情况会走到这里：
+   1) 你在控制台手动调试（没有扩展环境）；
+   2) 扩展被重载/更新/停用过，而这个 Discord 标签页没刷新 → 页面里跑的还是旧脚本，
+      它跟扩展的连接已经断了（chrome.runtime.id 变成 undefined）。
+   第 2 种最坑：还能直连转发，看着「像在工作」，但扩展那边的改动一点都不生效，
+   界面上也会多出一个认不出浏览器/版本的桥。所以这里显式打上 stale_ctx 标记，
+   让 dcwatch 的诊断能一眼说出「按 F5」。 */
+let ctxDead = false;
 function send(payload) {
   try {
     if (globalThis.chrome && chrome.runtime && chrome.runtime.id) {
       chrome.runtime.sendMessage({ type: "dcwatch", payload }, () => void chrome.runtime.lastError);
       return;
     }
-  } catch (e) { /* 扩展被重载时 sendMessage 会抛，忽略 */ }
+    if (globalThis.chrome && chrome.runtime) ctxDead = true;   // 有 chrome.runtime 但没 id = 断开了
+  } catch (e) { ctxDead = true; /* 扩展被重载时 sendMessage 会抛 */ }
   fetch(ENDPOINT, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(Object.assign({
+      bridge: "page-direct", browser: ctxDead ? "页面直连（扩展需按 F5）" : "页面直连（控制台）",
+      ver: EXT_VER, stale_ctx: ctxDead,
+    }, payload)),
   }).catch(() => { /* dcwatch 没开着就丢掉，不打扰页面 */ });
 }
 
@@ -270,9 +284,20 @@ const observer = new MutationObserver(muts => {
   if (!lis.length) return;
   if (scanning) return;                          // 抓历史时别把翻出来的旧消息当新消息报
 
-  /* 一批冒出一大堆 = Discord 在渲染（切频道、点开子区面板、往上滚加载旧消息）。
-     这种情况顺手把静默期重新计时：侧栏点开子区时 URL 不变，只能靠这个认出来。 */
-  const render = lis.length >= RENDER_BURST;
+  /* 一批冒出一大堆，通常是 Discord 在渲染（切频道、点开子区面板、往上滚加载旧消息）。
+     但「真的一下来了十几条」在活跃频道里也会发生 —— 开奖、发码、抢名额的时候恰恰就是刷屏，
+     以前一律按渲染整批丢掉，等于最该提醒的时刻反而全漏（诊断包里会看到
+     「解析 22 条 → 上报 0 条，整批渲染 22」）。
+     所以改成看消息自己的时间戳：只有这一批里绝大多数是旧消息（或者认不出时间）才算渲染回填。
+     真·新消息多到 FLOOD_MAX 以上仍然不报 —— 那种量级不是人在聊天。
+     认成渲染时顺手把静默期重新计时：侧栏点开子区时 URL 不变，只能靠这个认出来。 */
+  const stampOf = id => snowflakeMs((/-(\d+)$/.exec(id) || ["", ""])[1]);
+  const stale = lis.filter(li => {
+    const t = stampOf(li.id);
+    return !t || Date.now() - t > MSG_MAX_AGE_MS;
+  }).length;
+  const brandNew = lis.length - stale;
+  const render = lis.length >= RENDER_BURST && (stale >= lis.length * 0.6 || brandNew > FLOOD_MAX);
   if (render) boot = Date.now();
 
   for (const li of lis) {
@@ -333,7 +358,8 @@ function askStatus() {
         });
         return;
       }
-    } catch (e) { /* 扩展刚重载 */ }
+      if (globalThis.chrome && chrome.runtime) ctxDead = true;   // 扩展重载了，本页没刷新
+    } catch (e) { ctxDead = true; }
     res(null);
   });
 }
@@ -392,6 +418,9 @@ function mountUI() {
 }
 
 function judge(st) {
+  if (ctxDead) return ["bad", "按 F5 刷新本页",
+    "扩展刚更新过（或被重载/停用），这个页面里跑的还是旧脚本，已经跟扩展断开了。" +
+    "现在虽然还能直连转发消息，但扩展这边的改动一点都不生效 —— 在这个页面按一次 F5 就好。"];
   if (!st) return ["bad", "扩展没响应", "后台脚本没起来。去 chrome://extensions 点一下这个扩展的刷新按钮，再刷新本页。"];
   if (!st.serverOk) return ["bad", "连不上程序",
     `连不上 dcwatch（${st.serverErr || "?"}）。它启动了吗？端口 ${st.port || 8777} 对吗？`];
