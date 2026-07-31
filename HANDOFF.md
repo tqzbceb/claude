@@ -7,7 +7,7 @@
 > 这四份文件 + `tests/` + `release/` 就是全部交接内容，**不需要上一轮的聊天记录**。
 
 ## 最后更新时间
-2026-07-31 23:45（北京时间）
+2026-08-01 01:21（北京时间）· v1.9.4 出包轮
 
 ## 新账号 / 新窗口先看这三行
 - 用户的账号是「10x10」：**每个窗口 10 条消息，用完换窗口**。进行中的状态在 `NOW.md`（粒度到步），
@@ -17,17 +17,16 @@
 - 工作区里的 `claude/` 是**死快照**（没有 `.git`）。干活永远 `git clone` 到 `/tmp` 上改，改完推。
 
 ## 当前状态
-dcwatch 代码侧最新是 **v1.9.3 + A1–A5 全部修复（都未发版）**。BACKLOG 的 A 类 bug 清零，
-C1 也做完。下一件按顺序：
+**v1.9.4 已出包（2026-07-31，本轮）**：A1–A5 + C1 全部修复并 review 通过后，三处版本号
+bump（`VERSION` / `EXT_MIN` / manifest 全对齐到 1.9.4，A2 动过扩展所以 `EXT_MIN` 必须提），
+README / release/README / START_HERE 改版，回归 **542/542 全绿**重跑，/version 冒烟印 v1.9.4，
+程序 zip（26 文件）+ 扩展 zip（10 文件）都在 `release/` 和 outputs/（旧 1.9.3 删了）。
+下一件按顺序：
 
-1. **Claude review A1+C1**（刚施工完，commit `31eea73`）：对照 `PLAN_A1C1.md` 检查 diff +
-   回归结果，PLAN「不许做的事」逐条核对。发现问题直接改完推送。
-2. **出 v1.9.4**：A2 动过 `extension/content.js`（硬规矩 2）——要 bump `server.py` 的
-   `VERSION` 和 `EXT_MIN`、bump `extension/manifest.json` 的 version，**程序 zip + 扩展 zip
-   两个都出**，`release/` 和 `outputs/` 同步（旧版删掉）。出完让用户：①重装扩展并在
-   Discord 页面按 F5；②真机验三条（A2 回复消息的盯人命中、A3 开两个标签页只弹一条、
-   A5 关掉三个开关立刻全停）。
-3. 然后才是 BACKLOG 里的新活：B3+B4+B2（模型接入大轮）→ B1（AI 复核规则）→ C2（动扩展）
+1. **等用户装 v1.9.4 并真机验三条**：①重装扩展（覆盖文件 → chrome://extensions 点 ⟳ →
+   Discord 页面 F5，卡片应显示 v1.9.4）；②验 A2 回复消息的盯人命中、A3 开两个标签页
+   只弹一条、A5 关掉三个开关立刻全停；③顺嘴要一份诊断包（先看 [0] 和 [4.5] 段）。
+2. 然后才是 BACKLOG 里的新活：B3+B4+B2（模型接入大轮）→ B1（AI 复核规则）→ C2（动扩展）
    → C3、B5、B6、D 定稿。优先级建议见 BACKLOG 末尾。
 
 **A1「聊天刷新丢失」+ C1「多开聊天」已修完（施工窗口 Kimi K3，commit `31eea73`，待 review）**：

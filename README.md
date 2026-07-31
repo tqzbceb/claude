@@ -111,9 +111,9 @@ python server.py --open     # 不加 --open 不会自动开浏览器
 1. `chrome://extensions` → 找到 dcwatch → 点卡片上的**刷新箭头 ⟳**；
 2. 回到 Discord 页面**按 F5**。
 
-卡片上的版本号是你唯一的自查凭据，当前应该是 **v1.8.0**（扩展和程序是两个东西，
-号不必相同：程序现在是 v1.9.3，而 **v1.9.0 到 v1.9.3 都没有改扩展**，所以扩展停在 v1.8.0，
-你不用为这一版重装扩展）。
+卡片上的版本号是你唯一的自查凭据，当前应该是 **v1.9.4**（这一版扩展和程序对齐了：
+v1.9.4 改了扩展的消息解析，**必须重装**——覆盖新文件 → 卡片上点 ⟳ → 回 Discord 页面按 F5，
+三步少一步都等于没装）。
 版本对不上时，扩展弹窗顶部和 dcwatch 界面顶部都会直接提示你去刷新。
 
 **用哪个浏览器**：推荐 Chrome 或 Edge（同内核）。「加载已解压的扩展程序」装上去是持久的，重启浏览器还在。
@@ -531,7 +531,7 @@ Token、API Key、Webhook 地址、消息全在本机数据库；界面读取时
 **双击「启动.bat」时那个黑窗口**，前三行也直接写着：
 
 ```
-dcwatch v1.9.3   扩展应为 v1.8.0 以上，你这份 extension 文件夹是 v1.8.0
+dcwatch v1.9.4   扩展应为 v1.9.4 以上，你这份 extension 文件夹是 v1.9.4
 代码: C:\Users\你\Desktop\dcwatch
 配置: C:\Users\你\Desktop\dcwatch\dcwatch.db
 ```
@@ -739,5 +739,5 @@ git clone https://github.com/tqzbceb/claude.git ./claude
 **别让新 AI 拿你手上那个 zip**：zip 是给你运行的，里面故意不含 `tests/` 和交接文件。让它从 GitHub clone。
 
 **如果你连 AI 都不想麻烦，只想拿到最新的程序**：打开
-<https://github.com/tqzbceb/claude/tree/main/release>，点里面那个 `dcwatch-v1.9.3.zip`，
+<https://github.com/tqzbceb/claude/tree/main/release>，点里面那个 `dcwatch-v1.9.4.zip`，
 页面右上角 **Download raw file**，下载解压后双击 `启动.bat` —— 和 AI 给你的是同一个包。

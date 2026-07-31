@@ -18,10 +18,14 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**A1+C1 review 通过（Claude 窗口 2026-07-31），正在出 v1.9.4**。步骤：
-① review 完（见下）✓ → ② bump 三处版本号（server VERSION/EXT_MIN、manifest version，
-扩展跟程序对齐到 1.9.4）→ ③ README/release 文档改版本 → ④ 回归全套重跑 → ⑤ 程序 zip +
-扩展 zip 两个都出，进 release/ 和 outputs/ → ⑥ 推送 + 让用户真机验三条（见发版前待办）。
+**v1.9.4 已出包（2026-07-31），等推送 + 用户真机验收**。本窗口做完：
+① 三处版本号 bump（VERSION/EXT_MIN/manifest 全到 1.9.4）✓ → ② README/release/START_HERE
+文档改版 ✓ → ③ 回归 542/542 全绿重跑 ✓ → ④ /version 冒烟印 v1.9.4 ✓ → ⑤ 程序 zip（26 文件）+
+扩展 zip（10 文件）进 release/ 和 outputs/，旧 1.9.3 删了 ✓。
+**没推送**：这个工作区没有 PAT（换工作区丢了），已跟用户要。拿到 PAT 后：
+`git push "https://x-access-token:<PAT>@github.com/tqzbceb/claude.git" HEAD:main`（在 /tmp/dcw；
+/tmp 丢了就从工作区快照 ./claude/ 恢复——本轮所有改动已同步回快照，含两个 zip 在 claude/release/）。
+推完让用户真机验三条（见发版前待办）。
 
 **review 结论：通过，无返工项。** diff 对照 PLAN_A1C1.md 逐行核过：服务端两表/五接口/
 wb_save_pair/落库点位/[5.6] 段与 PLAN 一致；前端会话栏/wbSend 带 sid/新话题/boot 装载一致；
@@ -43,15 +47,16 @@ wb_save_pair/落库点位/[5.6] 段与 PLAN 一致；前端会话栏/wbSend 带 
 - RUN.md（542 条+e2e_chat 段）、README（AI 工作台存库+会话列表三行）、BACKLOG（A1/C1 打勾）已更新
 - 没动 extension/、没 bump 版本号、没碰 EXT_MIN（PLAN 写死的三条都遵守）
 
-### 发版前待办（攒着，哪轮发版哪轮做）
-- 提 `EXT_MIN`（A2 动了 extension/content.js），用户需重装扩展；
-- 让用户在真 Discord 验：①回复消息的盯人命中（A2）；②开两个 dcwatch 标签页只弹一条（A3）；
+### 发版后待办（用户侧，v1.9.4 装好后验）
+- 重装扩展三步缺一不可：覆盖 extension 文件夹 → chrome://extensions 点 ⟳ → Discord 页面 F5，
+  卡片和界面顶部都应显示 v1.9.4；
+- 真 Discord 验三条：①回复消息的盯人命中（A2）；②开两个 dcwatch 标签页只弹一条（A3）；
   ③关掉三个开关立刻全停（A5）；
-- 发 zip 时同步 release/ 和 outputs/。
+- 顺嘴要一份诊断包（运行日志页 → 导出诊断 → txt 原样发来），到现在还没人见过他机器上的规则。
 
 ## 最后更新
-2026-07-31 · A4 施工+review 完（Claude 窗口）。A1-A5 全部清完。下一件：发版前待办那三条
-用户实测 + 出 v1.9.4（记得 A2 动过 extension，要 bump manifest version 和 EXT_MIN）。
+2026-07-31 · v1.9.4 出包完成（542/542 全绿、双 zip 进 release/+outputs/）。**卡在推送等 PAT**。
+推完之后下一件：等用户真机验三条 + 要诊断包；再往后是 BACKLOG 的 B3+B4+B2（模型接入大轮）。
 
 ## 上一轮（v1.9.3）做完了什么
 批量提取的模板 + 整包导出 / 导入，全流程收尾：
