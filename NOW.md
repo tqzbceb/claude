@@ -8,7 +8,7 @@
 进行中
 
 ## 最后更新
-2026-07-31 18:40（北京时间）· 服务端 + 回归已完成，界面还没动
+2026-07-31 19:40（北京时间）· 界面 + 全量回归已完成，剩文档 / zip / 推送
 
 ## 正在做什么
 两件事并行：
@@ -24,8 +24,8 @@
       `diff_tpl`、`sanitize_import_tpl`；`/api/extract/export` + `/api/extract/import`
       （**dry_run 默认真**）；`/api/config` 认 `extract_templates`；诊断包 `[5.5]` 段
 - [x] `tests/e2e_ext.py` **53 条全绿**
-- [ ] ui.html：批量提取页加「存为模板 / 选模板 / 导出 / 导入」+ 预览抽屉（照规则那套）
-- [ ] 回归全套重跑一遍（443 + 53 = 496 条）
+- [x] ui.html：批量提取页加「存为模板 / 选模板 / 导出 / 导入」+ 预览抽屉（已在浏览器目检：chips / 填表 / 存为模板 / 导入预览抽屉都对）
+- [x] 回归全套重跑一遍：496 / 496 全绿（ext53 e2e46 imp74 ai27 wb94 diag47 multi26 v17-46 wiz83）
 - [ ] bump 版本到 v1.9.3、README / RUN.md / HANDOFF.md、出 zip 进 `outputs/` + `release/`
 - [ ] 提交推送
 

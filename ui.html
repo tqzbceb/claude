@@ -720,11 +720,17 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
   <section class="view" id="v-batch">
     <div class="pad">
       <div class="card" style="margin-bottom:16px">
-        <h3>把一堆消息一次过筛 <em>规则是「以后来的消息」，这里是「已经收到的消息」</em></h3>
+        <h3>把一堆消息一次过筛 <em>规则是「以后来的消息」，这里是「已经收到的消息」</em>
+          <button class="btn ghost sm" id="bTplExp" style="margin-left:auto"
+            title="把下面存的提取模板整包存成一个文件，可以发给别人或搬到另一台机器">⇡ 导出模板</button>
+          <button class="btn ghost sm" id="bTplImp"
+            title="读一个模板文件，导入前会先给你看要改动什么">⇣ 导入模板</button>
+          <input type="file" id="bTplFile" accept=".json,application/json" style="display:none"></h3>
         <div class="bd">
           <div class="hint" style="margin-bottom:12px">典型用法：某个帖子里几百条聊天，你要把里面
             <b>所有人发过的密钥</b>挑出来。先在 Discord 页面右下角药丸点<b>「抓历史」</b>把那个帖子翻一遍，
             再回这里选上它、写清要什么，模型会分批读完并只留下真的出现过的内容。</div>
+          <div class="row" id="bTpls" style="flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
           <label class="f"><span>从哪儿找 <em>留空 = 所有已收到的消息</em></span>
             <select id="bScope"><option value="">全部消息</option></select></label>
           <label class="f"><span>要提取什么 <em>说人话，越具体越好</em></span>
@@ -732,9 +738,12 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
           <div class="row" style="flex-wrap:wrap;gap:10px;margin-top:4px">
             <label class="f" style="max-width:150px;margin:0"><span>最多读几条</span>
               <input id="bLimit" type="number" value="500" min="1" max="2000"></label>
+            <label class="f" style="max-width:170px;margin:0"><span>只看昵称含 <em>留空=不限</em></span>
+              <input id="bAuthor" type="text" placeholder="例：admin"></label>
             <label class="row" style="gap:6px;margin:0;font-size:13px;color:var(--text2)">
               <input type="checkbox" id="bOnlyMatched" style="width:15px;height:15px">只看规则命中过的</label>
             <span class="sp" style="flex:1"></span>
+            <button class="btn ghost" id="bSaveTpl" title="把上面这几个框的值存下来，下次一点就填好">存为模板</button>
             <button class="btn pri" id="bRun">开始提取</button>
           </div>
           <div class="hint" id="bNote" style="margin-top:10px">会按每批 60 条分几次调模型，条数多就慢一点，别关页面。</div>
@@ -862,7 +871,13 @@ function seedDemo(){S.cfg={discord:{token:'',enabled:false,mode:'browser'},provi
      {id:'q1',name:'总结选中消息',text:'把这些消息压成 3-5 条要点，标出需要我行动的部分。'},
      {id:'q2',name:'抽出待办',text:'从这些消息里抽出待办清单，每条含负责人和截止时间，没写就标未定。'},
      {id:'q3',name:'起草回复',text:'针对最后一条消息起草一条中文回复，语气专业简洁，≤120 字。'},
-     {id:'q4',name:'翻译成中文',text:'把这些消息翻译成中文，保留原作者名。'}],
+      {id:'q4',name:'翻译成中文',text:'把这些消息翻译成中文，保留原作者名。'}],
+   extract_templates:[
+     {id:'t1',name:'兑换码',want:'所有人发出来的兑换码/密钥，连同是谁发的、什么时候发的',
+      channel_id:'',limit:500,only_matched:false,author_contains:'',note:'每周五空投贴用'},
+     {id:'t2',name:'管理员公告链接',want:'管理员发的所有链接，带一句它是干什么的',
+      channel_id:'',limit:300,only_matched:false,author_contains:'admin',note:'',
+      imported_at:'2026-07-30 09:12:00',imported_from:'v1.9.2'}],
    models_cache:{}};
   S.env={win:true,frozen:false,port:8777,autostart:{supported:true,on:false,cmd:''}};
   S.status={discord:{state:'stopped'},browser:{state:'online',count:37}};S.rules=DEMO_RULES;S.msgs=DEMO_MSGS;
@@ -913,6 +928,7 @@ function renderBatch(){
   if(keep)sel.value=keep;
   if(!seen.size)$('#bNote').innerHTML='<b>现在库里还没有消息。</b>先装扩展并在 Discord 页面按 F5，'+
     '要翻旧内容就点页面右下角药丸里的「抓历史」。';
+  renderTpls();
 }
 $('#bRun').onclick=async()=>{
   const want=$('#bWhat').value.trim();
@@ -920,7 +936,8 @@ $('#bRun').onclick=async()=>{
   const btn=$('#bRun');btn.disabled=true;btn.textContent='模型在读…';
   $('#bNote').textContent='正在分批调用模型，条数多会等一会儿，别关页面。';
   const r=await api('/api/batch','POST',{want,channel_id:$('#bScope').value||'',
-    limit:+$('#bLimit').value||500,only_matched:$('#bOnlyMatched').checked});
+    limit:+$('#bLimit').value||500,only_matched:$('#bOnlyMatched').checked,
+    author_contains:$('#bAuthor').value.trim()});
   btn.disabled=false;btn.textContent='开始提取';
   if(!r){$('#bNote').textContent='调用失败：'+(S.lastErr||'连不上程序');return;}
   if(r.ok===false){$('#bNote').textContent='失败：'+(r.error||'未知');return;}
@@ -952,6 +969,122 @@ $('#bCsv').onclick=()=>{
   a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));
   a.download='dcwatch-提取结果.csv';a.click();
 };
+
+/* ---------- 提取模板 ----------
+   同一件事（"把所有兑换码挑出来"）每周都要重打一遍输入框 —— 存成模板，一点就填好。
+   存在 cfg.extract_templates 里（跟快捷按钮同一个家）；导出 / 导入走跟规则包
+   完全一样的那套：schema 头 + 先预览再落库 + 重名认 name 不认 id。 */
+function tpls(){const c=S.cfg||{};return Array.isArray(c.extract_templates)?c.extract_templates:[];}
+async function saveTpls(items){
+  const r=await api('/api/config','POST',{extract_templates:items});
+  if(r){S.cfg=r.config;renderTpls();return true;}
+  if(!S.live){S.cfg.extract_templates=items;renderTpls();}   // 演示模式：只在页面里生效
+  return false;}
+function tplDesc(t){const b=[];
+  if(t.channel_id)b.push('限频道 '+t.channel_id);
+  if(t.author_contains)b.push('昵称含 '+t.author_contains);
+  if(t.only_matched)b.push('只看命中过的');
+  b.push('读 '+(t.limit||500)+' 条');return b.join(' · ');}
+function renderTpls(){
+  const box=$('#bTpls');if(!box)return;
+  const ts=tpls();
+  box.innerHTML=ts.length?ts.map((t,i)=>`<span class="chipx" style="cursor:pointer;padding:4px 6px 4px 10px"
+      data-tapply="${i}" title="${esc(t.want||'')} · ${esc(tplDesc(t))}${t.note?' · 备注：'+esc(t.note):''}">
+      ${esc(t.name)}${t.imported_at?` <b title="导入于 ${esc(t.imported_at)}，来自${esc(t.imported_from||'?')}">导入</b>`:''}
+      <button data-trm="${i}" title="删除这个模板">✕</button></span>`).join('')
+    :'<span class="hint">常用的提取可以存下来：把下面填好后点「存为模板」，下次一点就填好。</span>';
+  $$('#bTpls [data-tapply]').forEach(e=>e.onclick=ev=>{
+    if(ev.target.closest('[data-trm]'))return;
+    const t=tpls()[+e.dataset.tapply];if(!t)return;
+    $('#bWhat').value=t.want||'';$('#bLimit').value=t.limit||500;
+    $('#bAuthor').value=t.author_contains||'';$('#bOnlyMatched').checked=!!t.only_matched;
+    const sel=$('#bScope');sel.value=t.channel_id||'';
+    /* 模板限定的频道本机可能一条消息都没收到（比如模板是别人导给你的），下拉里就没有
+       这个选项。静默落回「全部」会让人以为范围生效了 —— 必须喊出来。 */
+    if(t.channel_id&&sel.value!==t.channel_id){sel.value='';
+      toast(`模板限定的频道 ${t.channel_id} 本机还没收到过消息，这次按「全部消息」找`);}
+    else toast(`已按模板「${t.name}」填好，点「开始提取」`);});
+  $$('#bTpls [data-trm]').forEach(b=>b.onclick=async()=>{
+    const i=+b.dataset.trm,t=tpls()[i];if(!t)return;
+    if(!confirm(`删掉模板「${t.name}」？`))return;
+    const items=tpls().slice();items.splice(i,1);
+    await saveTpls(items);toast('删掉了');});
+}
+$('#bSaveTpl').onclick=async()=>{
+  const want=$('#bWhat').value.trim();
+  if(!want)return toast('先把「要提取什么」写了再存');
+  const name=(prompt('给这个模板起个名（重名会覆盖同名的那个）：',
+    tpls().find(t=>t.want===want)?.name||want.slice(0,12))||'').trim().slice(0,40);
+  if(!name)return;
+  const items=tpls().slice(),old=items.findIndex(t=>t.name===name);
+  const t={id:old>=0?items[old].id:'t'+Math.random().toString(16).slice(2,8),name,want,
+    channel_id:$('#bScope').value||'',limit:+$('#bLimit').value||500,
+    only_matched:$('#bOnlyMatched').checked,author_contains:$('#bAuthor').value.trim(),
+    note:old>=0?items[old].note||'':''};
+  if(old>=0)items[old]=t;else items.push(t);
+  const okk=await saveTpls(items);
+  toast(okk?(old>=0?`已覆盖模板「${name}」`:`已存成模板「${name}」`):'演示模式：只在这个页面里有效');};
+
+/* 导出：直连后端，文件名和版本号由后端给。导入：先预览再落库（跟规则包同一套闸）。 */
+$('#bTplExp').onclick=()=>{
+  if(!S.live){toast('后端没连上，现在页面里是演示数据，导不出真模板');return;}
+  if(!tpls().length){toast('一个模板都没有，先点「存为模板」');return;}
+  const a=document.createElement('a');a.href='/api/extract/export';a.download='dcwatch-extract.json';
+  document.body.appendChild(a);a.click();a.remove();
+  toast(`已导出 ${tpls().length} 个模板`);};
+$('#bTplImp').onclick=()=>{
+  if(!S.live){toast('后端没连上，导入需要程序在跑');return;}
+  const f=$('#bTplFile');f.value='';f.click();};
+$('#bTplFile').onchange=async e=>{
+  const file=e.target.files?.[0];if(!file)return;
+  if(file.size>2e6){toast('这个文件有点大（>2MB），不像模板包');return;}
+  S.timp={text:await file.text(),name:file.name};
+  tplPreview('merge');};
+async function tplPreview(mode){
+  const r=await api('/api/extract/import','POST',{data:S.timp.text,mode,dry_run:true});
+  if(!r)return;                       // api() 已经把真实状态码和后端说的原因 toast 出来了
+  const s=r.summary,tot=s.new+s.overwrite;
+  const line=it=>{const[ic,lb,co]=IMP_ACT[it.act]||['·','?','var(--text3)'];
+    return `<div class="rcard"><div class="body">
+      <div class="nm"><span style="color:${co};font-weight:700">${ic} ${lb}</span> ${esc(it.name)}</div>
+      ${it.want?`<div class="hint" style="margin:4px 0 0">${esc(it.want)}</div>`:''}
+      ${it.changes?.length?`<div class="hint" style="margin:4px 0 0">会变：${it.changes.map(esc).join('；')}</div>`:''}
+      ${it.notes?.length?it.notes.map(n=>`<div class="hint" style="margin:4px 0 0;color:#c96442">⚠ ${esc(n)}</div>`).join(''):''}
+    </div></div>`;};
+  openDrawer(`<div class="dh"><h2>导入提取模板 · 预览</h2><span class="sp" style="flex:1"></span>
+      <button class="btn ghost" onclick="closeDrawer()">✕</button></div>
+    <div class="db">
+      <div class="hint">文件 <b>${esc(S.timp.name)}</b>
+        ${r.from_version?`· 来自 dcwatch v${esc(r.from_version)}`:''}
+        ${r.schema?`· ${esc(r.schema)}`:''}</div>
+      ${r.notes?.length?r.notes.map(n=>`<div class="hint" style="color:#c96442">⚠ ${esc(n)}</div>`).join(''):''}
+      <div class="sect"><div class="st"><b>怎么合</b><span>选替换才会删本机多出来的模板</span></div>
+        <div class="chk"><input type="radio" name="timpmode" id="tim_m" ${mode==='merge'?'checked':''}>
+          <label for="tim_m"><b>合并</b>（同名的覆盖，其余新增，本机多出来的模板留着）</label></div>
+        <div class="chk"><input type="radio" name="timpmode" id="tim_r" ${mode==='replace'?'checked':''}>
+          <label for="tim_r"><b>替换全部</b>（本机模板变成跟这个文件完全一样，多出来的删掉）</label></div></div>
+      <div class="sect"><div class="st"><b>这个文件里的 ${r.plan.length} 个</b>
+        <span>新增 ${s.new} · 覆盖 ${s.overwrite} · 没变 ${s.same}</span></div>
+        ${r.plan.map(line).join('')||'<div class="hint">空</div>'}</div>
+      ${r.removes.length?`<div class="sect"><div class="st"><b style="color:#c53030">会被删掉的 ${r.removes.length} 个</b>
+        <span>文件里没有它们</span></div>${r.removes.map(x=>`<div class="rcard"><div class="body">
+        <div class="nm"><span style="color:#c53030;font-weight:700">✕ 删除</span> ${esc(x.name)}</div></div></div>`).join('')}</div>`:''}
+      <div class="row" style="margin-top:14px">
+        <button class="btn pri" id="tImpGo" ${tot||r.removes.length?'':'disabled'}>确认导入</button>
+        <button class="btn ghost" onclick="closeDrawer()">取消</button>
+        <span class="sp" style="flex:1"></span>
+        <span class="hint">${tot||r.removes.length?'点确认才会写进去':'跟本机现有模板一模一样，不用导'}</span></div>
+    </div>`);
+  $('#tim_m').onchange=()=>tplPreview('merge');
+  $('#tim_r').onchange=()=>tplPreview('replace');
+  $('#tImpGo').onclick=async()=>{
+    if(r.removes.length&&!confirm(`会删掉本机 ${r.removes.length} 个模板，确定？`))return;
+    const a=await api('/api/extract/import','POST',{data:S.timp.text,mode,dry_run:false});
+    if(!a)return;
+    S.cfg.extract_templates=a.templates;renderTpls();closeDrawer();
+    const p=a.summary;
+    toast(`导入完成：新增 ${p.new}、覆盖 ${p.overwrite}、没变 ${p.same}`+(p.remove?`、删除 ${p.remove}`:''));};
+}
 
 /* ================= shell ================= */
 const TITLES={inbox:['收信箱','实时监听命中的消息'],rules:['监听规则','决定“听谁、听哪、听到什么就做什么”'],
