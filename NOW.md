@@ -25,8 +25,10 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 新 PAT 已长存工作区私有目录 `.bcode/agent-workspace/secrets/`（不进仓库），用户授权长存。
 
 本轮步骤（每步一 save）：
-① 指针写进新工作区根 AGENTS.md + PAT 长存 + 环境自检（imp 74/74 绿）✓ ← 本次推送
-② D：`docs/discord-命名约定.md` 定稿（5 层 + 4 点修订），B5 要引用它
+① 指针写进新工作区根 AGENTS.md + PAT 长存 + 环境自检（imp 74/74 绿）✓
+② D：`docs/discord-命名约定.md` 定稿（5 层 + 4 点修订）✓ ← 本次推送
+   （新工作区 686c89cd 已重建：PAT 长存 secrets/、save.py 就位、根 AGENTS.md 指针已写、
+    自检 e2e 48/48 + imp 74/74 绿。用户 2026-08-01 重发需求，逐条对过 BACKLOG 仍无新条目）
 ③ B3：4 条骨架提示词（wizard/compose/workbench/tools）改成 cfg 可覆盖 + 界面可编辑；
    预设整包导出/导入（`dcwatch.preset/1`，dry_run 预览闸，照 extract_templates 抄）
 ④ B4：`ai.params` 温度/top_p/max_tokens/penalty/附加 JSON 透传，界面折叠区
