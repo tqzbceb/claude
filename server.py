@@ -18,7 +18,7 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.8.0"                               # 服务端版本，界面和扩展都能看到
+VERSION = "1.9.0"                               # 服务端版本，界面和扩展都能看到
 EXT_MIN = "1.8.0"                               # 低于这个版本的扩展要提示用户更新
 # 扩展上报的跳过原因，给人看的说法（诊断结论里要拼成一句话）
 NICE_SKIP = {"history": "历史消息（时间戳太旧）", "render": "整批渲染（切频道/往上滚）",
@@ -683,6 +683,89 @@ def sanitize_draft(draft, notes, known_ids, model=""):
     if rule["action"].startswith("ai") and not model:
         notes.append("还没设默认模型，这条规则要先在「模型接入」里选一个模型")
     return rule, notes
+
+
+# ======================================================================
+# 规则的导入 / 导出：让「拿去直接用」的规则包能在两台机器之间搬
+# ======================================================================
+RULES_SCHEMA = "dcwatch.rules/1"      # 认这个名字才当规则包；将来字段不兼容了就 /2
+
+
+def rule_for_export(r):
+    """一条库里的规则 → 导出用的干净字典。id / hits 是本机的账，不跟着走。"""
+    out = {k: r.get(k, v) for k, v in DEFAULT_RULE.items()}
+    out["enabled"] = 1 if r.get("enabled", 1) else 0
+    return out
+
+
+def sanitize_import_rule(draft):
+    """把导入的一条规则洗成合法规则，返回 (规则, 这条的提示)。
+
+    跟 sanitize_draft 的区别：**不校验 ID 存不存在**。导出方的频道 ID 在导入方的
+    消息库里当然查不到（一条消息都还没收到），按 known_ids 过滤会把整条规则洗空，
+    用户看到的是「导进来了但什么都不听」——比报错更难查。这里只要求 ID 是纯数字。
+    """
+    notes, rule = [], dict(DEFAULT_RULE)
+    if not isinstance(draft, dict):
+        return None, ["这一项不是规则对象，已跳过"]
+    unknown = [k for k in draft if k not in DEFAULT_RULE and k not in ("id", "enabled", "hits")]
+    for k, v in draft.items():
+        if k not in DEFAULT_RULE or v is None:
+            continue
+        d = DEFAULT_RULE[k]
+        if isinstance(d, list):
+            vals = [str(x).strip() for x in (v if isinstance(v, list) else [v]) if str(x).strip()]
+            if k.endswith("_ids"):
+                bad = [x for x in vals if not x.isdigit()]
+                vals = [x for x in vals if x.isdigit()]
+                if bad:
+                    notes.append(f"{k} 里有不像 ID 的值（{', '.join(bad[:3])}），已丢掉")
+            rule[k] = vals
+        elif isinstance(d, bool):
+            rule[k] = bool(v)
+        elif isinstance(d, int):
+            with contextlib.suppress(Exception):
+                rule[k] = int(v)
+        else:
+            rule[k] = str(v)
+    if unknown:
+        notes.append(f"不认识的字段已丢掉：{', '.join(unknown[:5])}")
+    rule["name"] = (rule["name"] or "").strip() or "导入的规则"
+    kinds = [k for k in rule.get("kinds") or [] if k in ("msg", "thread")]
+    rule["kinds"] = kinds or ["msg"]
+    if rule["action"] not in ACTIONS:
+        notes.append(f"动作「{rule['action']}」不认识，按「只提醒我」处理")
+        rule["action"] = "notify"
+    return rule, notes
+
+
+def diff_rule(old, new):
+    """两条规则的差异，译成人话给导入预览用（只列真变了的字段）。"""
+    def show(v):
+        if isinstance(v, bool):
+            return "开" if v else "关"
+        if isinstance(v, list):
+            return "、".join(str(x) for x in v) if v else "空"
+        return str(v) if str(v) != "" else "空"
+    out = []
+    for k in DEFAULT_RULE:
+        a, b = old.get(k, DEFAULT_RULE[k]), new.get(k, DEFAULT_RULE[k])
+        if a != b:
+            out.append(f"{RULE_LABELS.get(k, k)}：{show(a)} → {show(b)}")
+    return out
+
+
+RULE_LABELS = {
+    "name": "规则名", "kinds": "触发类型", "guild_ids": "服务器", "channel_ids": "频道",
+    "thread_ids": "子区", "include_threads_of_channels": "连子区一起", "dm": "私信",
+    "accounts": "账号", "author_ids": "只听这些人", "author_name_contains": "昵称包含",
+    "ignore_bots": "忽略机器人", "mention_only": "只在@我", "keywords_any": "含任一关键词",
+    "keywords_all": "必须全含", "regex": "正则", "min_len": "最短字数", "action": "动作",
+    "model": "模型", "provider": "接入点", "prompt": "提示词", "reply_in_thread": "回帖内回复",
+    "notify_min_score": "低于此分不提醒", "summary_every": "每 N 条摘要",
+    "cooldown_sec": "冷却秒数", "max_per_hour": "每小时上限", "webhook_url": "转发地址",
+    "source": "来源",
+}
 
 
 # ======================================================================
@@ -2439,6 +2522,126 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
     async def delrule(req):
         app.db.x("DELETE FROM rules WHERE id=?", (req.match_info["rid"],))
         return web.json_response({"ok": True, "rules": app.rules(False)})
+
+    @r.get("/api/rules/export")
+    async def exportrules(_):
+        """所有规则导出成一个文件，可以直接发给另一台机器导入。
+
+        带 schema 名和版本号：导入方先认 schema，认不出就明说，而不是硬吃下去
+        再表现成「导进来了但什么都不听」。id 和命中数是本机的账，不导出。
+        """
+        rules = [rule_for_export(x) for x in app.rules(False)]
+        pack = {"schema": RULES_SCHEMA, "app": "dcwatch", "version": VERSION,
+                "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "count": len(rules), "rules": rules}
+        fn = f"dcwatch-规则{len(rules)}条-v{VERSION}-{time.strftime('%m%d-%H%M')}.json"
+        return web.Response(body=json.dumps(pack, ensure_ascii=False, indent=1).encode(),
+                            headers={"Content-Type": "application/json; charset=utf-8",
+                                     "Cache-Control": "no-store",
+                                     "Content-Disposition":
+                                     'attachment; filename="dcwatch-rules.json"; '
+                                     f"filename*=UTF-8''{urllib.parse.quote(fn)}"})
+
+    @r.post("/api/rules/import")
+    async def importrules(req):
+        """导入规则。**默认只预览不写库**，界面拿这份预览问用户「确定要覆盖这几条吗」。
+
+        载荷：{data: 规则包(对象或原始文本), mode: "merge"|"replace", dry_run: true}
+        mode=merge（默认）同名的覆盖、其余新增；mode=replace 还会删掉包里没有的规则。
+        重名认的是 name —— 用户能看懂的东西只有名字，id 在两台机器上必然不同。
+        """
+        b = await req.json()
+        data, mode = b.get("data"), (b.get("mode") or "merge")
+        dry = b.get("dry_run", True)
+        if mode not in ("merge", "replace"):
+            return web.json_response({"ok": False, "error": "mode 只能是 merge 或 replace"}, status=400)
+        if isinstance(data, (str, bytes)):
+            try:
+                data = json.loads(data)
+            except Exception as e:
+                return web.json_response(
+                    {"ok": False, "error": f"这个文件不是 JSON，读不了（{e}）。"
+                                           "请选从「导出规则」下载下来的那个 .json 文件"}, status=400)
+        notes = []
+        if isinstance(data, list):
+            incoming, schema, from_ver = data, "", ""
+            notes.append("这个文件没有 schema 头，按「一串规则」处理了")
+        elif isinstance(data, dict) and isinstance(data.get("rules"), list):
+            incoming = data["rules"]
+            schema, from_ver = str(data.get("schema") or ""), str(data.get("version") or "")
+            if schema and schema.split("/")[0] != RULES_SCHEMA.split("/")[0]:
+                return web.json_response(
+                    {"ok": False, "error": f"这不是 dcwatch 的规则包（schema={schema}）"}, status=400)
+            if schema and schema != RULES_SCHEMA:
+                notes.append(f"规则包版本是 {schema}，本程序是 {RULES_SCHEMA}，"
+                             "认不出的字段会被丢掉")
+            if not schema:
+                notes.append("这个文件没写 schema，按 dcwatch 规则包试着读了")
+        else:
+            return web.json_response(
+                {"ok": False, "error": "看不出这是规则包：要么是 {\"schema\":\"dcwatch.rules/1\","
+                                       "\"rules\":[...]}，要么是一个规则数组"}, status=400)
+        if not incoming:
+            return web.json_response({"ok": False, "error": "这个规则包里一条规则都没有"}, status=400)
+
+        have = app.rules(False)
+        by_name = {}
+        for x in have:
+            by_name.setdefault(str(x.get("name") or "").strip(), x)
+        plan, seen = [], set()
+        for raw in incoming:
+            rule, rnotes = sanitize_import_rule(raw)
+            if rule is None:
+                notes.extend(rnotes)
+                continue
+            en = 1 if (raw.get("enabled", 1) if isinstance(raw, dict) else 1) else 0
+            if rule["action"].startswith("ai") and not (rule.get("model")
+                                                        or app.cfg.get("default_model", {}).get("model")):
+                rnotes.append("这条要用大模型，但本机还没设默认模型 —— 先去「模型接入」选一个")
+            old = by_name.get(rule["name"])
+            item = {"name": rule["name"], "enabled": en, "notes": rnotes, "rule": rule}
+            if old and old["id"] not in seen:
+                seen.add(old["id"])
+                d = diff_rule(old, rule)
+                if not d and bool(old["enabled"]) == bool(en):
+                    item["act"], item["changes"] = "same", []
+                else:
+                    item["act"], item["changes"] = "overwrite", d
+                    if bool(old["enabled"]) != bool(en):
+                        item["changes"] = d + [("开关：" + ("开→关" if old["enabled"] else "关→开"))]
+                item["target_id"] = old["id"]
+                item["hits"] = old["hits"]
+            else:
+                item["act"], item["changes"] = "new", []
+            plan.append(item)
+        removes = ([{"id": x["id"], "name": x["name"], "hits": x["hits"]}
+                    for x in have if x["id"] not in seen] if mode == "replace" else [])
+        summary = {k: sum(1 for p in plan if p["act"] == k) for k in ("new", "overwrite", "same")}
+        summary["remove"] = len(removes)
+
+        if not dry:
+            for p in plan:
+                if p["act"] == "same":
+                    continue
+                blob = json.dumps({k: v for k, v in p["rule"].items()
+                                   if k not in ("id", "enabled", "hits")}, ensure_ascii=False)
+                if p["act"] == "overwrite":
+                    app.db.x("UPDATE rules SET json=?,enabled=? WHERE id=?",
+                             (blob, p["enabled"], p["target_id"]))
+                else:
+                    p["target_id"] = app.db.x("INSERT INTO rules(json,enabled) VALUES(?,?)",
+                                              (blob, p["enabled"]))
+            for x in removes:
+                app.db.x("DELETE FROM rules WHERE id=?", (x["id"],))
+            app.log("info", f"导入规则：新增 {summary['new']} 条、覆盖 {summary['overwrite']} 条、"
+                            f"没变 {summary['same']} 条、删除 {summary['remove']} 条"
+                            + (f"（来自 v{from_ver} 的规则包）" if from_ver else ""))
+        for p in plan:
+            p.pop("rule", None)
+        return web.json_response({"ok": True, "dry_run": bool(dry), "mode": mode,
+                                  "schema": schema, "from_version": from_ver,
+                                  "plan": plan, "removes": removes, "summary": summary,
+                                  "notes": notes, "rules": app.rules(False)})
 
     @r.post("/api/rules/test")
     async def testrule(req):

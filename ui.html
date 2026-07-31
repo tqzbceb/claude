@@ -472,6 +472,9 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
       <div class="row" style="margin-bottom:16px">
         <button class="btn pri" id="btnNewRule">＋ 新建规则</button>
         <button class="btn" id="btnPreset">从模板创建</button>
+        <button class="btn ghost" id="btnRulesExp" title="把所有规则存成一个文件，可以发给别人或搬到另一台机器">⇡ 导出规则</button>
+        <button class="btn ghost" id="btnRulesImp" title="读一个规则文件，导入前会先给你看要改动什么">⇣ 导入规则</button>
+        <input type="file" id="rulesFile" accept=".json,application/json" style="display:none">
         <span class="sp" style="flex:1"></span>
         <span style="font-size:12.5px;color:var(--text3)">规则自上而下全部匹配，一条消息可命中多条</span>
       </div>
@@ -1295,6 +1298,73 @@ $('#btnPreset').onclick=()=>{
     <div class="db">${PRESETS.map((p,i)=>`<div class="rcard" style="cursor:pointer" data-p="${i}">
       <div class="body"><div class="nm">${esc(p.name)}</div>${ruleDesc({...BLANK,...p})}</div></div>`).join('')}</div>`);
   $$('[data-p]').forEach(e=>e.onclick=()=>editRule({...PRESETS[+e.dataset.p]}));};
+
+/* ---------- 规则导入 / 导出 ----------
+   导出：直连 /api/rules/export，文件名和版本号由后端给（版本只有一个来源）。
+   导入：**先预览再落库**。后端 dry_run 算出「哪几条会被覆盖、覆盖掉什么」，
+   用户点了确认才第二次请求真写。别让他填了一晚上的规则被一个文件默默盖掉。 */
+$('#btnRulesExp').onclick=()=>{
+  if(!S.live){toast('后端没连上，现在页面里是演示数据，导不出真规则');return;}
+  if(!S.rules.length){toast('一条规则都没有，先建一条');return;}
+  const a=document.createElement('a');a.href='/api/rules/export';a.download='dcwatch-rules.json';
+  document.body.appendChild(a);a.click();a.remove();
+  toast(`已导出 ${S.rules.length} 条规则`);};
+$('#btnRulesImp').onclick=()=>{
+  if(!S.live){toast('后端没连上，导入需要程序在跑');return;}
+  const f=$('#rulesFile');f.value='';f.click();};
+$('#rulesFile').onchange=async e=>{
+  const file=e.target.files?.[0];if(!file)return;
+  if(file.size>2e6){toast('这个文件有点大（>2MB），不像规则包');return;}
+  S.imp={text:await file.text(),name:file.name};
+  impPreview('merge');};
+const IMP_ACT={new:['＋','新增','#2f855a'],overwrite:['↻','覆盖','#c96442'],same:['=','没变','var(--text3)']};
+async function impPreview(mode){
+  const r=await api('/api/rules/import','POST',{data:S.imp.text,mode,dry_run:true});
+  if(!r)return;                       // api() 已经把真实状态码和后端说的原因 toast 出来了
+  const s=r.summary,tot=s.new+s.overwrite;
+  const line=it=>{const[ic,lb,co]=IMP_ACT[it.act]||['·','?','var(--text3)'];
+    return `<div class="rcard ${it.enabled?'':'off'}"><div class="body">
+      <div class="nm"><span style="color:${co};font-weight:700">${ic} ${lb}</span> ${esc(it.name)}
+        ${it.enabled?'':'<span class="tag">导入后是停用状态</span>'}
+        ${it.hits?`<span class="tag">本机已命中 ${it.hits}</span>`:''}</div>
+      ${it.changes?.length?`<div class="hint" style="margin:4px 0 0">会变：${it.changes.map(esc).join('；')}</div>`:''}
+      ${it.notes?.length?it.notes.map(n=>`<div class="hint" style="margin:4px 0 0;color:#c96442">⚠ ${esc(n)}</div>`).join(''):''}
+    </div></div>`;};
+  openDrawer(`<div class="dh"><h2>导入预览</h2><span class="sp" style="flex:1"></span>
+      <button class="btn ghost" onclick="closeDrawer()">✕</button></div>
+    <div class="db">
+      <div class="hint">文件 <b>${esc(S.imp.name)}</b>
+        ${r.from_version?`· 来自 dcwatch v${esc(r.from_version)}`:''}
+        ${r.schema?`· ${esc(r.schema)}`:''}</div>
+      ${r.notes?.length?r.notes.map(n=>`<div class="hint" style="color:#c96442">⚠ ${esc(n)}</div>`).join(''):''}
+      <div class="sect"><div class="st"><b>怎么合</b><span>选替换才会删本机多出来的规则</span></div>
+        <div class="chk"><input type="radio" name="impmode" id="im_m" ${mode==='merge'?'checked':''}>
+          <label for="im_m"><b>合并</b>（同名的覆盖，其余新增，本机多出来的规则留着）</label></div>
+        <div class="chk"><input type="radio" name="impmode" id="im_r" ${mode==='replace'?'checked':''}>
+          <label for="im_r"><b>替换全部</b>（本机规则变成跟这个文件完全一样，多出来的删掉）</label></div></div>
+      <div class="sect"><div class="st"><b>这个文件里的 ${r.plan.length} 条</b>
+        <span>新增 ${s.new} · 覆盖 ${s.overwrite} · 没变 ${s.same}</span></div>
+        ${r.plan.map(line).join('')||'<div class="hint">空</div>'}</div>
+      ${r.removes.length?`<div class="sect"><div class="st"><b style="color:#c53030">会被删掉的 ${r.removes.length} 条</b>
+        <span>文件里没有它们</span></div>${r.removes.map(x=>`<div class="rcard"><div class="body">
+        <div class="nm"><span style="color:#c53030;font-weight:700">✕ 删除</span> ${esc(x.name)}
+        ${x.hits?`<span class="tag">已命中 ${x.hits}</span>`:''}</div></div></div>`).join('')}</div>`:''}
+      <div class="row" style="margin-top:14px">
+        <button class="btn pri" id="impGo" ${tot||r.removes.length?'':'disabled'}>确认导入</button>
+        <button class="btn ghost" onclick="closeDrawer()">取消</button>
+        <span class="sp" style="flex:1"></span>
+        <span class="hint">${tot||r.removes.length?'点确认才会写进去':'跟本机现有规则一模一样，不用导'}</span></div>
+    </div>`);
+  $('#im_m').onchange=()=>impPreview('merge');
+  $('#im_r').onchange=()=>impPreview('replace');
+  $('#impGo').onclick=async()=>{
+    if(r.removes.length&&!confirm(`会删掉本机 ${r.removes.length} 条规则，确定？`))return;
+    const a=await api('/api/rules/import','POST',{data:S.imp.text,mode,dry_run:false});
+    if(!a)return;
+    S.rules=a.rules;renderRules();closeDrawer();
+    const p=a.summary;
+    toast(`导入完成：新增 ${p.new}、覆盖 ${p.overwrite}、没变 ${p.same}`+(p.remove?`、删除 ${p.remove}`:''));};
+}
 
 /* ---------- drawer ---------- */
 function openDrawer(html){$('#drawer').innerHTML=html;$('#drawer').classList.add('on');$('#scrim').classList.add('on');}
