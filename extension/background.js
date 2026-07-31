@@ -126,6 +126,31 @@ async function badge() {
   return { ...st, tabFresh, badge: text, tip };
 }
 
+/* ---------- 兜底心跳：主动去 Discord 标签页把状态拉过来 ----------
+   为什么需要它：内容脚本自己每 20 秒报一次心跳，但那是 setInterval，
+   而 Chrome 会给隐藏标签页的定时器降频（切走后对齐到 1 秒，隐藏超过 5 分钟后
+   直接变成每分钟才跑一次）。服务端 90 秒没收到心跳就判失联 —— 于是你把
+   Discord 丢在后台盯着，界面上却写「失联」，看着像扩展坏了。
+   chrome.alarms 不受标签页可见性影响，所以由后台脚本兜这一手。
+   只在「标签页确实超过 30 秒没报上来」时才拉，正常情况一个多余请求都不发。
+
+   为什么不按 url 筛标签页：那要么加 "tabs" 权限（安装时吓人的「读取浏览记录」），
+   要么把 discord.com 写进 host_permissions（会让已经装好的扩展被 Chrome 停用、
+   等你重新授权）。不筛就不用加任何权限：没有内容脚本的标签页收不到消息，
+   sendMessage 直接失败，我们吞掉就是了，那些页面里什么都不会跑。 */
+async function pullTabs() {
+  const st = await getSt();
+  if (Date.now() - (st.lastTabPing || 0) < 30_000) return;   // 它自己报得上来，不打扰
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({}); } catch (e) { return; }
+  for (const t of tabs) {
+    try {
+      const body = await chrome.tabs.sendMessage(t.id, { type: "dcwatch-pull" });
+      if (body && body.ping) await post(body);
+    } catch (e) { /* 这个标签页里没有内容脚本（装扩展前就开着，没按 F5）——角标的「?」会说明 */ }
+  }
+}
+
 /* ---------- 消息路由 ---------- */
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (!msg) return false;
@@ -154,7 +179,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
 });
 
 chrome.alarms.create("hc", { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener(a => { if (a.name === "hc") health(); });
+chrome.alarms.onAlarm.addListener(a => { if (a.name === "hc") pullTabs().finally(health); });
 chrome.runtime.onStartup.addListener(health);
 chrome.runtime.onInstalled.addListener(health);
 health();
