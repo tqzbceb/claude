@@ -121,7 +121,7 @@ function parseLi(li) {
   const m = /^chat-messages-(\d+)-(\d+)$/.exec(li.id || "");
   if (!m) return null;
   const [, channel_id, msg_id] = m;
-  let content = txt(li.querySelector('[id^="message-content-"]'));
+  let content = txt(li.querySelector(`#message-content-${msg_id}`));
   let media = [];
   if (!content) { const mm = mediaOf(li); content = mm.text; media = mm.kinds; }
   if (!content) return null;                        // 真的空（没文字也没附件），不上报
@@ -133,7 +133,8 @@ function parseLi(li) {
     if (u) {
       author = txt(u.querySelector('[class*="username"]') || u).split("\n")[0];
       is_bot = !!node.querySelector('[class*="botTag"], [class*="botTagVerified"]');
-      const img = node.querySelector('img[src*="/avatars/"]');
+      const img = [...node.querySelectorAll('img[src*="/avatars/"]')]
+        .find(i => !i.closest('[class*="repliedMessage"]'));
       const am = img && /\/avatars\/(\d+)\//.exec(img.getAttribute("src") || "");
       if (am) author_id = am[1];
       break;

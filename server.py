@@ -2502,7 +2502,7 @@ class DiscordListener:
             "parent_id": info.get("parent_id") or "",
             "is_thread": bool(info.get("is_thread")),
             "author_id": au.get("id", ""),
-            "author": au.get("global_name") or au.get("username", ""),
+            "author": (d.get("member") or {}).get("nick") or au.get("global_name") or au.get("username", ""),
             "is_bot": bool(au.get("bot")),
             "content": d.get("content") or "",
             "ts": now(),
