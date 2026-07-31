@@ -5,10 +5,10 @@
 
 ## 用户怎么下（发给他的原话）
 
-> 打开 https://github.com/tqzbceb/claude/tree/main/release ，点里面那个 `dcwatch-v1.9.1.zip`，
+> 打开 https://github.com/tqzbceb/claude/tree/main/release ，点里面那个 `dcwatch-v1.9.2.zip`，
 > 页面上点 **Download raw file**（右上角那个下载图标）。
 > 下载完解压出 `dcwatch` 文件夹，双击里面的 **启动.bat**。
-> 黑窗口第一行应该写 `dcwatch v1.9.1`。**扩展不用重装**（还是 v1.8.0）。
+> 黑窗口第一行应该写 `dcwatch v1.9.2`。**扩展不用重装**（还是 v1.8.0）。
 
 ## 给接手的 AI
 
