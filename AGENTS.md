@@ -63,6 +63,32 @@ await m.runFresh(session)   // 16 条：靠消息 ID 里的时间戳判新旧，
 
 细节和每套覆盖什么在 `tests/RUN.md`，**踩坑清单也在那里，动手前扫一眼能省一小时**。
 
+## 怎么出交付包给用户
+
+用户拿到的是一个 zip，他解压后双击 `启动.bat`。**交付包里不含 `tests/`、`AGENTS.md`、
+`CLAUDE.md`、`HANDOFF.md` 和两个点文件** —— 那些是给你和给 git 的，塞进去只会让他困惑。
+干净的 26 个文件，345 KB 左右：
+
+```bash
+V=$(grep -oP 'VERSION = "\K[^"]+' server.py)          # 版本号只有一个来源：server.py
+rm -rf /tmp/pack && mkdir -p /tmp/pack/dcwatch
+cp -r ./. /tmp/pack/dcwatch/
+cd /tmp/pack/dcwatch && rm -rf .git tests AGENTS.md CLAUDE.md HANDOFF.md \
+    .gitignore .gitattributes __pycache__
+find . -type f | wc -l                                # 必须是 26，少了就是同步把 .bat 弄丢了
+cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch   # 环境里没有 zip 命令
+```
+
+扩展单独还有一个包（10 个文件）：`cd extension && python3 -m zipfile -c ../dcwatch-extension-v$V.zip .`，
+**只在扩展真改了的时候才出**（见硬规矩 2）。两个包都放进 `outputs/`，把旧版本的 zip 删掉。
+
+打包前必做两件事：`rm -rf __pycache__`（`py_compile` 会留 .pyc，混进过交付包），
+以及确认 `.bat` 还是 **GBK + CRLF**：
+
+```bash
+python3 -c "d=open('启动.bat','rb').read(); print(b'\r\n' in d, d.decode('gbk')[:20])"
+```
+
 ## 硬规矩（违反过，代价都付过了）
 
 1. **界面绝不能拿假数据冒充成功**。早期版本把任何请求失败吞成 null 然后编 6 个假模型显示
