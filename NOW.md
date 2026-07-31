@@ -18,17 +18,9 @@ Claude 只做深度思考，把方案写成 `PLAN_<任务>.md` 推送；实现�
 **实现窗口接到「继续」：读本页 → 读状态里指的 PLAN 文件 → 照施工图干，别自由发挥。**
 
 ## 状态
-**做完了 A3+A5**（照 `PLAN_A3A5.md` 施工完毕，Kimi K3 实现窗口，2026-07-31）：
-1. [x] 修改 1：server.py setcfg 存 sinks 后 `bus.push("sinks", …)` 广播
-2. [x] 修改 2：ui.html 网页通知加 `tag:'dcw-'+msg_id`（多标签页只弹一条）
-3. [x] 修改 3：帮助文案写明「网页通知与系统通知是两条通道」
-4. [x] 修改 4：e2e.py 第 12 节 SSE 广播回归（46→48）
-5. [x] 全套服务端回归 **500/500 全绿**（48+27+26+83+46+47+96+74+53），
-       content_test 46+16 重跑仍全绿（没动扩展）；RUN.md / HANDOFF.md / BACKLOG / 本页已收尾
-
-**下一件**：换 Claude 窗口做 **review**（A3+A5 的 diff 对照 PLAN_A3A5.md，A2 的 diff 也没
-review 过，一起看）。review 过完后按 BACKLOG 优先级是 **A4**（出口锁死 Discord）。
-用户说「继续」时：Claude → 做 review；快模型 → 别动，等 review 结论。
+**正在 review A2 + A3+A5**（Claude 窗口，2026-07-31）：
+对照 PLAN_A2.md / PLAN_A3A5.md 检查 diff（a04d809..6ce5741）+ 回归口径。
+review 结论会写进本页和 HANDOFF.md。过完后下一件按 BACKLOG 是 **A4**（出口锁死 Discord）。
 
 ### 发版前待办（攒着，哪轮发版哪轮做）
 - 提 `EXT_MIN`（A2 动了 extension/content.js），用户需重装扩展；
