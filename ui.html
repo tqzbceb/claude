@@ -1778,7 +1778,8 @@ function renderProviders(){
     else if(r.ok){S.models[p.name]=r.models;if(S.modelsDemo)delete S.modelsDemo[p.name];
       tag.textContent=`已拉到 ${r.models.length} 个`;
       $('#defProv').value=p.name;toast(`拉到 ${r.models.length} 个模型，就在这张卡片里挑，然后按「设为默认模型」`);}
-    else{tag.innerHTML=`<span style="color:var(--err)">失败：${esc(r.error).slice(0,80)}</span>`;
+    else{const et=(r.error||'').replace(/\s*\n\s*/g,' ｜ ');
+      tag.innerHTML=`<span style="color:var(--err)" title="${esc(r.error)}">失败：${esc(et).slice(0,140)}${et.length>140?'…（鼠标悬停看全文）':''}</span>`;
       renderDefaults();return;}
     renderProviders();renderDefaults();});
   /* C3：模型选择就摆在这家服务自己的卡片里 —— 拉完模型不用再跑到上面那一栏去找 */
@@ -1794,9 +1795,10 @@ function renderProviders(){
     renderProviders();renderDefaults();});
   bindEyes();
 }
-/* 掩码的 key 不回传，避免把真值冲成 "***1234" */
+/* 掩码的 key 要原样回传：服务端见到 *** 开头会还原成已存的真值。
+   之前冲成 '' 再保存，等于每点一次「保存/拉取模型」就把 key 抹成空 —— A6 的根因（401 的来源） */
 function cleanProviders(){
-  return (S.cfg.providers||[]).map(p=>({...p,api_key:(p.api_key||'').startsWith('***')?'':p.api_key}));
+  return (S.cfg.providers||[]).map(p=>({...p}));
 }
 function renderDefaults(){
   const d=S.cfg.default_model||{};

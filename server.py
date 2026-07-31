@@ -2233,7 +2233,8 @@ class App:
     def base_candidates(base_url):
         """用户粘什么都尽量认：少了 /v1、多了 /chat/completions、末尾多斜杠，都试一遍。"""
         b = (base_url or "").strip().rstrip("/")
-        for tail in ("/chat/completions", "/completions", "/models"):
+        # 注意顺序："/models" 必须在 "/model" 前面，否则 ".../models" 会被剥成 ".../s"
+        for tail in ("/chat/completions", "/completions", "/models", "/model"):
             if b.endswith(tail):
                 b = b[: -len(tail)].rstrip("/")
         out = [b]
@@ -2242,6 +2243,11 @@ class App:
         return [x for x in out if x]
 
     async def list_models(self, base_url, api_key):
+        # Key 是空的又对着外地地址，别放空枪 —— 直接说清楚。（A6：他机器上诊断包「Key 空」+ 401 就是这么来的）
+        looks_local = any(h in (base_url or "") for h in ("127.0.0.1", "localhost", "0.0.0.0", "ollama"))
+        if not api_key and not looks_local:
+            raise RuntimeError("API Key 是空的：在这家服务的卡片里把 Key 粘进去，先按「保存服务商」，"
+                               "再点「⇣ 拉取模型列表」。（本机 Ollama 这类才不需要 Key）")
         hdr = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         tried = []
         for base in self.base_candidates(base_url):
@@ -2279,6 +2285,9 @@ class App:
             hint = "。看着像 Key 不对或没权限"
         elif any("HTTP 404" in t for t in tried):
             hint = "。404 一般是 Base URL 写法不对，正确的形如 https://api.deepseek.com/v1"
+        elif any("ClientPayloadError" in t or "Payload" in t for t in tried):
+            hint = ("。对方把数据发到一半断了：多半是本机的代理 / 加速器 / 杀毒软件在中间截断。"
+                    "换条网络、关掉系统代理或加速器试试；也可以在「设置」里填一个稳定的代理")
         raise RuntimeError(f"拉取模型失败{hint}\n试过：{body}")
 
     def chat_prep(self, provider_name, model, messages, json_mode=False, max_tokens=800,

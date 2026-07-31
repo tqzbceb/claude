@@ -197,4 +197,19 @@ chk("SSE 推了 sinks 事件", bool(ev), [e["kind"] for e in got_sse][:5])
 chk("推的就是最新开关", bool(ev) and ev[0]["data"].get("toast") is False
     and ev[0]["data"].get("browser") is False, ev and ev[0]["data"])
 
+print("13. A6：base_url 尾巴 /model（单数）也能剥掉")
+call("/api/config", {"providers": [{"name": "mock2", "base_url": "http://127.0.0.1:8899/v1/model",
+                                    "api_key": "sk-test"}]})
+m2 = call("/api/models", {"provider": "mock2"})
+chk("尾巴 /model 照样拉到模型", m2.get("ok") and m2.get("models") == ["mock-1", "mock-2"], m2)
+
+print("14. A6：Key 空 + 外地地址 = 直接说人话，不放空枪")
+call("/api/config", {"providers": [
+    {"name": "mock", "base_url": "http://127.0.0.1:8899/v1", "api_key": "sk-test"},
+    {"name": "nokey", "base_url": "https://example.invalid/v1", "api_key": ""}]})
+m3 = call("/api/models", {"provider": "nokey"})
+chk("失败且明说 Key 空", (not m3.get("ok")) and "API Key 是空的" in (m3.get("error") or ""), m3)
+call("/api/config", {"providers": [{"name": "mock", "base_url": "http://127.0.0.1:8899/v1",
+                                    "api_key": "sk-test"}]})   # 复原，别影响后面的套
+
 print(f"\n通过 {ok} / 失败 {fail}")
