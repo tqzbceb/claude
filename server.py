@@ -17,7 +17,7 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.6.0"                               # 服务端版本，界面和扩展都能看到
+VERSION = "1.6.3"                               # 服务端版本，界面和扩展都能看到
 EXT_MIN = "1.6.0"                               # 低于这个版本的扩展要提示用户更新
 FROZEN = getattr(sys, "frozen", False)          # True 时 = PyInstaller 打出来的 exe
 # ui.html 在 exe 里是打进包的临时解包目录；数据必须写到真实可写目录
@@ -162,7 +162,8 @@ DEFAULT_PROMPTS = {
     "ai_reply": "你是该频道的助手，用简洁中文回答，不超过 120 字。",
     "ai_summary": "把这段 Discord 对话压成 3-5 条要点中文摘要，标出待办和结论。",
     "ai_extract": "从消息中抽取结构化信息，只输出 JSON。字段自定，找不到就留空。",
-    "ask": "你是我的 Discord 消息助理，用中文简洁回答。",
+    # 工作台的身份和边界在 WORKBENCH_SYS 里（写死，不让改）。这条只是用户想追加的偏好，默认空。
+    "ask": "",
 }
 
 # ---------- 转发出口 ----------
@@ -508,6 +509,67 @@ WIZARD_SYS = """你是 dcwatch 的「规则向导」。用户通常说不清自�
 """
 
 
+WORKBENCH_SYS = """你是 dcwatch 里「AI 工作台」的助手。
+
+## 你在什么地方
+dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord 监听程序。用户不是在跟一个通用聊天
+机器人说话，他是在自己的监听工具里问话。你看到的这段对话发生在这个程序的界面里。
+
+## 最重要的一条：监听是程序做的，不是你做的
+用户说「帮我监听某个频道」，**不是**要你去访问 Discord。是要你告诉他在这个程序里怎么配置。
+
+所以下面这些回答是**错的，绝对不许出现**：
+- 「我无法访问第三方平台 / 我没有联网能力 / 我不能实时抓取消息」——
+  这话答非所问：能抓消息的是他手上这个程序，不是你。
+- 建议他「创建一个 Discord 机器人」「用 Webhook / API 集成」「用 Zapier 或消息导出工具」——
+  他要的功能这个程序**已经有了**，把他推去用别的工具是纯粹的帮倒忙。
+
+正确做法：直接说「好，这个频道要盯的话，你需要……」然后给出这个程序里的具体步骤。
+
+## 用户贴 Discord 链接时怎么读
+`discord.com/channels/<A>/<B>`：A 是服务器 ID，B 是频道 ID（A 是 `@me` 时是私信）。
+末尾还有第三段数字就是具体某条消息。程序已经帮你把链接拆好放在下面的实况里了，直接用。
+
+盯一个频道要满足两件事，缺哪件就先说哪件：
+1. **消息得先进得来**：浏览器旁听模式下，dcwatch 只能看到「他自己浏览器里打开着的那个频道」的新消息。
+   所以他得装好扩展、并且**让那个频道在 Discord 里开着**。装完扩展必须在 Discord 页面按一次 F5。
+   下面实况里会写现在有没有浏览器在旁听。
+2. **要有一条规则命中它**：规则里「听哪里」填上那个频道 ID，再写清听什么内容。
+
+## 「帮我写规则」指的是什么
+在这里，「规则」永远是 **dcwatch 的监听规则**：什么消息该提醒他。
+**不是**群聊管理规则、不是游戏规则、不是服务器公约。绝对不要反问「你指的是群规还是游戏规则」。
+
+一条规则由这几件事组成，你可以据此提问或解释：
+听哪里（频道/服务器/私信）、听谁（作者、要不要算机器人）、内容怎么匹配（关键词、正则、@我、
+纯 AI 判断）、强度（分数阈值）、命中后做什么（只提醒 / AI 打标签 / 摘要 / 抽取 / 自动回复 / 转发）、
+频率（冷却时间）、边界（什么情况**别**提醒）、时间（只在某些时段生效）。
+
+他要建规则时，最好的回答是**指路加追问**：告诉他「监听规则」页顶部有个**「◆ 帮我建条规则」**的
+向导，会一步步问清楚再生成；同时你自己也可以先问他一两个关键的（盯哪个频道、什么词、要不要算机器人）。
+你在这里说的规则内容不会自动生效 —— 规则必须在「监听规则」页保存，这点要讲明白。
+
+## 你能做和不能做
+能：解读下面给你的消息、总结、抽待办、起草回复、解释这个程序里的功能和设置在哪、帮他想规则怎么写、
+把他贴的链接拆成 ID 告诉他填哪里。
+不能：上网查东西、代替他点界面上的按钮、直接改他的配置。要发言到 Discord 得他自己点「回复」按钮，
+而且浏览器旁听模式发不出去（那需要 Bot Token）。
+
+## 说话方式
+中文，简洁，直接给能照着做的步骤。不要列一堆他没问的备选方案。
+不知道或者程序里确实没有的功能，就直说没有，别编一个设置项出来。
+"""
+
+
+def parse_discord_links(text):
+    """把用户贴的频道/消息链接拆成 ID。工作台里他十次有九次是直接贴链接的。"""
+    out = []
+    for g, c, m in re.findall(r"discord(?:app)?\.com/channels/(@me|\d{5,25})/(\d{5,25})(?:/(\d{5,25}))?",
+                              str(text or "")):
+        out.append({"guild": g, "channel": c, "msg": m})
+    return out
+
+
 def loose_json(txt):
     """模型经常给带 ``` 或前后废话的 JSON。尽量捞出来，捞不到就抛。"""
     t = (txt or "").strip()
@@ -674,6 +736,45 @@ class App:
         hooks = [h.get("name") or h.get("url", "") for h in self.cfg.get("hooks", []) if h.get("enabled")]
         L.append("已配好的转发出口：" + ("、".join(hooks) if hooks else "（没有，action=webhook 要先去「通知与转发」加）"))
         return "\n".join(x for x in L if x), known
+
+    def workbench_ctx(self, user_text=""):
+        """工作台的实况：模型得知道这台机器上现在到底是什么状况，
+        否则它只能泛泛而谈，甚至反过来劝用户去装别的工具。"""
+        L = [f"dcwatch 版本 v{VERSION}。"]
+        mode = self.cfg["discord"].get("mode", "browser")
+        L.append({"browser": "收信方式：浏览器旁听（装在 Chrome 里的扩展替他读页面）。"
+                             "这种模式只能看到他浏览器里**开着的那个频道**的新消息，而且发不出消息。",
+                  "bot": "收信方式：Bot Token（能收也能发）。",
+                  "user": "收信方式：个人账号 Token（能收也能发，有封号风险）。"}.get(mode, ""))
+        brs = [b for b in self.bridges.values() if now() - b.get("last", 0) < 90]
+        if brs:
+            who = "、".join(sorted({b.get("account") or "未知账号" for b in brs}))
+            where = "、".join(sorted({b.get("where") or "" for b in brs if b.get("where")}))
+            L.append(f"现在有 {len(brs)} 个浏览器正在旁听（账号：{who}）" + (f"，当前打开的频道：{where}" if where else ""))
+        else:
+            L.append("**现在没有任何浏览器在旁听** —— 也就是说一条消息都进不来。"
+                     "他要盯频道的话，第一件事是装扩展并在 Discord 页面按 F5，不是写规则。")
+        rs = self.rules(False)
+        if rs:
+            L.append("他已有的规则：" + "；".join(
+                f"{r.get('name') or '未命名'}（{'开' if r.get('enabled') else '关'}，命中 {r.get('hits', 0)} 次）"
+                for r in rs[:12]))
+        else:
+            L.append("他还没有任何规则 —— 所以就算消息进来了也不会有提醒。")
+        chans = self.db.q("""SELECT channel_id id, channel_name nm, COUNT(*) n FROM messages
+                             GROUP BY channel_id ORDER BY MAX(ts) DESC LIMIT 12""")
+        if chans:
+            L.append("最近收到过消息的频道：" + "、".join(f"{c['nm']}={c['id']}（{c['n']} 条）" for c in chans))
+        for k in parse_discord_links(user_text):
+            if k["guild"] == "@me":
+                L.append(f"他这句话里贴了一个**私信**链接：对话 ID {k['channel']}。"
+                         "提醒他规则默认不听私信，要在「听哪里」勾上「包含私信 DM」。")
+            else:
+                L.append(f"他这句话里贴了一个 Discord 链接，已拆好：服务器 ID {k['guild']}，"
+                         f"频道 ID {k['channel']}"
+                         + (f"，消息 ID {k['msg']}" if k["msg"] else "")
+                         + "。直接用这个频道 ID 告诉他填在规则的「听哪里」里，别让他自己去找 ID。")
+        return "\n".join(x for x in L if x)
 
     def save_cfg(self):
         self.db.set_cfg(self.cfg)
@@ -1583,8 +1684,17 @@ def routes(app: App):
              "when": "向导之外的快速通道，现在界面默认走向导，这条留着兼容",
              "why": "只翻译不反问，适合你已经很清楚要什么的时候",
              "where": "server.py 里的 COMPOSE_SYS", "text": COMPOSE_SYS},
+            {"key": "workbench", "name": "AI 工作台（跟你自由对话的那个）",
+             "when": "「AI 工作台」里你每发一句话都会带上这段，后面还会附上这台机器的实况"
+                     "（收信方式、有没有浏览器在旁听、你有哪些规则、最近哪些频道来过消息、"
+                     "以及你这句话里贴的 Discord 链接拆出来的 ID）",
+             "why": "没有这段的时候，模型不知道自己在一个监听程序里，会回「我无法访问 Discord」"
+                    "然后推荐你去写 Discord 机器人或者用 Zapier —— 而这些功能你手上这个程序本来就有。"
+                    "它也会把「帮我写规则」误解成群聊管理规则。",
+             "where": "server.py 里的 WORKBENCH_SYS，实况部分在 App.workbench_ctx()", "text": WORKBENCH_SYS},
         ], "editable_hint": "命中之后那几种动作（打分、摘要、抽取、回复）的提示词是可以改的，"
-                            "在「模型接入」页最下面。这里这两条是建规则用的，属于程序骨架。"})
+                            "在「模型接入」页最下面，工作台的「额外要求」也在那儿（prompts.ask）。"
+                            "这里这三条是骨架，写死在程序里：改坏了向导和工作台会直接失效。"})
 
     @r.post("/api/rules/wizard")
     async def wizard(req):
@@ -1701,8 +1811,15 @@ def routes(app: App):
             qm = ",".join("?" * len(ids))
             rows = app.db.q(f"SELECT author,content,channel_name FROM messages WHERE id IN ({qm}) ORDER BY ts", ids)
             ctx = "\n".join(f"[#{x['channel_name']}] {x['author']}: {x['content']}" for x in rows)
-        msgs = [{"role": "system", "content": b.get("system") or app.prompt("ask")}]
-        msgs.append({"role": "user", "content": (f"消息上下文:\n{ctx}\n\n" if ctx else "") + b.get("prompt", "")})
+        # 身份和边界写死在 WORKBENCH_SYS 里，不让改 —— 少了它模型就会说「我无法访问 Discord」
+        # 然后推荐用户去装 Zapier。用户在「模型接入」页能改的那句只作为额外要求附在后面。
+        text = b.get("prompt", "")
+        extra = (b.get("system") or app.prompt("ask") or "").strip()
+        sysmsg = WORKBENCH_SYS + "\n\n## 这台机器现在的实况\n" + app.workbench_ctx(text)
+        if extra and extra != DEFAULT_PROMPTS["ask"]:
+            sysmsg += "\n\n## 用户自己追加的要求（优先照做，但不能违反上面的边界）\n" + extra
+        msgs = [{"role": "system", "content": sysmsg}]
+        msgs.append({"role": "user", "content": (f"消息上下文:\n{ctx}\n\n" if ctx else "") + text})
         try:
             return web.json_response({"ok": True, "text": await app.chat(prov, model, msgs, max_tokens=1200,
                                                                         rule="manual")})
@@ -2040,6 +2157,16 @@ def routes(app: App):
     async def logs(_):
         return web.json_response({"logs": app.db.q("SELECT * FROM logs ORDER BY id DESC LIMIT 200")})
 
+    @r.post("/api/quit")
+    async def quit_(_):
+        """让「停止.bat」和界面上的退出按钮能干净地关掉程序，不用去任务管理器找进程。"""
+        app.log("info", "收到退出请求，正在关闭")
+        async def bye():
+            await asyncio.sleep(0.3)          # 先把这个响应发出去，再走
+            os._exit(0)
+        asyncio.create_task(bye())
+        return web.json_response({"ok": True})
+
     @r.get("/api/events")
     async def events(req):
         resp = web.StreamResponse(headers={"Content-Type": "text/event-stream",
@@ -2113,9 +2240,15 @@ async def main():
     try:
         await web.TCPSite(runner, a.host, a.port).start()
     except OSError as e:
-        print(f"端口 {a.port} 起不来（{e}）。dcwatch 可能已经在跑了，"
-              f"直接开 http://127.0.0.1:{a.port} ；或者换端口：--port 8778", flush=True)
+        # 双击了第二次：不再起第二个进程（那样只会两份都在收信、通知弹两遍），
+        # 直接把已经在跑的那个界面打开 —— 用户想要的本来就是界面。
+        u = f"http://127.0.0.1:{a.port}"
+        print(f"dcwatch 已经在跑了（端口 {a.port} 被占：{e}）。没有再开第二个。", flush=True)
+        print(f"界面就是这个：{u}   想换端口用 --port 8778", flush=True)
         await runner.cleanup()
+        if not a.no_open:
+            with contextlib.suppress(Exception):
+                webbrowser.open(u)
         if FROZEN:
             with contextlib.suppress(Exception):
                 input("按回车退出…")

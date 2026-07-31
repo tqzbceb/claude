@@ -48,6 +48,13 @@ button{cursor:pointer;background:none;border:none}
 .brand .glyph{width:22px;height:22px;border-radius:6px;background:var(--accent);flex:0 0 22px;
   display:grid;place-items:center;color:#fff;font:600 12px/1 var(--sans)}
 .brand .glyph svg{width:15px;height:15px;display:block}
+/* 版本号常驻在名字旁边。以前只印在设置页下载按钮边上，用户根本找不到，
+   而「我装的到底是哪一版」是他每次更新后第一个要确认的事。 */
+.brand .bver{font:500 11.5px/1 var(--sans);color:var(--text3);background:transparent;
+  border:1px solid var(--line2);border-radius:999px;padding:3px 7px;margin-left:-2px;
+  cursor:pointer;letter-spacing:0}
+.brand .bver:hover{color:var(--text);border-color:var(--text3)}
+.brand .bver.old{background:#fdf0e6;border-color:var(--accent);color:#7a3a1e}
 .nav{display:flex;flex-direction:column;gap:1px}
 .nav b{font:500 11px var(--sans);color:var(--text3);letter-spacing:.06em;text-transform:uppercase;
   padding:14px 10px 5px}
@@ -312,7 +319,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 #connBar .cb.ok{background:var(--bg-sunk);border-color:var(--line);color:var(--text2)}
 .sb{position:relative;transition:width .16s,flex-basis .16s}
 html[data-sb="mini"] .sb{width:56px;flex-basis:56px;padding:14px 6px 10px}
-html[data-sb="mini"] .sb .lb,html[data-sb="mini"] .brand .txt,
+html[data-sb="mini"] .sb .lb,html[data-sb="mini"] .brand .txt,html[data-sb="mini"] .brand .bver,
 html[data-sb="mini"] .nav b,html[data-sb="mini"] .srcrow .nm span,html[data-sb="mini"] .sw,
 html[data-sb="mini"] .sechd{display:none}
 html[data-sb="mini"] .brand{justify-content:center;padding:30px 0 12px}
@@ -362,7 +369,8 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
     ><circle cx="12" cy="20" r="4.4" fill="#fff"/><path d="M20 12.4a10.6 10.6 0 0 1 0 15.2"
       stroke="#fff" stroke-width="3.6" fill="none" stroke-linecap="round"/><path
       d="M27 7.2a18 18 0 0 1 0 25.6" stroke="#fff" stroke-width="3.6" fill="none"
-      stroke-linecap="round"/></svg></span><span class="txt">dcwatch</span></div>
+      stroke-linecap="round"/></svg></span><span class="txt">dcwatch</span
+    ><button class="bver" id="brandVer" title="程序版本，点一下看清楚">v–</button></div>
   <nav class="nav">
     <b>收信</b>
     <a href="#" class="on" data-v="inbox"><span class="ic">◍</span><span class="lb">收信箱</span><span class="cnt" id="cInbox">0</span></a>
@@ -466,6 +474,8 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
           <span class="tag" id="wbCtx">未带上下文</span>
           <button class="btn ghost sm" id="wbClear">清空</button>
         </div>
+        <!-- 贴频道链接是他最常做的事，别让他自己去拆 ID -->
+        <div class="banner" id="wbLink" style="display:none;align-items:center;gap:12px;margin:10px 0 0"></div>
         <div class="card" id="qEdit" style="display:none;margin:0 0 12px">
           <h3>快捷按钮 <span class="hint">点一下就把这段话填进输入框并发出去。名字和内容都归你</span></h3>
           <div class="bd" id="qList"></div>
@@ -527,7 +537,9 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
               <label class="f"><span>自动回复</span><textarea id="pmReply" rows="3"></textarea></label>
               <label class="f"><span>摘要</span><textarea id="pmSummary" rows="3"></textarea></label>
               <label class="f"><span>信息抽取</span><textarea id="pmExtract" rows="3"></textarea></label>
-              <label class="f"><span>AI 工作台问答</span><textarea id="pmAsk" rows="3"></textarea></label>
+              <label class="f"><span>AI 工作台：额外要求（可留空）
+                  <em>身份和边界已内置，这里只加你的偏好，比如「答得再短些」</em></span>
+                <textarea id="pmAsk" rows="3"></textarea></label>
               <div class="row"><button class="btn pri" id="btnSavePm">保存提示词</button>
                 <button class="btn" id="btnResetPm">恢复默认</button></div>
             </div>
@@ -766,7 +778,7 @@ function seedDemo(){S.cfg={discord:{token:'',enabled:false,mode:'browser'},provi
      ai_reply:'你是该频道的助手，用简洁中文回答，不超过 120 字。',
      ai_summary:'把这段 Discord 对话压成 3-5 条要点中文摘要，标出待办和结论。',
      ai_extract:'从消息中抽取结构化信息，只输出 JSON。字段自定，找不到就留空。',
-     ask:'你是我的 Discord 消息助理，用中文简洁回答。'},
+     ask:''},
    quick_actions:[
      {id:'q1',name:'总结选中消息',text:'把这些消息压成 3-5 条要点，标出需要我行动的部分。'},
      {id:'q2',name:'抽出待办',text:'从这些消息里抽出待办清单，每条含负责人和截止时间，没写就标未定。'},
@@ -1406,10 +1418,13 @@ function renderSettings(){
      以前界面上完全看不出来 —— 现在直接写出版本号，不一致就红字挡脸。 */
   const eh=(S.env||{}).ext_have||'', ev2=(S.env||{}).ver||'';
   if($('#extVer'))$('#extVer').textContent=eh?`这里下到的是 v${eh}`:'找不到 extension 文件夹';
-  if($('#extWarn'))$('#extWarn').innerHTML=(eh&&ev2&&eh!==ev2)
+  /* 判「旧」要跟 ext_min 比，不能跟程序版本比：程序小修一版而扩展没动是正常的，
+     那种情况下拿版本号不等去报警就是喊狼来了。 */
+  const emin=(S.env||{}).ext_min||'';
+  if($('#extWarn'))$('#extWarn').innerHTML=(eh&&emin&&cmpVer(eh,emin)<0)
     ? `<div style="display:block;background:#fdf0e6;border:1px solid var(--accent);color:#7a3a1e;
         border-radius:10px;padding:10px 12px;margin:8px 0 0;font-size:12.5px;line-height:1.65">
-        <b>注意：这个按钮给你的是 v${esc(eh)}，程序本身却是 v${esc(ev2)}。</b>
+        <b>注意：这个按钮给你的是 v${esc(eh)}，而程序 v${esc(ev2)} 要求扩展至少 v${esc(emin)}。</b>
         说明你这份 dcwatch 里的 extension 文件夹是旧的（常见于从 GitHub 或旧压缩包解压出来的副本）。
         下载它装上去还是旧版 —— 要装新版就用单独给你的扩展包，或者把新的 extension 文件夹
         覆盖到 <code>server.py</code> 旁边再来下。</div>`
@@ -1836,7 +1851,58 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeHelp();closeDr
 function accOpts(){return (S.status?.browser?.accounts)||[];}
 function cmpVer(a,b){const x=String(a).split('.').map(Number),y=String(b).split('.').map(Number);
   for(let i=0;i<3;i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)-(y[i]||0);}return 0;}
+/* 版本号：左上角常驻一个小药丸，点开把三处版本一次列清楚。
+   「我到底装了哪一版」是每次更新后要确认的第一件事，不能藏在设置页里。
+   程序和扩展是两个独立的东西，各自有版本，所以只报一个数字是不够的。 */
+function renderBrandVer(){
+  const el=$('#brandVer');if(!el)return;
+  const e=S.env||{},v=e.ver||'';
+  el.textContent=v?('v'+v):(S.demo?'演示':'v–');
+  const bl=(S.status.browser||{}).bridges||[];
+  const old=bl.filter(x=>x.fresh&&x.ver&&e.ext_min&&cmpVer(x.ver,e.ext_min)<0);
+  el.classList.toggle('old',old.length>0);
+  el.title=old.length?`程序 v${v}，但有浏览器还在跑旧版扩展 v${old[0].ver} —— 点开看怎么办`
+                     :`程序版本 v${v}（点一下看扩展版本）`;
+}
+function seeVersions(){
+  const e=S.env||{},v=e.ver||'?',eh=e.ext_have||'',emin=e.ext_min||'';
+  const bl=((S.status.browser||{}).bridges||[]).filter(x=>x.fresh);
+  const row=(k,val,note)=>`<tr><td style="color:var(--text3);white-space:nowrap;padding:7px 14px 7px 0">${k}</td>
+    <td style="font-weight:600;white-space:nowrap;padding:7px 14px 7px 0">${val}</td>
+    <td style="color:var(--text2);font-size:12.5px;padding:7px 0">${note}</td></tr>`;
+  const bad=bl.filter(x=>x.ver&&emin&&cmpVer(x.ver,emin)<0);
+  openDrawer(`<div class="dh"><h2>版本</h2><span class="sp" style="flex:1"></span>
+      <button class="btn ghost" onclick="closeDrawer()">关闭</button></div>
+    <div class="db">
+      <div class="wizres" style="margin:0 0 14px">程序和浏览器扩展是<b>两个东西</b>，各自升级，
+        所以要分开看。它们版本对不上的时候，这里会说明该怎么办。</div>
+      <table style="border-collapse:collapse;width:100%">
+        ${row('这个程序', 'v'+esc(v), '就是你现在看的这个界面，来自 server.py')}
+        ${row('要求扩展至少', 'v'+esc(emin||'?'), '低于这个版本的扩展能跑，但少功能，界面会催你更新')}
+        ${eh?row('磁盘上那份扩展','v'+esc(eh),
+            (emin&&cmpVer(eh,emin)<0)
+              ?'<b style="color:#7a3a1e">这份是旧的</b>：从设置页下载按钮拿到的就是它'
+              :'server.py 旁边 extension 文件夹里的那份，够新')
+             :row('磁盘上那份扩展','找不到','server.py 旁边没有 extension 文件夹')}
+        ${bl.length?bl.map(x=>row('正在旁听的浏览器','扩展 v'+esc(x.ver||'?'),
+              esc(x.account||'未知账号')+' · '+esc(x.browser||'')+(x.ver&&emin&&cmpVer(x.ver,emin)<0
+                ?' · <b style="color:#7a3a1e">旧版</b>':' · 是最新的'))).join('')
+            :row('正在旁听的浏览器','没有',
+                 '扩展没连上。装好之后<b>必须回 Discord 页面按一次 F5</b>')}
+      </table>
+      ${bad.length?`<div class="wizres" style="margin:14px 0 0"><b>浏览器里那个扩展是旧版，两步换掉：</b><br>
+        1）<code>chrome://extensions</code> → 找到 dcwatch → 点卡片上的<b>刷新箭头</b>（↻）<br>
+        2）回 Discord 页面按 <b>F5</b><br>
+        刷新箭头读的是卡片上写的那个<b>文件夹路径</b>。如果你把新扩展解压到了别的地方，
+        刷新读到的还是老文件夹 —— 那就删掉这个扩展条目，重新「加载已解压的扩展程序」指到新文件夹。
+        卡片上的版本号要变成 v${esc(emin)}。</div>`:''}
+      <div class="hint" style="margin:14px 0 0">另外两个地方也能看：Chrome 的
+        <code>chrome://extensions</code> 卡片上写着扩展版本；Discord 页面右下角那个药丸点开也有。
+        程序版本还会写在导出的诊断包第一行。</div>
+    </div>`);
+}
 function renderSources(){
+  renderBrandVer();
   const st=S.status.discord||{},on=S.cfg?.sources?.discord;
   const row=$('#srcDiscord');row.classList.toggle('live',st.state==='online');
   row.classList.toggle('err',st.state==='error');
@@ -1895,6 +1961,30 @@ async function wbSend(){
     :r.ok?r.text:'调用失败：'+r.error});
   renderWb();}
 $('#wbSend').onclick=wbSend;
+/* 用户在工作台十次有九次是直接贴一条频道链接。自己去拆 ID 是他做不到的事，
+   所以贴进来就当场拆好，并给一条通往向导的路。 */
+const DLINK=/discord(?:app)?\.com\/channels\/(@me|\d{5,25})\/(\d{5,25})(?:\/(\d{5,25}))?/;
+function wbLinkCheck(){
+  const el=$('#wbLink');if(!el)return;
+  const m=DLINK.exec($('#wbInput').value||'');
+  if(!m){el.style.display='none';el.innerHTML='';return;}
+  const dm=m[1]==='@me';
+  el.style.display='';
+  el.innerHTML=`<div style="flex:1">认出一个 Discord 链接：${dm?'私信对话':'频道'} ID
+      <code>${esc(m[2])}</code>${dm?'（私信要在规则里勾「包含私信 DM」才收）'
+        :`，服务器 <code>${esc(m[1])}</code>`}。
+      要盯它，得两件事都成立：消息进得来（浏览器旁听要开着那个频道），并且有一条规则命中它。</div>
+    <button class="btn sm" id="wbLinkGo">用这个频道建规则</button>`;
+  $('#wbLinkGo').onclick=()=>{
+    go('rules');wizReset();
+    $('#nlText').value=(dm?`只提醒我这个私信对话（${m[2]}）里的消息，`
+                          :`只提醒我 ${m[2]} 这个频道里的消息，`)+'具体盯什么我们再聊';
+    $('#wizLog').innerHTML=`<div class="wsay"><b>从工作台带过来</b>：`
+      +`${dm?'私信对话':'频道'} ID <code>${esc(m[2])}</code>，向导会接着问你要盯什么。</div>`;
+    $('#nlText').focus();
+  };
+}
+$('#wbInput').addEventListener('input',wbLinkCheck);
 async function seePrompts(){
   const r=await api('/api/prompts');
   if(!r||!r.ok){toast(S.live?('读不到：'+(S.lastErr||'')):'演示模式看不到，跑起来才有');return;}
@@ -1920,6 +2010,7 @@ async function seePrompts(){
     navigator.clipboard.writeText(p.text).then(()=>toast('复制好了'),()=>toast('复制失败，手动选中吧'));});
 }
 $('#btnSeePrompt').onclick=seePrompts;
+$('#brandVer').onclick=seeVersions;
 const diagUrl=()=>'/diagnose.txt?text='+($('#diagText').checked?'1':'0');
 $('#btnDiag').onclick=()=>{
   if(!S.live){toast('演示模式没有诊断包，跑起来才有');return;}
