@@ -1116,6 +1116,7 @@ function renderRules(){
      <button class="sw ${r.enabled?'on':''}" data-tog="${r.id}" style="margin:3px 0 0"></button>
      <div class="body">
        <div class="nm">${esc(r.name)} ${r.hits?`<span class="tag">命中 ${r.hits}</span>`:''}
+         ${r.imported_at?`<span class="tag" title="${esc(r.imported_at)} 从规则包导入（${esc(r.imported_from||'来源不明')}）">导入</span>`:''}
          ${r.action.startsWith('ai')?`<span class="tag a">✧ ${esc(r.model||S.cfg?.default_model?.model||'默认模型')}</span>`:''}</div>
        ${ruleDesc(r)}
      </div>

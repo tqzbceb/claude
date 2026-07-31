@@ -18,7 +18,7 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.9.0"                               # 服务端版本，界面和扩展都能看到
+VERSION = "1.9.1"                               # 服务端版本，界面和扩展都能看到
 EXT_MIN = "1.8.0"                               # 低于这个版本的扩展要提示用户更新
 # 扩展上报的跳过原因，给人看的说法（诊断结论里要拼成一句话）
 NICE_SKIP = {"history": "历史消息（时间戳太旧）", "render": "整批渲染（切频道/往上滚）",
@@ -690,6 +690,11 @@ def sanitize_draft(draft, notes, known_ids, model=""):
 # ======================================================================
 RULES_SCHEMA = "dcwatch.rules/1"      # 认这个名字才当规则包；将来字段不兼容了就 /2
 
+# 导入时给规则盖的本机戳。**不在 DEFAULT_RULE 里，所以不会被导出** —— 跟 hits 一样是本机的账，
+# 别人拿到我的规则包不该看见「我是从哪一版导进来的」。存在的意义只有一个：
+# 排查「填好了怎么不响」时，诊断包 [4] 段能说清这条规则是他自己填的还是从别人的包导进来的。
+IMPORT_MARKS = ("imported_at", "imported_from")
+
 
 def rule_for_export(r):
     """一条库里的规则 → 导出用的干净字典。id / hits 是本机的账，不跟着走。"""
@@ -708,7 +713,8 @@ def sanitize_import_rule(draft):
     notes, rule = [], dict(DEFAULT_RULE)
     if not isinstance(draft, dict):
         return None, ["这一项不是规则对象，已跳过"]
-    unknown = [k for k in draft if k not in DEFAULT_RULE and k not in ("id", "enabled", "hits")]
+    unknown = [k for k in draft if k not in DEFAULT_RULE
+               and k not in ("id", "enabled", "hits") + IMPORT_MARKS]
     for k, v in draft.items():
         if k not in DEFAULT_RULE or v is None:
             continue
@@ -2511,6 +2517,15 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         rid = b.pop("id", None)
         enabled = int(b.pop("enabled", 1))
         b.pop("hits", None)
+        if rid:
+            # 界面编辑一条导入来的规则时，别把「导入来的」这个戳擦掉（它只在库里，
+            # 表单里没有对应输入框，所以提交的 body 里可能根本没带）
+            old = app.db.q("SELECT json FROM rules WHERE id=?", (rid,))
+            if old:
+                prev = json.loads(old[0]["json"])
+                for k in IMPORT_MARKS:
+                    if k in prev and k not in b:
+                        b[k] = prev[k]
         blob = json.dumps(b, ensure_ascii=False)
         if rid:
             app.db.x("UPDATE rules SET json=?,enabled=? WHERE id=?", (blob, enabled, rid))
@@ -2620,10 +2635,15 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         summary["remove"] = len(removes)
 
         if not dry:
+            # 盖一个本机戳：这条是导入来的、什么时候、包是哪一版。诊断包 [4] 段会印出来，
+            # 不然拿了别人一份规则包之后，排查时看不出「这条到底是他自己填的还是导进来的」。
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
             for p in plan:
                 if p["act"] == "same":
                     continue
-                blob = json.dumps({k: v for k, v in p["rule"].items()
+                marked = dict(p["rule"], imported_at=stamp,
+                              imported_from=(f"v{from_ver}" if from_ver else "不带版本号的规则包"))
+                blob = json.dumps({k: v for k, v in marked.items()
                                    if k not in ("id", "enabled", "hits")}, ensure_ascii=False)
                 if p["act"] == "overwrite":
                     app.db.x("UPDATE rules SET json=?,enabled=? WHERE id=?",
@@ -3275,6 +3295,11 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         rules = app.rules(False)
         if not rules:
             P("  一条都没有")
+        imp = [j for j in rules if j.get("imported_at")]
+        if imp:
+            last = max(j["imported_at"] for j in imp)
+            P(f"  其中 {len(imp)}/{len(rules)} 条是导入来的，最近一次导入 {last}"
+              "（导进来的规则里的频道 ID 是对方的，不一定是你能看到的频道）")
         for j in rules:
             P("  -", ("[开]" if j.get("enabled") else "[停]"), j.get("name") or "(没名字)",
               "| 命中", j.get("hits", 0), "次", "| 动作", j.get("action"))
@@ -3290,6 +3315,9 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
               "| 正则", V(j.get("regex")), "| 最短", j.get("min_len"))
             P("      阈值/节流", "分数≥", j.get("notify_min_score"), "| 冷却", j.get("cooldown_sec"), "秒",
               "| 每小时≤", j.get("max_per_hour"), "| 攒", j.get("summary_every"))
+            if j.get("imported_at"):
+                P("      来路     ", f"{j['imported_at']} 从规则包导入"
+                                     f"（{j.get('imported_from') or '来源不明'}）")
 
         P("\n[4.5] 拿真实消息试算（规则填了什么，和会不会命中，是两回事）")
         dry = app.dry_run_samples()

@@ -3,7 +3,7 @@
 这个目录就在项目根下面（`<项目>/tests/`），`runall.sh` 自己会找到 `../server.py`，
 不需要配任何路径。布局不一样时用 `DC=/path/to/dcwatch ./runall.sh ...`。
 
-改完 server.py，**401 条全跑一遍**（一次两三套，命令超时一般 120s）：
+改完 server.py，**416 条全跑一遍**（一次两三套，命令超时一般 120s）：
 
 ```bash
 pip install aiohttp        # 唯一依赖；某些一次性环境每次都要重装
@@ -11,7 +11,7 @@ cd tests
 ./runall.sh e2e.py e2e_ai.py                     # 46 + 27
 ./runall.sh e2e_multi.py e2e_wiz.py              # 26 + 83（wiz 单套约 40s，别再多塞）
 ./runall.sh e2e_v17.py e2e_diag.py                # 46 + 47
-./runall.sh e2e_wb.py e2e_imp.py                 # 67 + 59
+./runall.sh e2e_wb.py e2e_imp.py                 # 67 + 74
 ```
 
 `runall.sh` 做的事：起假 OpenAI（`mockllm.py` :8899）和假 webhook（`echo.py` :8898 → /tmp/bcode/echo.jsonl），
@@ -124,16 +124,20 @@ providers 形状不对回 400 不是 500。
 - `e2e_diag.py` 里桥的扩展版本**不再写死**，改成开头 `EXT_OK = /api/state.env.ext_min`。
   写死成 1.7.2 时，EXT_MIN 一提到 1.7.4，「一切正常时不许硬凑问题」那节就假红三条。
 
-## e2e_imp.py 覆盖（规则导入 / 导出，59 条，v1.9.0）
+## e2e_imp.py 覆盖（规则导入 / 导出，74 条，v1.9.0 / v1.9.1）
 导出包的形状（schema/version/count，不含 id 和 hits）/ 附件头和 no-store /
 原样导回去认成「没变」/ **预览绝不写库** / 覆盖时逐字段列出「变成什么」且字段名是人话 /
 replace 才列 removes / 真导入后字符串数字转 int、停用状态跟着文件 /
 覆盖保留本机 hits、重复导入不造重复规则 / 脏数据（非法动作、非 ID、未知字段、非法 kinds）洗掉并说清 /
-坏 JSON、别人家的 schema、空包、非规则包、非法 mode 一律 400 且带人话原因 / 裸数组能读但提示没 schema 头。
+坏 JSON、别人家的 schema、空包、非规则包、非法 mode 一律 400 且带人话原因 / 裸数组能读但提示没 schema 头 /
+第 13 节（v1.9.1）导入戳：预览不盖戳、新增和覆盖都盖、记住包的版本、手填的没有戳、
+**戳不跟着导出走**、自己导出再导回去不抱怨未知字段、界面编辑不擦掉戳、诊断包 [4] 段印出来路和总结行。
 - **导入不校验 ID 存不存在**（跟 `sanitize_draft` 的 known_ids 那套刻意不同）：导出方的频道 ID
   在导入方库里当然查不到，照 known_ids 洗会把规则洗空，用户看到「导进来了但什么都不听」。
   第 7 节就是钉这件事的，别为了「统一」把它改回去。
 - 断言 400 的原因时要 `emsg()` 先把 body 解出来：`_body` 是转义过的 JSON，
   直接在原始串里搜中文永远搜不到（跟 echo.jsonl 那个坑同源）。
+- `imported_at` / `imported_from` **故意不在 `DEFAULT_RULE` 里**（不然 `rule_for_export` 会把它导出去，
+  等于把本机的账发给别人）。所以别改成「加进 DEFAULT_RULE 更统一」，第 13 节会红。
 - 第 8 节靠 `/api/ingest` 造一次命中，**ingest 后要 sleep 0.8s** 再读 hits（异步落库）；
   而且样本正文必须比规则的 min_len 长，否则被 `len` 挡下，看着像导入坏了。

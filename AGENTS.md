@@ -45,13 +45,13 @@ python3 server.py            # → http://127.0.0.1:8777
 DCWATCH_DB=/tmp/x.db python3 server.py    # 测试时用，别污染真配置
 ```
 
-回归（**改 server.py 必跑**，共 401 条）：
+回归（**改 server.py 必跑**，共 416 条）：
 
 ```bash
 cd tests && ./runall.sh e2e.py e2e_ai.py           # 一次两三套，别全塞一批（会超时）
 ./runall.sh e2e_multi.py e2e_wiz.py
 ./runall.sh e2e_v17.py e2e_diag.py
-./runall.sh e2e_wb.py e2e_imp.py
+./runall.sh e2e_wb.py e2e_imp.py     # imp 74 条
 ```
 
 改 `extension/content.js` 必跑浏览器侧回归（43 + 16 条，需要一个 CDP 会话）：

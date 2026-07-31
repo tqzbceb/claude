@@ -186,4 +186,46 @@ p = call("/api/rules/import", {"data": only, "mode": "replace", "dry_run": False
 ok("库里只剩文件里那一条", names() == ["唯一保留"], names())
 ok("summary 报了删除条数", p["summary"]["remove"] == 3, p["summary"])
 
+print("13. 导入来的规则要留下痕迹（诊断包里看得见，但不跟着导出走）")
+clear_rules()
+call("/api/rules", {"name": "手填的", "keywords_any": ["手填"], "enabled": 1})
+mk = {"schema": "dcwatch.rules/1", "version": "9.9.9",
+      "rules": [{"name": "手填的", "keywords_any": ["被覆盖"]},
+                {"name": "导入的", "keywords_any": ["新来的"]}]}
+call("/api/rules/import", {"data": mk})                      # 先预览一次
+rs = {r["name"]: r for r in call("/api/state")["rules"]}
+ok("预览不盖戳", "imported_at" not in rs["手填的"], sorted(rs["手填的"])[:6])
+call("/api/rules/import", {"data": mk, "dry_run": False})
+rs = {r["name"]: r for r in call("/api/state")["rules"]}
+ok("新增的那条盖了戳", bool(rs["导入的"].get("imported_at")), rs["导入的"].get("imported_at"))
+ok("覆盖的那条也盖了戳", bool(rs["手填的"].get("imported_at")), rs["手填的"].get("imported_at"))
+ok("戳里记了包的版本", rs["导入的"].get("imported_from") == "v9.9.9", rs["导入的"].get("imported_from"))
+call("/api/rules", {"name": "自己填的第二条", "keywords_any": ["b"], "enabled": 1})
+rs = {r["name"]: r for r in call("/api/state")["rules"]}
+ok("自己填的没有戳", not rs["自己填的第二条"].get("imported_at"), rs["自己填的第二条"])
+
+exp = json.loads(call("/api/rules/export", raw=True))
+ok("导出的包里不带本机的戳", all("imported_at" not in r and "imported_from" not in r
+                                 for r in exp["rules"]), exp["rules"][0])
+p = call("/api/rules/import", {"data": exp})
+allnotes = "；".join(n for x in p["plan"] for n in x["notes"]) + "；".join(p["notes"])
+ok("自己导出再导回去不会抱怨未知字段", "不认识的字段" not in allnotes, allnotes)
+ok("自己导出再导回去全是「没变」", p["summary"]["same"] == len(exp["rules"]), p["summary"])
+
+r = rs["导入的"]
+body = {k: v for k, v in r.items() if k not in ("imported_at", "imported_from")}
+body["keywords_any"] = ["改过了"]
+call("/api/rules", body)                                      # 界面提交里没有这两个字段
+r2 = {x["name"]: x for x in call("/api/state")["rules"]}["导入的"]
+ok("界面编辑后戳还在", r2.get("imported_at") == r["imported_at"], r2.get("imported_at"))
+ok("界面编辑真的改到了内容", r2["keywords_any"] == ["改过了"], r2["keywords_any"])
+
+d = call("/diagnose.txt", raw=True)
+seg = d.split("[4] 规则")[1].split("[4.5]")[0]
+ok("[4] 段印了这条是导入来的", "从规则包导入" in seg, seg[:200])
+ok("[4] 段印了包的版本", "v9.9.9" in seg, seg[:400])
+ok("[4] 段有一行总结最近一次导入", "最近一次导入" in seg, seg[:200])
+ok("总结报对了导入 / 总条数", "2/3 条是导入来的" in seg, seg[:200])
+ok("手填的那条不印来路", seg.count("从规则包导入") == 2, seg.count("从规则包导入"))
+
 print(f"\n通过 {P} / 失败 {F}")
