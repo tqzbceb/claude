@@ -3,7 +3,7 @@
 这个目录就在项目根下面（`<项目>/tests/`），`runall.sh` 自己会找到 `../server.py`，
 不需要配任何路径。布局不一样时用 `DC=/path/to/dcwatch ./runall.sh ...`。
 
-改完 server.py，**443 条全跑一遍**（一次两三套，命令超时一般 120s）：
+改完 server.py，**496 条全跑一遍**（一次两三套，命令超时一般 120s）：
 
 ```bash
 pip install aiohttp        # 唯一依赖；某些一次性环境每次都要重装
@@ -12,6 +12,7 @@ cd tests
 ./runall.sh e2e_multi.py e2e_wiz.py              # 26 + 83（wiz 单套约 40s，别再多塞）
 ./runall.sh e2e_v17.py e2e_diag.py                # 46 + 47
 ./runall.sh e2e_wb.py e2e_imp.py                 # 94 + 74
+./runall.sh e2e_ext.py                           # 53
 ```
 
 `runall.sh` 做的事：起假 OpenAI（`mockllm.py` :8899）和假 webhook（`echo.py` :8898 → /tmp/bcode/echo.jsonl），
@@ -154,3 +155,16 @@ replace 才列 removes / 真导入后字符串数字转 int、停用状态跟着
   等于把本机的账发给别人）。所以别改成「加进 DEFAULT_RULE 更统一」，第 13 节会红。
 - 第 8 节靠 `/api/ingest` 造一次命中，**ingest 后要 sleep 0.8s** 再读 hits（异步落库）；
   而且样本正文必须比规则的 min_len 长，否则被 `len` 挡下，看着像导入坏了。
+
+## e2e_ext.py 覆盖（批量提取模板，53 条，v1.9.3）
+模板存在 cfg 的 `extract_templates` 里（`/api/config` 认它，`norm_tpls` 洗）：
+存 / 自动 id / 空名空 want 丢掉 / limit 夹 1–2000 / 不像 ID 的频道清空 /
+`/api/extract/export`：`dcwatch.extract/1` 包（version/count，不带 id、不带导入戳）/
+`/api/extract/import`：**dry_run 默认真、预览绝不写库** / 1 新增 1 覆盖算得对、人话 diff /
+merge 不删本机多的、replace 先列 removes 再问 / 覆盖不换 id（界面不跳位）/
+导入戳（`imported_at`/`imported_from`）盖在导入项上、没动过的不盖、**不跟着导出走** /
+自己导出再导回认成「没变」且不抱怨未知字段 / 字符串形式的包也能吃 /
+本机查不到的纯数字频道 ID 照样留着（洗空才是最难查的 bug）/
+坏 JSON、别人家的 schema 一律 400 且带人话原因。
+- 跟规则包同样的三条铁律，别为「统一」改掉：① `dry_run` 默认真；② 导入戳不进 `DEFAULT_TPL`
+  （进了就会被 `tpl_for_export` 导出去）；③ 频道 ID 只要求纯数字，**不按本机 known_ids 洗**。

@@ -10,7 +10,7 @@
 
 **仓库里的每一份东西都是为了「不需要聊天记录也能接上」而存在的**：
 `NOW.md` 手停在哪一步 · `START_HERE.md` 换号第一页 · 这份 项目记忆 · `HANDOFF.md` 进度与坑 · `CLAUDE.md` 协议 ·
-`tests/` 401→443 条回归（代码说不了谎的那部分）· `release/` 一份现成的成品 zip
+`tests/` 496 条回归（代码说不了谎的那部分）· `release/` 一份现成的成品 zip
 （用户没有 AI 也能自己下）。发现有什么只存在于聊天里，立刻补进来。
 
 ## 这是什么
@@ -56,13 +56,14 @@ python3 server.py            # → http://127.0.0.1:8777
 DCWATCH_DB=/tmp/x.db python3 server.py    # 测试时用，别污染真配置
 ```
 
-回归（**改 server.py 必跑**，共 443 条）：
+回归（**改 server.py 必跑**，共 496 条）：
 
 ```bash
 cd tests && ./runall.sh e2e.py e2e_ai.py           # 一次两三套，别全塞一批（会超时）
 ./runall.sh e2e_multi.py e2e_wiz.py
 ./runall.sh e2e_v17.py e2e_diag.py
 ./runall.sh e2e_wb.py e2e_imp.py     # wb 94 条 / imp 74 条
+./runall.sh e2e_ext.py               # 提取模板 53 条
 ```
 
 改 `extension/content.js` 必跑浏览器侧回归（43 + 16 条，需要一个 CDP 会话）：

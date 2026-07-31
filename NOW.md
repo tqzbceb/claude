@@ -5,58 +5,40 @@
 > 手停在哪儿、下一步该敲什么。空着（"没有进行中的任务"）才说明可以从 HANDOFF 挑新活。
 
 ## 状态
-进行中
+**没有进行中的任务** —— v1.9.3 已完整收尾（代码 + 53 条新回归 + 文档 + zip + 推送）。
+下一个窗口从 `HANDOFF.md` 的「未完成」挑活；头两件（要诊断包 / 等装 v1.9.3 回执）只能等用户。
 
 ## 最后更新
-2026-07-31 19:40（北京时间）· 界面 + 全量回归已完成，剩文档 / zip / 推送
+2026-07-31 20:40（北京时间）· v1.9.3 收尾完成
 
-## 正在做什么
-两件事并行：
-1. **（已完成）换窗口连续性加固** —— 见下面「本轮已完成」。
-2. **（进行中）批量提取模板的导出 / 导入**（HANDOFF「未完成」第 3 项，第一件能自己动手的）。
+## 上一轮（v1.9.3）做完了什么
+批量提取的模板 + 整包导出 / 导入，全流程收尾：
+- [x] server.py：`EXTRACT_SCHEMA`（dcwatch.extract/1）、`DEFAULT_TPL`、`norm_tpls`、
+      `tpl_for_export`、`diff_tpl`、`sanitize_import_tpl`；`/api/extract/export` +
+      `/api/extract/import`（dry_run 默认真）；`/api/config` 认 `extract_templates`；诊断包 `[5.5]` 段
+- [x] ui.html：批量提取页模板 chips / 存为模板 / ⇡ 导出 ⇣ 导入 + 预览抽屉（浏览器目检过）
+- [x] `tests/e2e_ext.py` 53 条全绿；全套回归 496 / 496 全绿
+- [x] 文档：README（批量提取一节 + 故障表 + 版本号）、tests/RUN.md（e2e_ext 覆盖 + 496）、
+      HANDOFF.md（本轮总结 + 未完成更新）、START_HERE.md、AGENTS.md、release/README.md
+- [x] zip：`dcwatch-v1.9.3.zip`（26 文件 / 361KB，.bat 复验 GBK+CRLF）进 `release/` 和 `outputs/`，
+      旧 1.9.2 删掉。解压后真起过一次：`/version` 写 v1.9.3，存模板 → 导出接口口径全对
+- [x] 提交推送
 
-## 手停在哪一步
-- [x] 环境就绪：`pip install aiohttp`，`cd tests && ./runall.sh e2e.py e2e_imp.py` → 46 / 74 全绿
-- [x] 摸清现状：`批量提取`（ui.html 的 `v-batch`）现在**根本没有模板这回事**，
-      "要提取什么"是个每次手打的 textarea（`#bWhat`），换台机器 / 换个人就得重打
-- [x] 连续性加固（NOW.md / 根 AGENTS.md / save.py）
-- [x] server.py：`EXTRACT_SCHEMA`、`DEFAULT_TPL`、`norm_tpl(s)`、`tpl_for_export`、
-      `diff_tpl`、`sanitize_import_tpl`；`/api/extract/export` + `/api/extract/import`
-      （**dry_run 默认真**）；`/api/config` 认 `extract_templates`；诊断包 `[5.5]` 段
-- [x] `tests/e2e_ext.py` **53 条全绿**
-- [x] ui.html：批量提取页加「存为模板 / 选模板 / 导出 / 导入」+ 预览抽屉（已在浏览器目检：chips / 填表 / 存为模板 / 导入预览抽屉都对）
-- [x] 回归全套重跑一遍：496 / 496 全绿（ext53 e2e46 imp74 ai27 wb94 diag47 multi26 v17-46 wiz83）
-- [ ] bump 版本到 v1.9.3、README / RUN.md / HANDOFF.md、出 zip 进 `outputs/` + `release/`
-- [ ] 提交推送
+## 交接时的关键决定（做类似功能照抄这套）
+- 模板存在 **cfg 的 `extract_templates`** 里（照 `quick_actions`），不新建表
+- 导入走跟规则包**同一道预览闸**（硬规矩 10）：dry_run 默认真 → 界面预览 → 用户确认才写
+- 重名认 `name` 不认 `id`；`imported_at` / `imported_from` **不进 `DEFAULT_TPL`**（不外泄）
+- `channel_id` 只要求纯数字，**不按本机 known_ids 洗**（导出方的 ID 本机必然查不到）
 
-## 这一步的关键决定（省得下一个窗口重新想一遍）
-- 模板存在 **cfg 的 `extract_templates`** 里（照 `quick_actions` 的样子），不新建表：
-  它就是几个输入框的值，没有命中数这类本机账要记
-- 导入**必须走跟规则一样的预览闸**（硬规矩 10）：`dry_run` 默认真，界面先摆
-  「新增 / 覆盖 / 没变 / replace 会删谁」，用户点确认才第二次请求真写
-- 重名认 `name` 不认 `id`（跟规则包一致，id 在两台机器上必然不同）
-- `imported_at` / `imported_from` **不进 `DEFAULT_TPL`** —— 那是本机的账，
-  进了就会跟着导出去（`e2e_imp.py` 第 13 节为规则钉过同一件事）
-- `channel_id` 照导入规则那套：**只要求是纯数字，不校验本机存不存在**。
-  导出方的频道 ID 在导入方库里当然查不到，按 known_ids 洗会把模板洗空
-
-## 本轮已完成（换窗口连续性）
-用户说他的账号是「10x10」：每个窗口 10 条消息，用完换窗口。目标是 10 个窗口跑成 1 个。
-实测了换窗口到底丢什么（`.promote-manifest.json` 47 个文件 + 跟远端 `git ls-files` 对比）：
-
+## 换窗口丢什么（实测过，别再测一遍）
 | 换窗口后 | 结果 |
 |---|---|
 | 工作区文件（.md/.py/.json/.zip/.wav/图片） | 在 |
-| 根 `AGENTS.md` | 在，且**每个新会话自动读** —— 用户看到的"好像有记忆"就是它 |
-| `.bat` / `.sh` | **丢**（`启动.bat`/`停止.bat`/`build.bat`/`tests/runall.sh` 四个全没） |
-| `.git/` | **丢**，所以工作区的 `claude/` 是死快照不是仓库 |
-| `outputs/` | **整个清空**，上一轮交付的 zip 已经不在了 |
-| `/tmp` | 临时盘，别把唯一副本放那儿 |
-| 聊天记录 | 一句不过来 |
+| 根 `AGENTS.md` | 在，且**每个新会话自动读** |
+| `.bat` / `.sh` | **丢** |
+| `.git/` | **丢**，工作区的 `claude/` 是死快照不是仓库 |
+| `outputs/` | **整个清空** |
+| `/tmp` / 聊天记录 | 没了 |
 
-对策（已落地）：
-1. **这一页**（`NOW.md`）——粒度到步的进行中状态，每做完一步就更新并推送
-2. 根 `AGENTS.md` 补了「换窗口丢什么」+「先读 NOW.md」的指针
-3. `.bcode/agent-workspace/save.py` —— 一条命令存盘：commit + push + 把 .md 同步回工作区快照
-   （**写成 .py 不是 .sh**，因为 .sh 不会被 promote，下个窗口就没了）
-4. 交付 zip 一律**同时**进 `release/`（跟着 git 走），只放 `outputs/` 的话换窗口就没了
+对策：干活 `git clone` 到 `/tmp/dcw`；每做完一步 `python3 .bcode/agent-workspace/save.py "做了什么"`；
+交付 zip 同时进 `release/` 和 `outputs/`；进行中状态写在这一页。
