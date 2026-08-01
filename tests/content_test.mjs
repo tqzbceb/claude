@@ -142,6 +142,10 @@ export async function run(session, contentJsPath) {
   await push(MK.media(CHAN, "1013", "Fil", `<div class="attachment-1">
     <div class="filename-1">keys.txt</div></div>`, { noBody: true }));
 
+  // D1：行内表情（文字中间夹的 <img>）不能丢；Discord 给同名表情加的 ~N 后缀要剥掉
+  await push(MK.media(CHAN, "1014", "Mix", `看 <img class="emoji-1" alt=":kekw:"> 这个`));
+  await push(MK.media(CHAN, "1015", "Dup", `<img class="emoji-1" alt=":cat_cry~1:">`));
+
   // 子区：li 的 chanId 和 URL 里的不一样 → parent_id 用 URL 的
   await session.Runtime.evaluate({ expression:
     `document.getElementById("thread-panel").style.display="block"` });
@@ -205,6 +209,11 @@ export async function run(session, contentJsPath) {
   t("表情包上报成 :emoji:", by["1012"] && by["1012"].content.includes(":kekw:"), by["1012"]);
   t("附件消息的作者照样认得出", by["1012"] && by["1012"].author === "Emo", by["1012"]);
   t("文件上报成 [文件 名字]", by["1013"] && by["1013"].content.includes("keys.txt"), by["1013"]);
+  /* D1：正文里的行内表情是 <img>，innerText 把它整个丢掉（「看 :kekw: 这个」变「看  这个」）。
+     现在提取时把表情 img 换成代码文字，行内表情留在正文里；~N 后缀剥掉，不然像乱码 */
+  t("行内表情留在正文里", by["1014"] && by["1014"].content.includes(":kekw:"), by["1014"]);
+  t("行内表情两边的文字也都在", by["1014"] && by["1014"].content.includes("看") && by["1014"].content.includes("这个"), by["1014"]);
+  t("表情码剥掉 ~N 后缀", by["1015"] && by["1015"].content.includes(":cat_cry:") && !by["1015"].content.includes("~1"), by["1015"]);
   t("纯文字消息的 media 是空的", by["1001"] && (by["1001"].media || []).length === 0, by["1001"]);
   t("默认头像 author_id 留空", by["1005"] && !by["1005"].author_id, by["1005"]);
   t("默认头像也有作者名", by["1005"] && by["1005"].author === "NoAvatar", by["1005"]);

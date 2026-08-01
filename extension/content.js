@@ -36,6 +36,23 @@ let lastPath = location.pathname;
 
 const txt = el => (el ? (el.innerText || "").trim() : "");
 
+/* 表情的可读代码：Discord 给同名表情加 ~N 后缀（:cat_cry~1:），用户看着像乱码，剥掉。
+   标准 emoji 的 alt 是表情字符本身（😀），不带冒号，正则碰不到它。 */
+const emojiCode = img => ((img.getAttribute("alt") || img.getAttribute("aria-label") || "").trim())
+  .replace(/~\d+(?=:)/, "");
+
+/* 消息正文里的行内表情是 <img>，innerText 把它整个丢掉 —— 「看 :kekw: 这个」
+   变成「看  这个」，用户看到的是一段缺了东西的字符串（D1）。克隆正文节点，
+   把表情 img 换成它的代码文字再取文本，行内表情就留下来了（规则想盯表情也盯得到）。 */
+function textWithEmoji(root) {
+  if (!root) return "";
+  const c = root.cloneNode(true);
+  c.querySelectorAll('img[class*="emoji"], img[data-type="emoji"]').forEach(i => {
+    i.replaceWith(document.createTextNode(emojiCode(i)));
+  });
+  return (c.innerText || c.textContent || "").trim();
+}
+
 /* 从 URL 拿 guild/channel：/channels/<guildId|@me>/<channelId> */
 function fromUrl() {
   const p = location.pathname.split("/");
@@ -93,7 +110,7 @@ function mediaOf(li) {
   const kinds = [], bits = [];
   const body = li.querySelector('[id^="message-content-"]') || li;
   const emo = [...body.querySelectorAll('img[class*="emoji"], img[data-type="emoji"], [class*="emojiContainer"] img')]
-    .map(i => (i.getAttribute("alt") || i.getAttribute("aria-label") || "").trim())
+    .map(emojiCode)
     .filter(Boolean);
   if (emo.length) { kinds.push("emoji"); bits.push(emo.join(" ")); }
   const st = li.querySelector('[class*="stickerAsset"], [class*="clickableSticker"], img[class*="sticker"], [data-type="sticker"]');
@@ -121,7 +138,7 @@ function parseLi(li) {
   const m = /^chat-messages-(\d+)-(\d+)$/.exec(li.id || "");
   if (!m) return null;
   const [, channel_id, msg_id] = m;
-  let content = txt(li.querySelector(`#message-content-${msg_id}`));
+  let content = textWithEmoji(li.querySelector(`#message-content-${msg_id}`));
   let media = [];
   if (!content) { const mm = mediaOf(li); content = mm.text; media = mm.kinds; }
   if (!content) return null;                        // 真的空（没文字也没附件），不上报
