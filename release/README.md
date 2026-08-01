@@ -5,13 +5,13 @@
 
 ## 用户怎么下（发给他的原话）
 
-> 打开 https://github.com/tqzbceb/claude/tree/main/release ，点里面那个 `dcwatch-v1.11.2.zip`，
+> 打开 https://github.com/tqzbceb/claude/tree/main/release ，点里面那个 `dcwatch-v1.11.3.zip`，
 > 页面上点 **Download raw file**（右上角那个下载图标）。
 > 下载完解压出 `dcwatch` 文件夹，双击里面的 **启动.bat**。
-> 黑窗口第一行应该写 `dcwatch v1.11.2`。**这轮扩展也要重装一次**：扩展加了后台标签页
-> 防冻结（挂后台久不再漏消息），三步：覆盖 extension 文件夹 →
+> 黑窗口第一行应该写 `dcwatch v1.11.3`。**这轮扩展也要重装一次**：扩展有功能改动（行内表情
+> 不再丢、自动开帖改新开最小化窗口），三步：覆盖 extension 文件夹 →
 > `chrome://extensions` 里 dcwatch 卡片点 ⟳ → 回 Discord 页面按 F5
-> （程序包里自带 extension 文件夹；另有 `dcwatch-extension-v1.11.2.zip` 给只换扩展的人）。
+> （程序包里自带 extension 文件夹；另有 `dcwatch-extension-v1.11.3.zip` 给只换扩展的人）。
 > 覆盖时**别删旧的 `dcwatch.db`**——你的规则和密钥都在里面。
 
 ## 给接手的 AI
