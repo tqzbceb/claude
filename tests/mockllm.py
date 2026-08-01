@@ -25,9 +25,17 @@ CALLS = []          # 每次调用记一笔，测试里能查「到底调了几�
 # 每项形如 {"content":"..."} / {"tools":[{"name":"list_rules","args":{}}]} /
 #         {"http":{"status":400,"body":"tools is not supported"}}
 SCRIPT = []
+# AI 复核（aicheck）分支的脚本队列：测试先 POST /__chk 排好每次复核要回什么。
+# 每项形如 {"json":{hit:...}}（回合法 JSON）/ {"raw":"一段散文"} /
+#         {"http":{"status":500,"body":"boom"}} / {"bad":true}（回坏 JSON，模拟炸线）。
+# 队列空了就回默认的「hit:true, confidence:90」—— 复核的默认姿态是放行。
+CHKQ = []
 
 
 def classify(system: str) -> str:
+    # AI 复核的提示词里也有「监听」字样，必须排最前面判，别落进 compose/tag
+    if "复核员" in system:
+        return "aicheck"
     # 工作台的系统提示词里也有「监听规则」四个字，所以它必须排在 compose 前面判
     if "AI 工作台" in system:
         return "ask"
@@ -102,6 +110,21 @@ async def chat(req):
                   "tool_out": "\n".join(str(m.get("content") or "") for m in b["messages"]
                                         if m["role"] == "tool")[:4000],
                   "roles": [m["role"] for m in b["messages"]]})
+
+    if kind == "aicheck":
+        step = CHKQ.pop(0) if CHKQ else {"json": {"hit": True, "confidence": 90, "kind": "key",
+                                                  "extracted": [], "need_human": False,
+                                                  "reason": "默认放行"}}
+        if step.get("http"):
+            return web.Response(status=step["http"].get("status", 500),
+                                text=step["http"].get("body", "boom"))
+        if step.get("bad"):                    # 合法 HTTP 但体不是 chat 形状：模拟炸线/超时那类
+            return web.json_response({"choices": []})
+        out = step.get("raw") or json.dumps(step.get("json"), ensure_ascii=False)
+        if b.get("stream"):
+            return await sse({"role": "assistant", "content": out})
+        return web.json_response({"choices": [{"message": {"content": out}}],
+                                  "usage": {"prompt_tokens": 10, "completion_tokens": 20}})
 
     if kind == "ask" and SCRIPT:
         step = SCRIPT.pop(0)
@@ -185,7 +208,15 @@ async def calls(_):
 async def reset(_):
     CALLS.clear()
     SCRIPT.clear()
+    CHKQ.clear()
     return web.json_response({"ok": True})
+
+
+async def chk(req):
+    b = await req.json()
+    CHKQ.clear()
+    CHKQ.extend(b.get("queue") or [])
+    return web.json_response({"ok": True, "n": len(CHKQ)})
 
 
 async def script(req):
@@ -201,4 +232,5 @@ app.router.add_post("/v1/chat/completions", chat)
 app.router.add_get("/__calls", calls)
 app.router.add_post("/__reset", reset)
 app.router.add_post("/__script", script)
+app.router.add_post("/__chk", chk)
 web.run_app(app, host="127.0.0.1", port=8899, print=None)

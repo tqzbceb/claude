@@ -181,3 +181,30 @@ open 的职责就是记 wb_cur）/ plain=1 探针不进库 / 模型调用失败�
 用户输入截 4000。
 - 坑：失败注入**不能**靠写错 provider 名 —— `App.provider()` 对未知名字兜底到第一个 provider，
   调用照样成功。要让 mockllm 真回错：`/__script` 排一条 `{"http":{"status":500,"body":"boom"}}`。
+
+## e2e_chk.py 覆盖（B1 AI 复核专项，56 条，PLAN_B1 §3.3）
+§1 关着复核行为不变（通知照发 / aicheck 空表 / 模型零调用 / 默认值洗出）/
+§2 hit:true 放行：通知 + 「模型还原出来的」拼进正文 + {{extracted}}/{{need_human}} 占位符 +
+   aicheck 留痕 passed=1 / 调用带 json_mode /
+§3 hit:false 压掉：无通知、passed=0、日志「AI 复核判『不是』」带 msg_id /
+§4 门槛边界：conf==min 放行（>=，不是 >）、min-1 压掉 /
+§5 fail open 三连：HTTP 500 / 坏 JSON / 回散文 → 三条都照通知、标题 [AI 复核失败]、err 留痕、
+   warn 日志「复核没做成，按放行处理」/
+§6 反侦察转人工：[附件 xx.txt] / /下载 → **aiusage 不涨、mock 零调用**、
+   标题【需要你人工看】、kind=unreadable /
+§7 ai_check_human=False → 同样输入不通知、日志写明是「看不到也提醒」关了 /
+§8 ai_check_ctx=3：user 里真有「同频道前面几条」+ 上文三条 + 「要判断的这条」排最后
+   （靠 mockllm 回显的 user 断言，msys() 同款写法）/
+§9 match() 没中不调模型 / §10 导出导入带走五个字段且不抱怨未知字段 /
+§11 诊断包 [4] 段印五个字段 + [4.6] 段印放行/压掉战果 /
+§12 每日上限：把 cap 压到当前用量 → 模型在调用前就被拦（mock 零调用）、fail open 照通知、
+    err 写「已达今日调用上限」、跑完记得把 cap 改回 500。
+- 坑 1：**本套模型名一律 "mock-chk"，别用 "mock-1"**。`App.no_tools` 是进程内内存，
+  跟 e2e_wb 共用一个模型名的话，谁先把 no_tools 染上，另一套的工作台就莫名退化到文本指令模式。
+- 坑 2：复核上下文是 `ts<=当前` 倒序取 n+1 条再翻回来 —— **当前这条也在查询结果里**，
+  靠「正文 != 当前正文」滤掉。所以造上文消息时，别让它的正文跟触发消息一字不差，
+  否则被误滤、上下文少一条，§8 断言挂得莫名其妙。
+- 坑 3：mockllm 的 aicheck 分支走 `/__chk` 队列（`{"json":…}` / `{"raw":…}` /
+  `{"http":…}` / `{"bad":true}`），队列空了默认回 hit:true 90 分；
+  在 `/api/logs` 里搜中文要 `json.dumps(logs, ensure_ascii=False)` 再搜。
+
