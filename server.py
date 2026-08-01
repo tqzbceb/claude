@@ -506,6 +506,10 @@ TOAST_PS = (
 )
 TOAST_B64 = base64.b64encode(TOAST_PS.encode("utf-16-le")).decode()
 
+# 名录里认的对象类型（F1）。值是给人看的中文，候选列表要显示「这是个什么」。
+NAME_KINDS = {"guild": "服务器", "category": "分类", "channel": "频道",
+              "thread": "帖子", "user": "用户"}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS messages(
@@ -543,6 +547,19 @@ CREATE TABLE IF NOT EXISTS threads_open(
 -- 判定开/关：absent 命中正文→关；expect 设了→命中才开；都没设→HTTP<400 算开。
 -- state: unknown(还没探过)/open/closed。last_status 最近一次 HTTP 码（0=没连上）。
 -- 首次探测只落状态不提醒 —— 不然每加一个目标就先收一条「开了」，看着像误报。
+-- 名字→ID 名录（F1）。用户原话：「我输入用户名字或者频道名字他没法监听啊，必须要我给 id」。
+-- 规则匹配在服务端、服务端只认 ID；名字这层只有浏览器里的扩展看得见（侧栏 + 消息头），
+-- 所以扩展把「看见的名字和它的 ID」报上来存这儿，界面和模型就能按名字查 ID。
+-- kind: guild=服务器 category=分类 channel=频道 thread=帖子/子区 user=用户
+-- 一个 ID 在不同 kind 下可能重名（极少），所以主键是 (id,kind)。
+-- src: sidebar=扩展从侧栏抓的（不依赖收信闸，进服务器就有）/ msg=从消息头学的
+-- hits 只用来排序：常见的排前面，不是统计口径
+CREATE TABLE IF NOT EXISTS names(
+  id TEXT, kind TEXT, name TEXT DEFAULT '', guild_id TEXT DEFAULT '', guild_name TEXT DEFAULT '',
+  parent_id TEXT DEFAULT '', parent_name TEXT DEFAULT '', src TEXT DEFAULT 'msg',
+  first_seen REAL, seen REAL, hits INT DEFAULT 1,
+  PRIMARY KEY(id, kind));
+CREATE INDEX IF NOT EXISTS idx_names_kind ON names(kind, seen DESC);
 CREATE TABLE IF NOT EXISTS watch(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT, url TEXT, every_sec INT DEFAULT 60,
@@ -3336,6 +3353,112 @@ class App:
                  ev.get("kind") or "msg"))
         return mid
 
+    # ---------------- 名字→ID 名录（F1） ----------------
+    def learn_name(self, kind, nid, name, guild_id="", guild_name="",
+                   parent_id="", parent_name="", src="msg"):
+        """记一条「名字 ↔ ID」。同一个 ID 再来时更新名字（人会改昵称、频道会改名）。
+
+        故意不做的事：
+        - 不因为名字空就写进去（空名字查不出东西，只会污染候选列表）；
+        - 不覆盖已有的 guild/parent 信息为空（消息路径上有时没带全，别把好数据擦掉）。
+        """
+        nid = str(nid or "").strip()
+        name = (name or "").strip()
+        if not nid or not name or kind not in NAME_KINDS:
+            return False
+        t = now()
+        old = self.db.q("SELECT * FROM names WHERE id=? AND kind=?", (nid, kind))
+        if old:
+            o = old[0]
+            self.db.x("""UPDATE names SET name=?, guild_id=?, guild_name=?, parent_id=?,
+                         parent_name=?, src=?, seen=?, hits=hits+1 WHERE id=? AND kind=?""",
+                      (name, guild_id or o["guild_id"] or "", guild_name or o["guild_name"] or "",
+                       parent_id or o["parent_id"] or "", parent_name or o["parent_name"] or "",
+                       src if src == "sidebar" else (o["src"] or src), t, nid, kind))
+        else:
+            self.db.x("""INSERT INTO names(id,kind,name,guild_id,guild_name,parent_id,parent_name,
+                         src,first_seen,seen,hits) VALUES(?,?,?,?,?,?,?,?,?,?,1)""",
+                      (nid, kind, name, guild_id or "", guild_name or "", parent_id or "",
+                       parent_name or "", src, t, t))
+        return True
+
+    def learn_from_event(self, ev):
+        """从一条消息里顺手学名字。**不受收信闸影响** —— 闸拦下的消息也过这儿，
+        否则「没规则不收信」会连带把名录饿死，用户永远建不出第一条规则。"""
+        cid = str(ev.get("channel_id") or "")
+        cname = (ev.get("channel_name") or "").strip()
+        gid = str(ev.get("guild_id") or "")
+        pid = str(ev.get("parent_id") or "")
+        if cid and cname and cname != cid:
+            self.learn_name("thread" if ev.get("is_thread") else "channel", cid, cname,
+                            guild_id=gid, parent_id=pid)
+        aid = str(ev.get("author_id") or "")
+        aname = (ev.get("author") or "").strip()
+        if aid and aname and aname != "?":
+            self.learn_name("user", aid, aname, guild_id=gid)
+
+    def name_of(self, kind, nid):
+        r = self.db.q("SELECT name FROM names WHERE id=? AND kind=?", (str(nid), kind))
+        return r[0]["name"] if r else ""
+
+    def name_crumb(self, row):
+        """把一条候选摊成人话面包屑：服务器 › 分类 › 频道。名字不唯一时靠它辨认。"""
+        parts = []
+        gn = row["guild_name"] or (self.name_of("guild", row["guild_id"]) if row["guild_id"] else "")
+        if gn:
+            parts.append(gn)
+        elif row["guild_id"]:
+            parts.append(f"服务器 {row['guild_id']}")
+        pn = row["parent_name"] or (self.name_of("channel", row["parent_id"])
+                                    or self.name_of("category", row["parent_id"])
+                                    if row["parent_id"] else "")
+        if pn:
+            parts.append(pn)
+        return " › ".join(parts)
+
+    def lookup_names(self, q, kind="", limit=12):
+        """按名字模糊找 ID。排序：完全相同 > 开头就是 > 里面有 > 忽略大小写含，
+        同档按最近见过排。**永远返回候选列表而不是猜一个** —— 名字不唯一（不同服务器
+        可以有同名频道、两个人能顶同一个显示名），猜错比问一句贵得多。"""
+        q = (q or "").strip()
+        if not q:
+            return []
+        ql = q.lower()
+        kinds = [kind] if kind in NAME_KINDS else list(NAME_KINDS)
+        rows = []
+        for k in kinds:
+            rows += self.db.q("SELECT * FROM names WHERE kind=? ORDER BY seen DESC", (k,))
+        out = []
+        for r_ in rows:
+            nm = r_["name"] or ""
+            nl = nm.lower()
+            if nm == q:
+                rank = 0
+            elif nl == ql:
+                rank = 1
+            elif nl.startswith(ql):
+                rank = 2
+            elif ql in nl:
+                rank = 3
+            else:
+                continue
+            out.append((rank, -(r_["seen"] or 0), {
+                "id": r_["id"], "kind": r_["kind"], "name": nm,
+                "kind_cn": NAME_KINDS[r_["kind"]], "where": self.name_crumb(r_),
+                "guild_id": r_["guild_id"] or "", "parent_id": r_["parent_id"] or "",
+                "src": r_["src"] or "", "seen_ago": ago_txt(r_["seen"]) if r_["seen"] else "",
+            }))
+        out.sort(key=lambda x: (x[0], x[1]))
+        return [o[2] for o in out[:max(1, min(int(limit or 12), 50))]]
+
+    def names_stat(self):
+        st = {k: 0 for k in NAME_KINDS}
+        for r_ in self.db.q("SELECT kind, COUNT(*) c FROM names GROUP BY kind"):
+            if r_["kind"] in st:
+                st[r_["kind"]] = r_["c"]
+        st["total"] = sum(st[k] for k in NAME_KINDS)
+        return st
+
     def ctx_text(self, ev, n=12):
         rows = self.db.q("SELECT author,content FROM messages WHERE channel_id=? ORDER BY ts DESC LIMIT ?",
                          (ev["channel_id"], n))[::-1]
@@ -4334,6 +4457,78 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             return web.json_response({"ok": False, "error": str(e)})
         return web.json_response({"ok": True, "guilds": out})
 
+    @r.get("/api/lookup")
+    async def lookup(req):
+        """名字→ID（F1）。q=要找的名字 kind=限定类型（可空） limit=最多几条。
+        界面的频道/用户选择器和工作台的 find_target 都走这一个口子。"""
+        q = req.query.get("q") or ""
+        kind = req.query.get("kind") or ""
+        try:
+            lim = int(req.query.get("limit") or 12)
+        except ValueError:
+            lim = 12
+        hits = app.lookup_names(q, kind, lim)
+        st = app.names_stat()
+        # 名录是空的和「查了没有」是两种毛病，说清楚，不然用户以为功能坏了
+        why = ""
+        if not st["total"]:
+            why = "名录还是空的：装好扩展、在浏览器里打开一次那个服务器（侧栏能看见频道）就有了"
+        elif not hits:
+            why = "名录里没有叫这个的：确认扩展在浏览器里打开过这个服务器/频道，或者直接贴频道链接"
+        return web.json_response({"ok": True, "q": q, "kind": kind, "hits": hits,
+                                  "stat": st, "note": why}, headers=CORS)
+
+    @r.get("/api/names")
+    async def names_list(req):
+        """名录本身（界面「名录里有什么」用）。kind 可空。"""
+        kind = req.query.get("kind") or ""
+        kinds = [kind] if kind in NAME_KINDS else list(NAME_KINDS)
+        rows = []
+        for k in kinds:
+            for r_ in app.db.q("SELECT * FROM names WHERE kind=? ORDER BY seen DESC LIMIT 300", (k,)):
+                rows.append({"id": r_["id"], "kind": r_["kind"], "kind_cn": NAME_KINDS[r_["kind"]],
+                             "name": r_["name"], "where": app.name_crumb(r_),
+                             "src": r_["src"] or "", "hits": r_["hits"] or 0,
+                             "seen_ago": ago_txt(r_["seen"]) if r_["seen"] else ""})
+        return web.json_response({"ok": True, "names": rows, "stat": app.names_stat()},
+                                 headers=CORS)
+
+    @r.options("/api/ext/names")
+    async def ext_names_pre(_):
+        return web.Response(headers=CORS)
+
+    @r.post("/api/ext/names")
+    async def ext_names(req):
+        """扩展上报它在浏览器里看见的名字（F1 的原料来源）。
+
+        为什么必须由扩展报：服务器/频道名字只在网页 DOM 里（侧栏 href 天然带
+        /channels/<服务器ID>/<频道ID>，旁边就是名字），服务端没有 Bot Token 时看不到任何名字。
+        这条口子和收信闸无关，进服务器就能攒 —— 解决「第一条规则没处抄 ID」。
+        """
+        b = await req.json()
+        if not isinstance(b, dict):
+            return web.json_response({"ok": False, "error": "要一个对象"}, status=400, headers=CORS)
+        items = b.get("names") or []
+        if not isinstance(items, list):
+            return web.json_response({"ok": False, "error": "names 要是数组"}, status=400,
+                                     headers=CORS)
+        n = 0
+        for it in items[:2000]:
+            if not isinstance(it, dict):
+                continue
+            with contextlib.suppress(Exception):
+                if app.learn_name(str(it.get("kind") or ""), it.get("id"), it.get("name"),
+                                  guild_id=str(it.get("guild_id") or ""),
+                                  guild_name=str(it.get("guild_name") or ""),
+                                  parent_id=str(it.get("parent_id") or ""),
+                                  parent_name=str(it.get("parent_name") or ""),
+                                  src="sidebar"):
+                    n += 1
+        if b.get("bridge") or b.get("ver"):
+            app.touch_bridge({"bridge": b.get("bridge"), "ver": b.get("ver")})
+        return web.json_response({"ok": True, "learned": n, "stat": app.names_stat(),
+                                  "server_ver": VERSION, "ext_min": EXT_MIN}, headers=CORS)
+
     @r.get("/api/prompts")
     async def prompts(_):
         """把发给模型的每一段原话交出来 —— 现在**还能改**（B3）。
@@ -4983,10 +5178,19 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             br = app.touch_bridge(b)
             return web.json_response({"ok": True, "pong": True, "bridge": br["id"],
                                       "server_ver": VERSION}, headers=CORS)
+        items = b.get("messages") or [b]
+        # 名字→ID 名录先学（F1）：这一步在旁听开关和收信闸**前面**。
+        # 名录是「用户按名字建规则」的原料，不能被「没规则就不收信」饿死。
+        for m in items:
+            with contextlib.suppress(Exception):
+                app.learn_from_event({
+                    "channel_id": m.get("channel_id"), "channel_name": m.get("channel_name"),
+                    "guild_id": m.get("guild_id"), "parent_id": m.get("parent_id"),
+                    "is_thread": m.get("is_thread"), "author_id": m.get("author_id"),
+                    "author": m.get("author")})
         if not app.cfg["sources"].get("browser", True):
             app.touch_bridge(b, err="旁听开关是关的，消息被丢弃")
             return web.json_response({"ok": False, "error": "浏览器旁听已关闭"}, headers=CORS)
-        items = b.get("messages") or [b]
         # history=1：这一批是「抓历史」抓来的，只入库不提醒（否则一次回扫能弹几百条通知）
         history = bool(b.get("history"))
         n = 0
