@@ -743,6 +743,23 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
               <span id="extVer" style="font-size:12.5px;color:var(--text3)"></span></div>
             <div id="extWarn"></div>
             <div class="row"><span id="brState" style="font-size:12.5px;color:var(--text3)"></span></div>
+            <details id="aoBox" style="margin-top:10px">
+              <summary style="cursor:pointer;font-size:13px;color:var(--text2)">自动点开新帖（实验性）—— 论坛里的新帖不点开是读不到帖内消息的，展开看</summary>
+              <div style="margin-top:10px">
+                <div class="hint" style="margin:0 0 12px">论坛里的新帖，只要没点开，网页里就没有它的消息 —— 扩展也就读不到。
+                  开了这个之后，程序会替你在后台悄悄点开新帖（不抢你的焦点），闲置超过设定时间自动关掉。
+                  <b>要装新版扩展（v1.11.0）才有效</b>，而且新版会多要一个「标签页」权限（就是用来自动开帖的，不开这个功能就不会用到）。</div>
+                <div class="chk"><input type="checkbox" id="aoOn"><label for="aoOn">替我在后台自动点开新帖（默认不开）</label></div>
+                <div class="grid3" style="margin-top:10px">
+                  <label class="f"><span>同时最多开几个</span><input id="aoMax" type="number" min="1" max="20"></label>
+                  <label class="f"><span>每小时最多开几个</span><input id="aoHour" type="number" min="1" max="60"></label>
+                  <label class="f"><span>闲置几分钟自动关 <em>0＝不关</em></span><input id="aoIdle" type="number" min="0" max="1440"></label>
+                </div>
+                <div class="chk"><input type="checkbox" id="aoOnly"><label for="aoOnly">只开「有规则在盯的频道」下面的新帖（强烈建议勾上，不然论坛里每个新帖都会开）</label></div>
+                <div class="row" style="margin-top:12px"><button class="btn pri" id="btnSaveAo">保存</button>
+                  <span id="aoState" style="font-size:12.5px;color:var(--text3)"></span></div>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -1984,8 +2001,32 @@ function renderSettings(){
     ?`${lv.length} 个浏览器在旁听（${lv.map(x=>(x.account||'?')+' / 扩展 v'+(x.ver||'?')).join('；')}）· 累计 ${b.count||0} 条`
     :(bl.length?`扩展装过但已失联 ${~~((bl[0].ago||0)/60)} 分钟：打开 Discord 标签页按 F5`
               :'扩展未连上：装好扩展后必须回 Discord 页面按一次 F5');
-  renderAutostart();
+  const bc=S.cfg.browser||{};
+  $('#aoOn').checked=!!bc.auto_open;
+  $('#aoMax').value=bc.max_tabs??6;
+  $('#aoHour').value=bc.per_hour??8;
+  $('#aoIdle').value=bc.close_idle_min??30;
+  $('#aoOnly').checked=bc.only_rule_channels!==false;
+  renderAutostart();renderAo();
 }
+/* ---------- 自动点开新帖（C2） ---------- */
+async function renderAo(){
+  const el=$('#aoState');if(!el)return;
+  if(!S.live){el.textContent='演示模式：真机上这里会显示「现在开着 N 个帖子」';return;}
+  const r=await api('/api/ext/threads');
+  if(!r||!r.ok){el.textContent='';return;}
+  const n=(r.limits||{}).open_now||0;
+  const names=(r.threads||[]).filter(x=>x.state==='开着').slice(0,3)
+    .map(x=>`${esc(x.name||x.tid)}${x.idle?'（'+x.idle+'没新消息）':''}`);
+  el.textContent=`现在开着 ${n} 个帖子（扩展回报的）`+(names.length?'：'+names.join('、'):'');
+}
+$('#btnSaveAo').onclick=async()=>{
+  const r=await api('/api/config','POST',{browser:{auto_open:$('#aoOn').checked,
+    max_tabs:+$('#aoMax').value,per_hour:+$('#aoHour').value,
+    only_rule_channels:$('#aoOnly').checked,close_idle_min:+$('#aoIdle').value}});
+  if(r)S.cfg=r.config;
+  toast(r?'已保存':(S.live?'没保存成功：'+S.lastErr:'演示模式：未保存'));
+  renderAo();};
 /* ---------- 开机自启动 ---------- */
 function renderAutostart(){
   const a=(S.env||{}).autostart||{supported:false,on:false};
