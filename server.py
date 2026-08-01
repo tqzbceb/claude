@@ -20,6 +20,62 @@ except ImportError:
 
 VERSION = "1.11.3"                              # 服务端版本，界面和扩展都能看到
 EXT_MIN = "1.11.3"                               # 低于这个版本的扩展要提示用户更新
+# ---- E2：宽容读响应体 ----------------------------------------------------
+# 有些中转站（youzi.today 这类）返回的 Content-Length 跟实际字节数不符，或者压缩
+# 编码不规范。aiohttp 默认很严格，一发现对不上就抛 ClientPayloadError，并且把
+# 「已经收到的那部分数据」一起扔掉 —— 于是别的软件能拉到模型，只有我们拉不到。
+# 这里逐块收，半路断了就用手上已有的部分，交给 loads_loose 去抢救。
+async def read_tolerant(r):
+    """返回 (原始字节, 是否被截断)。任何读取异常都不往上抛。"""
+    buf = bytearray()
+    cut = False
+    try:
+        async for chunk in r.content.iter_any():
+            buf += chunk
+            if len(buf) > 8 * 1024 * 1024:      # 模型列表不可能这么大，防跑飞
+                break
+    except Exception:
+        cut = True
+    return bytes(buf), cut
+
+
+def loads_loose(raw):
+    """宽容解析 JSON：去 BOM、掐掉前后垃圾、被截断也尽量 raw_decode 抢救出来。"""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    t = raw.strip().lstrip("\ufeff")
+    if not t:
+        raise ValueError("对方返回了空响应")
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+    i = min([x for x in (t.find("{"), t.find("[")) if x >= 0], default=-1)
+    if i > 0:
+        t = t[i:]
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+    try:                                        # 尾巴被截断：抢救最长的合法前缀
+        return json.JSONDecoder().raw_decode(t)[0]
+    except Exception:
+        raise ValueError("对方返回的不是完整 JSON（前 80 字：%s）" % t[:80].replace("\n", " "))
+
+
+def ids_from_text(raw):
+    """最后一招：连 JSON 都拼不回来时，直接从文本里把 "id":"xxx" 捞出来。
+    截断的模型列表用这个几乎总能救回来 —— 只是可能少最后一两个。"""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    out, seen = [], set()
+    for m in re.finditer(r'"id"\s*:\s*"([^"\\]{1,120})"', raw):
+        v = m.group(1)
+        if v not in seen:
+            seen.add(v); out.append(v)
+    return out
+
+
 # 扩展上报的跳过原因，给人看的说法（诊断结论里要拼成一句话）
 NICE_SKIP = {"history": "历史消息（时间戳太旧）", "render": "整批渲染（切频道/往上滚）",
              "dup": "重复", "notext": "空消息（连图片贴纸都没有）", "quiet": "刚打开页面的头几秒"}
@@ -2493,20 +2549,48 @@ class App:
                                "再点「⇣ 拉取模型列表」。（本机 Ollama 这类才不需要 Key）")
         hdr = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         tried = []
-        for base in self.base_candidates(base_url):
-            try:
-                async with self.http.get(f"{base}/models", headers=hdr,
-                                         timeout=aiohttp.ClientTimeout(total=25), **self.rq()) as r:
-                    if r.status == 200:
-                        j = await r.json(content_type=None)
-                        ids = [m.get("id") for m in j.get("data", j if isinstance(j, list) else [])]
-                        ids = sorted([i for i in ids if i])
-                        if ids:
-                            self.models_base = base       # 记下真正能用的那个
-                            return ids
-                    tried.append(f"{base}/models -> HTTP {r.status} {(await r.text())[:120]}")
-            except Exception as e:
-                tried.append(f"{base}/models -> {type(e).__name__}: {str(e)[:120]}")
+        self.models_rescued = ""      # 这次是不是靠兜底救回来的（界面上要说一句）
+        # 两轮：先要求不压缩（identity），躲开压缩体解不开那一类；再走默认。
+        for enc in ("identity", None):
+            h = dict(hdr)
+            if enc:
+                h["Accept-Encoding"] = enc
+            for base in self.base_candidates(base_url):
+                tag = f"{base}/models{'（不压缩）' if enc else ''}"
+                try:
+                    async with self.http.get(f"{base}/models", headers=h,
+                                             timeout=aiohttp.ClientTimeout(total=25), **self.rq()) as r:
+                        raw, cut = await read_tolerant(r)
+                        if r.status == 200:
+                            ids, how = [], ""
+                            try:
+                                j = loads_loose(raw)
+                                arr = j.get("data", j) if isinstance(j, dict) else j
+                                ids = [m.get("id") if isinstance(m, dict) else m
+                                       for m in (arr if isinstance(arr, list) else [])]
+                                ids = [i for i in ids if isinstance(i, str) and i]
+                                if cut:
+                                    how = "对方把响应发到一半就断了，已按收到的部分解析"
+                            except Exception:
+                                ids = ids_from_text(raw)       # 连 JSON 都拼不回来
+                                if ids:
+                                    how = "对方返回的 JSON 不完整，已从原始数据里把模型名捞出来"
+                            if ids:
+                                self.models_base = base
+                                self.models_rescued = how
+                                if how:
+                                    self.log("WARN", "拉模型兜底生效：%s（%s，拿到 %d 个）"
+                                             % (how, base, len(ids)))
+                                return sorted(set(ids))
+                            tried.append(f"{tag} -> HTTP 200 但解不出模型名 {raw[:80]!r}")
+                        else:
+                            tried.append(f"{tag} -> HTTP {r.status} "
+                                         f"{raw[:120].decode('utf-8', 'replace')}")
+                except Exception as e:
+                    tried.append(f"{tag} -> {type(e).__name__}: {str(e)[:120]}")
+            if self.base_candidates(base_url) and any("HTTP 401" in t or "HTTP 403" in t
+                                                      for t in tried):
+                break                          # Key 不对，换编码也没意义，别白试第二轮
         body = " ｜ ".join(tried)
         base = self.base_candidates(base_url)[0]
         # Ollama native
@@ -2528,9 +2612,12 @@ class App:
             hint = "。看着像 Key 不对或没权限"
         elif any("HTTP 404" in t for t in tried):
             hint = "。404 一般是 Base URL 写法不对，正确的形如 https://api.deepseek.com/v1"
-        elif any("ClientPayloadError" in t or "Payload" in t for t in tried):
-            hint = ("。对方把数据发到一半断了：多半是本机的代理 / 加速器 / 杀毒软件在中间截断。"
-                    "换条网络、关掉系统代理或加速器试试；也可以在「设置」里填一个稳定的代理")
+        elif any("ClientPayloadError" in t or "Payload" in t or "解不出模型名" in t
+                 or "不是完整 JSON" in t for t in tried):
+            hint = ("。对方返回的响应体不规范（长度对不上或压缩编码不标准），"
+                    "两种兜底读法都没救回来。这不是你机器的问题，先确认这家中转站的 "
+                    "Base URL 和 Key 没写错；不行就先手填一个模型名，"
+                    "拉不到列表不影响正常调用")
         raise RuntimeError(f"拉取模型失败{hint}\n试过：{body}")
 
     def chat_prep(self, provider_name, model, messages, json_mode=False, max_tokens=800,
@@ -3647,7 +3734,8 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         cache[b.get("provider", "")] = ms
         app.cfg["models_cache"] = cache
         app.db.set_cfg(app.cfg)
-        return web.json_response({"ok": True, "models": ms})
+        return web.json_response({"ok": True, "models": ms,
+                                  "rescued": getattr(app, "models_rescued", "") or ""})
 
     @r.get("/api/messages")
     async def msgs(req):

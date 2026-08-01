@@ -136,6 +136,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .row{display:flex;align-items:center;gap:8px}
 .tag{display:inline-flex;align-items:center;gap:5px;padding:1.5px 8px;border-radius:20px;font-size:11.5px;
   background:var(--bg-sunk);border:1px solid var(--line);color:var(--text2);white-space:nowrap}
+/* E1：报错文字必须折行。以前塞进 .tag（white-space:nowrap）又待在 .row（flex）里，
+   一长串就把整页向右撑开，还得靠鼠标悬停才看得见全文。 */
+.errbox{margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.65;
+  background:var(--err-soft,rgba(220,80,80,.08));border:1px solid var(--err);color:var(--err);
+  white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-width:100%}
+.errbox b{display:block;margin-bottom:2px}
+.errbox .dim{color:var(--text2);font-size:11.5px}
 .tag.a{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
 .tag.g{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
 .tag.w{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
@@ -1818,6 +1825,10 @@ async function openPicker(){
   $$('.add').forEach(b=>b.onclick=()=>{const k=b.dataset.k;(S.editing[k]=S.editing[k]||[]);
     if(!S.editing[k].includes(b.dataset.id))S.editing[k].push(b.dataset.id);toast('已加入 '+b.dataset.id);});
   $('#pkBack').onclick=()=>editRule(S.editing);}
+/* E1：报错渲染成多行块。第一行是人能看懂的结论，后面「试过什么」压成灰字细节。 */
+function errHtml(txt){const t=String(txt||'');const i=t.indexOf('试过：');
+  const head=(i>=0?t.slice(0,i):t).trim();const det=(i>=0?t.slice(i):'').trim();
+  return `<b>${esc(head)}</b>${det?`<span class="dim">${esc(det)}</span>`:''}`;}
 /* ================= models ================= */
 function renderProviders(){
   const d=S.cfg.default_model||{};
@@ -1834,11 +1845,14 @@ function renderProviders(){
      </div>
      <div class="row">
        <button class="btn" data-pull="${i}">⇣ 拉取模型列表</button>
-       <span class="tag" id="pm${i}">${!ms.length?'未拉取'
+       <span class="tag" id="pm${i}">${(S.provErr&&S.provErr[p.name])?'拉取失败，看下面'
+         :!ms.length?'未拉取'
          :(S.modelsDemo&&S.modelsDemo[p.name]?'演示模式：不是真模型列表':`已拉到 ${ms.length} 个模型`)}</span>
        <span class="sp" style="flex:1"></span>
        <button class="btn ghost sm" data-rmp="${i}">移除</button>
      </div>
+     <div class="errbox" id="pe${i}" ${(S.provErr&&S.provErr[p.name])?'':'hidden'}>${
+       (S.provErr&&S.provErr[p.name])?errHtml(S.provErr[p.name]):''}</div>
       ${ms.length?`<div class="row" style="margin-top:8px;align-items:flex-end">
         <label class="f" style="flex:1;margin:0"><span>用这家的哪个模型 <em>${ms.length} 个可选</em></span>
           <select data-psel="${i}">${ms.map(m=>
@@ -1868,10 +1882,14 @@ function renderProviders(){
       S.models[p.name]=['（演示）gpt-4o-mini','（演示）qwen2.5:7b'];
       (S.modelsDemo=S.modelsDemo||{})[p.name]=true;}
     else if(r.ok){S.models[p.name]=r.models;if(S.modelsDemo)delete S.modelsDemo[p.name];
+      if(S.provErr)delete S.provErr[p.name];
+      if(r.rescued)toast('拉到了，但走的是兜底：'+r.rescued);
       tag.textContent=`已拉到 ${r.models.length} 个`;
       $('#defProv').value=p.name;toast(`拉到 ${r.models.length} 个模型，就在这张卡片里挑，然后按「设为默认模型」`);}
-    else{const et=(r.error||'').replace(/\s*\n\s*/g,' ｜ ');
-      tag.innerHTML=`<span style="color:var(--err)" title="${esc(r.error)}">失败：${esc(et).slice(0,140)}${et.length>140?'…（鼠标悬停看全文）':''}</span>`;
+    else{(S.provErr=S.provErr||{})[p.name]=r.error||'拉取模型失败';
+      tag.textContent='拉取失败，看下面';
+      const box=$('#pe'+b.dataset.pull);
+      if(box){box.hidden=false;box.innerHTML=errHtml(r.error||'拉取模型失败');}
       renderDefaults();return;}
     renderProviders();renderDefaults();});
   /* C3：模型选择就摆在这家服务自己的卡片里 —— 拉完模型不用再跑到上面那一栏去找 */
