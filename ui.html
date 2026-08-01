@@ -239,12 +239,23 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .sect>.st b{font:500 12px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
 .sect>.st span{font-size:12px;color:var(--text3)}
 .chips{display:flex;flex-wrap:wrap;gap:5px;padding:5px;border:1px solid var(--line2);border-radius:8px;
-  background:var(--bg-elev);min-height:36px;align-items:center}
+  background:var(--bg-elev);min-height:36px;align-items:center;position:relative}
+/* F1 名字→ID：打名字时弹的候选清单。名字不唯一，所以永远是「挑一个」而不是替你猜 */
+.lookbox{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:60;max-height:236px;overflow:auto;
+  background:var(--bg-elev);border:1px solid var(--line2);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.28)}
+.lookbox .lki{display:flex;gap:8px;align-items:baseline;padding:6px 9px;cursor:pointer;border-bottom:1px solid var(--line)}
+.lookbox .lki:last-child{border-bottom:none}
+.lookbox .lki.on,.lookbox .lki:hover{background:var(--bg-sunk)}
+.lookbox .lki b{font:600 13px var(--sans)}
+.lookbox .lki span{font:11px var(--sans);color:var(--text3)}
+.lookbox .lki i{font:11px var(--mono);color:var(--text3);margin-left:auto;font-style:normal}
+.lookbox .lkm{padding:7px 9px;font:12px var(--sans);color:var(--text3)}
 .chips input{border:none;flex:1;min-width:90px;padding:2px 4px;background:transparent;box-shadow:none!important}
 .chips input:focus{outline:none}
 .chipx{display:inline-flex;align-items:center;gap:5px;background:var(--bg-sunk);border:1px solid var(--line);
   border-radius:6px;padding:1px 4px 1px 7px;font:12px var(--mono)}
 .chipx b{font:400 12px var(--sans);color:var(--text3)}
+.chipx .cname{font:600 12px var(--sans)}
 .chipx button{color:var(--text3);font-size:13px;line-height:1;padding:0 2px}
 .chipx button:hover{color:var(--err)}
 .tester{background:var(--bg-sunk);border:1px dashed var(--line2);border-radius:var(--r);padding:12px}
@@ -1640,18 +1651,55 @@ async function impPreview(mode){
 function openDrawer(html){$('#drawer').innerHTML=html;$('#drawer').classList.add('on');$('#scrim').classList.add('on');}
 function closeDrawer(){$('#drawer').classList.remove('on');$('#scrim').classList.remove('on');}
 $('#scrim').onclick=()=>{closeDrawer();closeHelp();};
-const chipsHtml=(k,ph,extra='')=>`<div class="chips" data-chips="${k}">
-  <span class="cs"></span><input type="text" placeholder="${ph}">${extra}</div>`;
+// look='guild|category|channel|thread|user' → 这一栏能直接打名字，走 /api/lookup 弹候选（F1）
+const chipsHtml=(k,ph,extra='',look='')=>`<div class="chips" data-chips="${k}"${look?` data-look="${look}"`:''}>
+  <span class="cs"></span><input type="text" placeholder="${ph}">${extra}${look?'<div class="lookbox" hidden></div>':''}</div>`;
 function paintChips(k){const box=$(`[data-chips="${k}"] .cs`);const arr=S.editing[k]||[];
-  box.innerHTML=arr.map((v,i)=>`<span class="chipx">${esc(v)}<button data-rm="${i}" data-k="${k}">✕</button></span>`).join('');
+  // 存的是 ID，但挑过一次就把名字记住显示出来，不然一栏数字没人认得出是哪个频道
+  box.innerHTML=arr.map((v,i)=>{const nm=S.nameCache&&S.nameCache[v];
+    return `<span class="chipx">${nm?`<span class="cname">${esc(nm)}</span><b>${esc(v)}</b>`:esc(v)}<button data-rm="${i}" data-k="${k}">✕</button></span>`;}).join('');
   box.parentElement.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{
     S.editing[k].splice(+b.dataset.rm,1);paintChips(k);});}
-function wireChips(){$$('[data-chips]').forEach(box=>{const k=box.dataset.chips;paintChips(k);
-  const inp=box.querySelector('input');
-  inp.onkeydown=e=>{if(e.key==='Enter'||e.key===','){e.preventDefault();const v=inp.value.trim();
-    if(v){(S.editing[k]=S.editing[k]||[]).push(v);inp.value='';paintChips(k);}}
+function wireChips(){S.nameCache=S.nameCache||{};
+  $$('[data-chips]').forEach(box=>{const k=box.dataset.chips;paintChips(k);
+  const inp=box.querySelector('input'),look=box.dataset.look||'',lb=box.querySelector('.lookbox');
+  let hits=[],cur=-1,tmr=0,seq=0;
+  const isId=v=>/^\d{5,}$/.test(v);
+  const hide=()=>{hits=[];cur=-1;if(lb){lb.hidden=true;lb.innerHTML='';}};
+  const add=(v,nm)=>{if(!v)return;if(nm)S.nameCache[v]=nm;
+    (S.editing[k]=S.editing[k]||[]).push(v);inp.value='';hide();paintChips(k);};
+  const take=i=>{const h=hits[i];if(h)add(h.id,h.name+(h.kind_cn?' · '+h.kind_cn:''));};
+  const mark=()=>lb.querySelectorAll('.lki').forEach((d,i)=>d.classList.toggle('on',i===cur));
+  const search=async()=>{const q=inp.value.trim();
+    if(!look||!lb||!q||isId(q)){hide();return;}                 // 已经是 ID 就不用查了
+    const my=++seq;
+    // 故意用裸 fetch：查名字是边打边查，失败不该弹一串 toast
+    const j=await fetch(`/api/lookup?q=${encodeURIComponent(q)}&kind=${look}&limit=8`)
+      .then(r=>r.ok?r.json():null).catch(()=>null);
+    if(my!==seq||inp.value.trim()!==q)return;                   // 打字比网络快：只认最后一次
+    hits=(j&&j.hits)||[];cur=hits.length?0:-1;
+    lb.innerHTML=hits.length?hits.map((h,i)=>`<div class="lki${i===cur?' on':''}" data-i="${i}">
+        <b>${esc(h.name)}</b><span>${esc(h.kind_cn||'')}${h.where?' · '+esc(h.where):''}</span><i>${esc(h.id)}</i></div>`).join('')
+      :`<div class="lkm">${esc((j&&j.note)||'名录里没有叫这个的 —— 也可以直接粘 ID')}</div>`;
+    lb.querySelectorAll('.lki').forEach(d=>{d.onmousedown=e=>{e.preventDefault();take(+d.dataset.i);};});
+    lb.hidden=false;};
+  inp.oninput=()=>{if(!look)return;clearTimeout(tmr);tmr=setTimeout(search,220);};
+  inp.onkeydown=e=>{
+    if(look&&lb&&!lb.hidden&&hits.length){                      // 候选开着：上下选、回车定、Esc 收
+      if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();
+        cur=(cur+(e.key==='ArrowDown'?1:hits.length-1))%hits.length;mark();
+        const on=lb.querySelector('.lki.on');if(on)on.scrollIntoView({block:'nearest'});return;}
+      if(e.key==='Enter'){e.preventDefault();take(cur<0?0:cur);return;}
+      if(e.key==='Escape'){e.preventDefault();hide();return;}}
+    if(e.key==='Enter'||e.key===','){e.preventDefault();const v=inp.value.trim();
+      if(!v)return;
+      if(look&&!isId(v)){search();return;}                      // 打的是名字：先弹候选，不把名字当 ID 存
+      add(v);}
     if(e.key==='Backspace'&&!inp.value&&S.editing[k]?.length){S.editing[k].pop();paintChips(k);}};
-  inp.onblur=()=>{const v=inp.value.trim();if(v){(S.editing[k]=S.editing[k]||[]).push(v);inp.value='';paintChips(k);}};});}
+  inp.onblur=()=>{setTimeout(()=>{hide();const v=inp.value.trim();
+    if(!v)return;
+    if(look&&!isId(v))return;                                   // 名字没挑就留在框里，别存成永远命中不了的字
+    add(v);},120);};});}
 function bindField(sel,k,type='text'){const e=$(sel);if(!e)return;
   e.oninput=e.onchange=()=>{S.editing[k]=type==='num'?+e.value:type==='bool'?e.checked:e.value;
     if(k==='action')editRule(S.editing);};}
@@ -1674,14 +1722,16 @@ function editRule(r){
       <div class="hint">只勾第二个 = 只在开新帖时提醒你，帖子里后续聊什么都不管。
         浏览器旁听要认出新帖，得让那个<b>论坛频道的帖子列表</b>在标签页里开着。</div></div>
 
-    <div class="sect"><div class="st"><b>1 · 听哪里</b><span>留空 = 不限。ID 从下面「挑」或 Discord 右键复制 ID</span></div>
-      <label class="f"><span>服务器 ID <em>guild_id</em></span>${chipsHtml('guild_ids','粘贴服务器 ID，回车')}</label>
-      <label class="f"><span>频道 ID <em>channel_id，可多个</em></span>
-        ${chipsHtml('channel_ids','粘贴频道 ID，回车',`<button class="btn sm" id="pickBtn" style="margin-left:auto">从服务器里挑 ▾</button>`)}</label>
+    <div class="sect"><div class="st"><b>1 · 听哪里</b><span>留空 = 不限。<b>直接打名字就行</b>，会弹候选让你挑</span></div>
+      <label class="f"><span>服务器 <em>打名字挑，或粘 guild_id</em></span>${chipsHtml('guild_ids','打服务器名字，或粘 ID，回车',``,'guild')}</label>
+      <label class="f"><span>频道 <em>打名字挑，或粘 channel_id，可多个</em></span>
+        ${chipsHtml('channel_ids','打频道名字（如 announcements），或粘 ID',`<button class="btn sm" id="pickBtn" style="margin-left:auto">从服务器里挑 ▾</button>`,'channel')}</label>
       <div class="chk"><input type="checkbox" id="e_incthr" ${E.include_threads_of_channels?'checked':''}>
         <label for="e_incthr">同时监听这些频道下的<b>所有子区</b>（thread）</label></div>
-      <label class="f" style="margin-top:10px"><span>只听某个子区 <em>thread_id：子区标题右键 → 复制频道 ID</em></span>${chipsHtml('thread_ids','粘贴子区 ID，回车')}</label>
+      <label class="f" style="margin-top:10px"><span>只听某个子区/帖子 <em>打帖子标题挑，或粘 thread_id</em></span>${chipsHtml('thread_ids','打帖子标题，或粘 ID，回车',``,'thread')}</label>
       <div class="chk"><input type="checkbox" id="e_dm" ${E.dm?'checked':''}><label for="e_dm">包含私信 DM</label></div>
+      <div class="hint">打名字弹不出候选？名录是<b>扩展</b>从浏览器侧栏顺手抄的 —— 在浏览器里打开一次
+        那个服务器（侧栏能看见频道列表）就有了；用户名字要那人<b>发过一条消息</b>才认得。急的话还是可以直接粘 ID。</div>
       ${accOpts().length>1?`<label class="f" style="margin-top:10px">
         <span>只听这些账号 <em>你有多个号在旁听。不勾＝所有号</em></span>
         <div class="chips">${accOpts().map(a=>`<label class="chk" style="display:inline-flex;margin-right:12px">
@@ -1689,8 +1739,8 @@ function editRule(r){
           <span>${esc(a)}</span></label>`).join('')}</div></label>`:''}
     </div>
 
-    <div class="sect"><div class="st"><b>2 · 听谁</b><span>用户 ID 最准，昵称会变</span></div>
-      <label class="f"><span>用户 ID <em>author_id</em></span>${chipsHtml('author_ids','粘贴用户 ID，回车')}</label>
+    <div class="sect"><div class="st"><b>2 · 听谁</b><span><b>直接打名字</b>挑人；挑出来存的是 ID，他改昵称也还认得</span></div>
+      <label class="f"><span>指定用户 <em>打名字挑，或粘 author_id</em></span>${chipsHtml('author_ids','打用户名字，或粘 ID，回车',``,'user')}</label>
       <div class="grid2">
         <label class="f"><span>昵称包含</span><input id="e_anc" type="text" value="${esc(E.author_name_contains)}" placeholder="可留空"></label>
         <div style="padding-top:22px">
