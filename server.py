@@ -483,6 +483,17 @@ CREATE TABLE IF NOT EXISTS threads_open(
   tid TEXT PRIMARY KEY, url TEXT, name TEXT, parent_id TEXT, guild_id TEXT,
   wanted REAL, opened_at REAL, closed_at REAL, tries INT DEFAULT 0, last_msg REAL,
   err TEXT DEFAULT '', bridge TEXT DEFAULT '');
+-- 开服监听（D3）：定时探一个 URL，由「关」翻「开」时走通知管线（本机弹窗+声音+全部转发出口）。
+-- 判定开/关：absent 命中正文→关；expect 设了→命中才开；都没设→HTTP<400 算开。
+-- state: unknown(还没探过)/open/closed。last_status 最近一次 HTTP 码（0=没连上）。
+-- 首次探测只落状态不提醒 —— 不然每加一个目标就先收一条「开了」，看着像误报。
+CREATE TABLE IF NOT EXISTS watch(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT, url TEXT, every_sec INT DEFAULT 60,
+  expect TEXT DEFAULT '', absent TEXT DEFAULT '',
+  enabled INT DEFAULT 1, notify_open INT DEFAULT 1, notify_close INT DEFAULT 0,
+  state TEXT DEFAULT 'unknown', last_check REAL, last_change REAL,
+  last_status INT DEFAULT 0, err TEXT DEFAULT '');
 """
 
 
@@ -2087,6 +2098,115 @@ class App:
                                  f"（{err[:60]}），你手动点一下这个帖子就行")
         return {"opened": n_open, "closed": n_close, "failed": n_fail}
 
+    # ---------- 开服监听（D3） ----------
+    # 跟 Discord 无关：盯一个网址「开了没有」（服务关服维护、登记没开放之类）。
+    # 定时探；状态由「关」翻「开」才提醒（提醒走跟规则命中同一条管线：本机弹窗 +
+    # 提示音 + 全部转发出口），由「开」翻「关」默认不提醒（怕吵，单个目标可开）。
+    WATCH_MIN_EVERY = 15        # 再快就是打人家网站了，界面上也按这个下限说
+
+    def watch_list(self):
+        return self.db.q("SELECT * FROM watch ORDER BY id")
+
+    def watch_save(self, b):
+        """表单进来的字段收拾干净。带 id 是更新（没带的字段沿用旧的），不带是新建。"""
+        w = {"name": "", "url": "", "every_sec": 60, "expect": "", "absent": "",
+             "enabled": 1, "notify_open": 1, "notify_close": 0}
+        wid = int(b.pop("id", 0) or 0)
+        if wid:
+            old = self.db.q("SELECT * FROM watch WHERE id=?", (wid,))
+            if not old:
+                return None, "这条监视已经不在了（刚删掉？）"
+            w.update({k: old[0][k] for k in w})
+        for k, lim in (("name", 60), ("url", 300), ("expect", 100), ("absent", 100)):
+            if k in b:
+                w[k] = str(b.get(k) or "").strip()[:lim]
+        for k in ("enabled", "notify_open", "notify_close"):
+            if k in b:
+                w[k] = int(bool(b[k]))
+        if "every_sec" in b:
+            with contextlib.suppress(Exception):
+                w["every_sec"] = max(self.WATCH_MIN_EVERY, min(86400, int(b["every_sec"])))
+        if not w["url"].lower().startswith(("http://", "https://")):
+            return None, "网址要以 http:// 或 https:// 开头"
+        if not w["name"]:
+            # 名字留空就用域名凑一个 —— 列表里总得有东西可看
+            w["name"] = urllib.parse.urlparse(w["url"]).netloc or w["url"][:40]
+        if wid:
+            self.db.x("""UPDATE watch SET name=?,url=?,every_sec=?,expect=?,absent=?,
+                         enabled=?,notify_open=?,notify_close=? WHERE id=?""",
+                      (w["name"], w["url"], w["every_sec"], w["expect"], w["absent"],
+                       w["enabled"], w["notify_open"], w["notify_close"], wid))
+        else:
+            wid = self.db.x("""INSERT INTO watch(name,url,every_sec,expect,absent,
+                               enabled,notify_open,notify_close) VALUES(?,?,?,?,?,?,?,?)""",
+                            (w["name"], w["url"], w["every_sec"], w["expect"], w["absent"],
+                             w["enabled"], w["notify_open"], w["notify_close"]))
+        row = self.db.q("SELECT * FROM watch WHERE id=?", (wid,))
+        return (row[0] if row else None), ""
+
+    async def watch_probe(self, w):
+        """探一次，只发请求不写库。返回 (state, http_status, err)。"""
+        try:
+            async with self.http.get(w["url"], timeout=aiohttp.ClientTimeout(total=12),
+                                     **self.rq()) as r:
+                st = r.status
+                body = await r.text(errors="replace")
+        except Exception as e:
+            return "closed", 0, str(e)[:150]
+        if w.get("absent") and w["absent"] in body:
+            return "closed", st, ""
+        if w.get("expect"):
+            return ("open" if w["expect"] in body else "closed"), st, ""
+        return ("open" if st < 400 else "closed"), st, ""
+
+    async def watch_run(self, w):
+        """探一次 + 落库 + 状态翻转时提醒。/api/watch/{id}/check 和后台巡检共用这一条路。"""
+        state, st, err = await self.watch_probe(w)
+        old = w.get("state") or "unknown"
+        t, changed = now(), old != state
+        self.db.x("""UPDATE watch SET state=?,last_check=?,last_status=?,err=?,
+                     last_change=CASE WHEN ?=1 THEN ? ELSE last_change END WHERE id=?""",
+                  (state, t, st, err, int(changed), t, w["id"]))
+        if old == "unknown":
+            self.log("info", f"开服监听「{w['name']}」探了一次：{'开着' if state == 'open' else '没开'}"
+                             f"（{'HTTP ' + str(st) if st else err or '连不上'}）。"
+                             f"第一次只落状态，翻了脸才提醒")
+            return self.db.q("SELECT * FROM watch WHERE id=?", (w["id"],))[0]
+        if changed:
+            if state == "open" and w["notify_open"]:
+                await self.notify_watch(w, True, st, err)
+            elif state == "closed" and w["notify_close"]:
+                await self.notify_watch(w, False, st, err)
+            else:
+                self.log("info", f"开服监听「{w['name']}」{old}→{state}，"
+                                 f"但这个方向的提醒没开，只记一笔")
+        return self.db.q("SELECT * FROM watch WHERE id=?", (w["id"],))[0]
+
+    async def notify_watch(self, w, opened, st, err):
+        """开/关翻转的统一出口。出口挂一个记一个日志，不耽误别的出口。"""
+        s = self.cfg["sinks"]
+        head = (f"🟢 {w['name']} 开了！" if opened else f"🔴 {w['name']} 关了")
+        body = w["url"] + (f"（HTTP {st}）" if st else (f"（{err}）" if err else ""))
+        self.log("warn" if opened else "info", f"开服监听：{head} {body}")
+        if not self.in_quiet_hours():
+            self.queue_local(head, body[:180], sound=bool(s.get("sound")),
+                             toast=bool(s.get("toast")))
+        text = f"{head}\n{body}"
+        vals = {"extracted": "", "need_human": "", "text": text, "title": head, "body": body,
+                "content": body, "author": "dcwatch 开服监听", "channel": "开服监听",
+                "server": "", "url": w["url"], "score": "", "tags": "", "todo": "",
+                "json": json.dumps({"watch": {"id": w["id"], "name": w["name"], "url": w["url"],
+                                              "state": "open" if opened else "closed",
+                                              "http_status": st, "err": err}},
+                                   ensure_ascii=False)}
+        jobs = {}
+        for i, h in enumerate(s.get("hooks") or []):
+            if h.get("enabled", True) and h.get("url"):
+                jobs[h.get("name") or f"出口{i + 1}"] = self.push_hook(h, vals)
+        for name, res in zip(jobs, await asyncio.gather(*jobs.values(), return_exceptions=True)):
+            if isinstance(res, Exception):
+                self.log("error", f"开服监听 {name} 发送失败: {res}")
+
     def findings(self):
         """一眼结论：把「为什么它没提醒我」这个问题的常见答案自动查一遍。
 
@@ -3571,6 +3691,38 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         app.db.x("DELETE FROM rules WHERE id=?", (req.match_info["rid"],))
         return web.json_response({"ok": True, "rules": app.rules(False)})
 
+    # ---------- 开服监听（D3） ----------
+    @r.get("/api/watch")
+    async def watchlist(_):
+        rows = app.watch_list()
+        for w in rows:
+            w["check_ago"] = round(now() - w["last_check"], 1) if w["last_check"] else None
+            w["change_ago"] = round(now() - w["last_change"], 1) if w["last_change"] else None
+        return web.json_response({"ok": True, "watch": rows,
+                                  "min_every": App.WATCH_MIN_EVERY})
+
+    @r.post("/api/watch")
+    async def watchsave(req):
+        b = await req.json()
+        row, err = app.watch_save(b)
+        if err:
+            return web.json_response({"ok": False, "error": err})
+        return web.json_response({"ok": True, "id": row["id"], "watch": row})
+
+    @r.delete("/api/watch/{wid}")
+    async def watchdel(req):
+        app.db.x("DELETE FROM watch WHERE id=?", (req.match_info["wid"],))
+        return web.json_response({"ok": True})
+
+    @r.post("/api/watch/{wid}/check")
+    async def watchcheck(req):
+        """「立刻查一次」：不等巡检周期，探完直接回最新状态。"""
+        rows = app.db.q("SELECT * FROM watch WHERE id=?", (req.match_info["wid"],))
+        if not rows:
+            return web.json_response({"ok": False, "error": "这条监视已经不在了（刚删掉？）"})
+        row = await app.watch_run(rows[0])
+        return web.json_response({"ok": True, "watch": row})
+
     @r.get("/api/rules/export")
     async def exportrules(_):
         """所有规则导出成一个文件，可以直接发给另一台机器导入。
@@ -4890,6 +5042,24 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
               else ("开着" if x["opened_at"] else f"排队中（试过 {x['tries'] or 0} 次）"),
               ("| 失败：" + x["err"][:60]) if x["err"] else "")
 
+        P("\n[5.9] 开服监听")
+        ws = app.watch_list()
+        if not ws:
+            P("  （一个监视目标都没加。要盯「某个服务开没开」去侧栏「开服监听」页加）")
+        for w in ws:
+            P("  ", f"[{w['id']}] " + (w["name"] or "?")[:30].ljust(32),
+              {"open": "🟢 开", "closed": "🔴 关"}.get(w["state"], "？没探过"),
+              "| 每", w["every_sec"], "秒",
+              "| 上次探", ago_txt(w["last_check"]) if w["last_check"] else "还没",
+              "| HTTP", w["last_status"] or "-",
+              ("| 错：" + w["err"][:50]) if w["err"] else "",
+              "| 关" if not w["enabled"] else "")
+            P("      ", w["url"][:90],
+              ("| 含「" + w["expect"] + "」才算开") if w["expect"] else "",
+              ("| 含「" + w["absent"] + "」就算关") if w["absent"] else "",
+              "| 开了提醒" if w["notify_open"] else "",
+              "| 关了也提醒" if w["notify_close"] else "")
+
         P("\n[6] 最近 200 条运行日志（新的在上）")
         lgs = app.db.q("SELECT * FROM logs ORDER BY id DESC LIMIT 200")
         if not lgs:
@@ -4966,6 +5136,24 @@ async def housekeeping(app: App):
         await asyncio.sleep(3600)
 
 
+async def watch_loop(app: App):
+    """开服监听（D3）的巡检：每 5 秒看一遍哪些目标到期了，到期的探一次。
+    单个目标挂了只记日志，不耽误别的目标；整个循环不能死 —— 死了就是「再也不提醒」。"""
+    while True:
+        try:
+            for w in app.watch_list():
+                if not w["enabled"]:
+                    continue
+                due = int(w["every_sec"] or 60)
+                if now() - (w["last_check"] or 0) < max(App.WATCH_MIN_EVERY, due):
+                    continue
+                await app.watch_run(w)
+        except Exception as e:
+            with contextlib.suppress(Exception):
+                app.log("error", f"开服监听巡检出错: {e}")
+        await asyncio.sleep(5)
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
@@ -4988,6 +5176,7 @@ async def main():
         app.http = aiohttp.ClientSession(trust_env=True)   # 认 HTTP(S)_PROXY / NO_PROXY
         app.dc = DiscordListener(app)
         asyncio.create_task(housekeeping(app))
+        asyncio.create_task(watch_loop(app))               # D3 开服监听
         if (app.cfg["discord"]["enabled"] and app.cfg["discord"]["token"]
                 and app.cfg["discord"].get("mode") in ("bot", "user")):
             app.dc.start()

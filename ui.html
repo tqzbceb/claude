@@ -417,6 +417,7 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
     <a href="#" data-v="rules"><span class="ic">◆</span><span class="lb">监听规则</span><span class="cnt mute" id="cRules">0</span></a>
     <a href="#" data-v="models"><span class="ic">✦</span><span class="lb">模型接入</span></a>
     <a href="#" data-v="notify"><span class="ic">◔</span><span class="lb">通知与转发</span></a>
+    <a href="#" data-v="watch"><span class="ic">⌖</span><span class="lb">开服监听</span><span class="cnt mute" id="cWatch">0</span></a>
     <a href="#" data-v="settings"><span class="ic">⚙</span><span class="lb">设置</span></a>
     <a href="#" data-v="logs"><span class="ic">≡</span><span class="lb">运行日志</span></a>
   </nav>
@@ -708,6 +709,40 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
           <div id="nfResult" style="margin-top:12px"></div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="view" id="v-watch">
+    <div class="pad narrow">
+      <div class="card" style="margin-bottom:16px">
+        <h3>监视目标 <span class="hint">盯一个网址开没开 —— 服务关服维护、登记没开放，开了第一时间提醒你</span></h3>
+        <div class="bd">
+          <div class="hint" style="margin:0 0 12px">程序按你设的间隔去探这个网址：<b>由「关」翻「开」</b>时本机弹窗+提示音，
+            并走「通知与转发」里配好的全部出口推一份（微信 / Telegram 都能收到）。加进来第一次探测只记状态、不提醒；
+            「开了又关」默认不提醒（怕吵），想听单个目标自己勾。<br>
+            怎么算「开」：默认「网址能打开（HTTP &lt; 400）就算开」；也可以填「<b>包含这个才算开</b>」
+            （比如页面里出现「立即登记」才算开），或「<b>包含这个就算关</b>」（比如「维护中」「暂未开放」）——后者优先。</div>
+          <input type="hidden" id="wId">
+          <div class="grid3">
+            <label class="f"><span>名字（留空用域名）</span><input id="wName" type="text" placeholder="旅途"></label>
+            <label class="f" style="grid-column:span 2"><span>网址（http:// 或 https:// 开头）</span><input id="wUrl" type="text" placeholder="https://example.com/"></label>
+          </div>
+          <div class="grid3">
+            <label class="f"><span>几秒探一次（最少 <b id="wMinEvery">15</b>）</span><input id="wEvery" type="number" min="15" max="86400" value="60"></label>
+            <label class="f"><span>包含这个才算开（可空）</span><input id="wExpect" type="text" placeholder="立即登记"></label>
+            <label class="f"><span>包含这个就算关（可空）</span><input id="wAbsent" type="text" placeholder="暂未开放"></label>
+          </div>
+          <div class="row" style="gap:18px">
+            <div class="chk"><input type="checkbox" id="wNOpen" checked><label for="wNOpen">由关翻开时提醒我</label></div>
+            <div class="chk"><input type="checkbox" id="wNClose"><label for="wNClose">由开翻关也提醒我</label></div>
+            <div class="chk"><input type="checkbox" id="wEnabled" checked><label for="wEnabled">启用</label></div>
+          </div>
+          <div class="row"><button class="btn pri" id="btnSaveWatch">＋ 添加</button>
+            <button class="btn" id="btnCancelWatch" style="display:none">取消编辑</button>
+            <span id="wState" style="font-size:12.5px;color:var(--text3)"></span></div>
+        </div>
+      </div>
+      <div id="watchList"></div>
     </div>
   </section>
 
@@ -1169,7 +1204,7 @@ async function tplPreview(mode){
 const TITLES={inbox:['收信箱','实时监听命中的消息'],rules:['监听规则','决定“听谁、听哪、听到什么就做什么”'],
   ai:['AI 工作台','拿收到的消息直接喂给你接入的模型'],
   batch:['批量提取','把已经收到的一大堆消息交给模型，挑出你要的东西，导成表格'],models:['模型接入','填端点 → 拉取模型 → 设为默认'],
-  notify:['通知与转发','命中的消息怎么提醒你、往哪儿转'],
+  notify:['通知与转发','命中的消息怎么提醒你、往哪儿转'],watch:['开服监听','盯一个网址开没开，开了第一时间提醒你'],
   settings:['设置','Token、收信开关、保留与用量'],logs:['运行日志','连接状态与每次动作的痕迹']};
 function go(v){S.view=v;$$('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+v));
   $$('.nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
@@ -1177,6 +1212,7 @@ function go(v){S.view=v;$$('.view').forEach(x=>x.classList.toggle('on',x.id==='v
   if(v==='logs')loadLogs();if(v==='ai'){renderQuick();renderWb();}if(v==='rules')renderNl();
   if(v==='batch')renderBatch();
   if(v==='settings')renderWhoami();
+  if(v==='watch')loadWatch();
   if(v==='notify'){renderNotify();renderSinkRows();bindEyes();}
   if(v==='models'){renderPrompts();renderAiTune();bindEyes();}}
 $$('.nav a').forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.v)});
@@ -2344,6 +2380,84 @@ function renderSinkRows(){
     const r=await api('/api/sinks/toggle','POST',{id:h.id,on:h.enabled});
     toast((r?'':'演示模式：')+`${h.name} 转发已${h.enabled?'开启':'关闭'}`);});
 }
+/* ================= 开服监听（D3） ================= */
+let W={list:[],minEvery:15,editId:0};
+function wStatePill(w){
+  if(!w.enabled)return '<span class="tag">停用</span>';
+  if(w.state==='open')return '<span class="tag g">🟢 开着</span>';
+  if(w.state==='closed')return '<span class="tag r">🔴 没开</span>';
+  return '<span class="tag">？还没探过</span>';
+}
+async function loadWatch(){
+  const r=await api('/api/watch');
+  if(!r)return;
+  W.list=r.watch||[];W.minEvery=r.min_every||15;
+  $('#wMinEvery').textContent=W.minEvery;$('#wEvery').min=W.minEvery;
+  $('#cWatch').textContent=W.list.filter(w=>w.enabled&&w.state==='open').length||0;
+  renderWatch();
+}
+function renderWatch(){
+  const box=$('#watchList');
+  if(!W.list.length){
+    box.innerHTML='<div class="card"><div class="bd"><span class="hint">还没有监视目标。在上面填一个网址加上 —— '
+      +'比如某个服务关服维护了，它一开你就知道。</span></div></div>';return;
+  }
+  box.innerHTML=W.list.map(w=>`<div class="card" style="margin-bottom:12px"><div class="bd">
+    <div class="row" style="gap:10px;align-items:center">
+      ${wStatePill(w)}
+      <b style="font-size:14.5px">${esc(w.name)}</b>
+      <span class="hint" style="word-break:break-all">${esc(w.url)}</span>
+      <span class="sp" style="flex:1"></span>
+      <button class="btn" data-wchk="${w.id}">立刻查一次</button>
+      <button class="btn" data-wedit="${w.id}">编辑</button>
+      <button class="btn" data-wdel="${w.id}">删除</button>
+    </div>
+    <div class="row" style="margin-top:8px;gap:14px;flex-wrap:wrap">
+      <span class="hint">每 ${w.every_sec} 秒探一次</span>
+      ${w.expect?`<span class="hint">含「${esc(w.expect)}」才算开</span>`:''}
+      ${w.absent?`<span class="hint">含「${esc(w.absent)}」就算关</span>`:''}
+      <span class="hint">${w.notify_open?'开了提醒':''}${w.notify_close?' · 关了也提醒':''}</span>
+      <span class="hint">${w.last_check?'上次探 '+ago(w.last_check):'还没探过'}
+        ${w.last_status?' · HTTP '+w.last_status:''}${w.err?' · <b style="color:#c0392b">'+esc(w.err.slice(0,60))+'</b>':''}</span>
+      ${w.last_change?`<span class="hint">上次翻脸 ${ago(w.last_change)}</span>`:''}
+    </div></div></div>`).join('');
+  $$('#watchList [data-wchk]').forEach(b=>b.onclick=async()=>{
+    b.disabled=true;b.textContent='探着呢…';
+    const r=await api('/api/watch/'+b.dataset.wchk+'/check','POST',{});
+    b.disabled=false;b.textContent='立刻查一次';
+    if(r&&r.ok){toast(r.watch.state==='open'?'🟢 开着':(r.watch.state==='closed'?'🔴 没开':'没探出来'));loadWatch();}
+    else if(r)toast('没查成：'+(r.error||S.lastErr));});
+  $$('#watchList [data-wedit]').forEach(b=>b.onclick=()=>{
+    const w=W.list.find(x=>String(x.id)===String(b.dataset.wedit));if(!w)return;
+    W.editId=w.id;$('#wId').value=w.id;$('#wName').value=w.name;$('#wUrl').value=w.url;
+    $('#wEvery').value=w.every_sec;$('#wExpect').value=w.expect||'';$('#wAbsent').value=w.absent||'';
+    $('#wNOpen').checked=!!w.notify_open;$('#wNClose').checked=!!w.notify_close;$('#wEnabled').checked=!!w.enabled;
+    $('#btnSaveWatch').textContent='保存修改';$('#btnCancelWatch').style.display='';
+    $('#wState').textContent='在改「'+w.name+'」——状态保留，下次到点照新配置探';
+    scrollTo({top:0,behavior:'smooth'});});
+  $$('#watchList [data-wdel]').forEach(b=>b.onclick=async()=>{
+    const w=W.list.find(x=>String(x.id)===String(b.dataset.wdel));
+    if(!confirm('删掉「'+(w?w.name:'这条')+'」的监视？'))return;
+    await api('/api/watch/'+b.dataset.wdel,'DELETE');loadWatch();});
+}
+function resetWatchForm(){
+  W.editId=0;$('#wId').value='';$('#wName').value='';$('#wUrl').value='';$('#wEvery').value=60;
+  $('#wExpect').value='';$('#wAbsent').value='';$('#wNOpen').checked=true;$('#wNClose').checked=false;
+  $('#wEnabled').checked=true;$('#btnSaveWatch').textContent='＋ 添加';
+  $('#btnCancelWatch').style.display='none';$('#wState').textContent='';
+}
+$('#btnCancelWatch').onclick=resetWatchForm;
+$('#btnSaveWatch').onclick=async()=>{
+  const b={name:$('#wName').value.trim(),url:$('#wUrl').value.trim(),
+    every_sec:+$('#wEvery').value||60,expect:$('#wExpect').value.trim(),absent:$('#wAbsent').value.trim(),
+    notify_open:$('#wNOpen').checked,notify_close:$('#wNClose').checked,enabled:$('#wEnabled').checked};
+  if(!b.url){toast('先填网址');return;}
+  if(W.editId)b.id=W.editId;
+  const r=await api('/api/watch','POST',b);
+  if(r&&r.ok){toast(W.editId?'已保存':'已加上，第一次探测只记状态不提醒');resetWatchForm();loadWatch();}
+  else if(r)toast(r.error||('没保存成功：'+S.lastErr));
+};
+
 /* ================= 侧边栏折叠 ================= */
 $('#btnSb').onclick=()=>{
   const mini=document.documentElement.dataset.sb==='mini';
