@@ -69,6 +69,26 @@
       content_test.mjs 补 3 条断言（行内表情留正文/两边文字都在/~N 剥掉）。
       浏览器侧 107 条全绿（49+16+42）。media 字段下游零使用，行为变化无影响面。
 
+## 新反馈（2026-08-01 晚，Z 窗口两条：报错横向撑破页面 / 中转站拉不到模型）
+
+用户原话：「他直接伸出网页了，在右边延伸了很长一条，这种太丑了，改为多行」
+「而且这种报错也不正常，我用其他软件都能拉到模型，就这个监听程序拉不到」。
+诊断包 0801-2242：端点 `openai → https://youzi.today/v1 | Key 已填`，报错
+`ClientPayloadError…`（悬停才看得到全文），近 24 小时调模型 0 次。
+
+- [ ] **E1 · 拉模型失败的红字横向撑破页面** —— 根因：错误塞进 `<span class="tag">`
+      （CSS `white-space:nowrap`）而它待在 `.row`（`display:flex` 不换行）里，
+      一长串就把整页向右撑开，还得靠 `title` 悬停看全文（140 字截断）。
+      改法：服务卡片下面给一个独立的多行错误块（可换行、可选中、长 URL 也断得开），
+      不截断不靠悬停；toast 同步限宽 + 换行。
+- [ ] **E2 · 中转站（youzi.today）拉不到模型：ClientPayloadError** —— 根因：
+      `ClientPayloadError: 400, message='Can not decode content-encoding: …'`
+      ＝对方回的压缩体 aiohttp 解不开（br 无解码器 / gzip 头骗人）。浏览器和别的软件能拉到
+      是因为它们要么带 br 解码器、要么根本不要压缩。
+      改法：所有出网 API 调用显式 `Accept-Encoding: identity`（要明文，别压）+ 带 UA；
+      万一对方无视 identity 还压坏，兜底用 `auto_decompress=False` 自己收原始字节，
+      gzip/deflate/br/明文依次试着解。错误提示同步改成人话。
+
 ## A. Bug（用户实际踩到的，优先修）
 
 - [x] **A6 · 两个模型端点全部拉不到模型（用户 2026-08-01 报，最高优先，他因此完全用不了 AI）**
