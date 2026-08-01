@@ -970,7 +970,8 @@ def sanitize_draft(draft, notes, known_ids, model=""):
                 vals = [x for x in vals if x.isdigit() and x in known_ids]
                 if bad:
                     notes.append(f"模型给的 {k} 里有查不到的 ID（{', '.join(bad[:3])}），已丢掉——"
-                                 f"这个字段请你自己填，或先让那个频道来一条消息")
+                                 f"这个字段请你自己填，或者在浏览器里进一次那个服务器"
+                                 f"（扩展会把侧栏的名字和 ID 抄进名录，之后就认了）")
             rule[k] = vals
         elif isinstance(d, bool):
             rule[k] = bool(v)
@@ -1724,9 +1725,12 @@ async def run_wb_tool(app, name, args, allow_ids):
             enabled = 1 if args.get("enabled", True) else 0
         if bad:
             notes.append("这些字段名不存在，已忽略：" + "、".join(bad[:5]))
-        # 规则里本来就有的 ID 是真的，别被当成模型编的给洗掉
-        ok_ids = set(allow_ids) | {str(x) for k in ("guild_ids", "channel_ids", "thread_ids", "author_ids")
-                                   for x in ((byid.get(str(rid)) or {}).get(k) or [])}
+        # 规则里本来就有的 ID 是真的，名录里的也是真的，别被当成模型编的给洗掉。
+        # 名录那一份这里再兜一次底：allow_ids 是调用方算好传进来的，将来多一个调用方
+        # 忘了带名录，规则就会被悄悄洗空成「全部消息」——这种 bug 不报错，最难查。
+        ok_ids = set(allow_ids) | app.names_ids() \
+            | {str(x) for k in ("guild_ids", "channel_ids", "thread_ids", "author_ids")
+               for x in ((byid.get(str(rid)) or {}).get(k) or [])}
         rule, notes = sanitize_draft(merged, notes, ok_ids, app.cfg["default_model"].get("model") or "")
         # F2：ID 是人还是频道？对不上就**不保存**，把正确栏位点给模型让它改对。
         # 用户原话：「我说监听某个用户，他给我建成监听频道，我等半天没消息。
@@ -2945,7 +2949,11 @@ class App:
 
     def rule_ctx(self, extra=""):
         """喂给建规则模型的现场情况：见过哪些频道/人、什么模式、有哪些出口。
-        只有这里出现过的 ID 才允许写进规则，别的一律当编的。"""
+        只有这里出现过的 ID 才允许写进规则，别的一律当编的。
+
+        「这里」= 消息库见过的 + 用户自己粘的 + **名录（names 表）里的**。第三项不能漏：
+        名录是扩展从侧栏抄的，那些频道/人可能还没发过消息，漏了它，模型规规矩矩用
+        find_target 查到的 ID 会被当成编的丢掉，规则被洗成「全部消息」。"""
         chans = self.db.q("""SELECT channel_id id, channel_name nm, parent_id, COUNT(*) n, MAX(ts) t
                              FROM messages GROUP BY channel_id ORDER BY t DESC LIMIT 40""")
         people = self.db.q("""SELECT author_id id, author nm, COUNT(*) n, MAX(ts) t FROM messages
@@ -2953,11 +2961,17 @@ class App:
         known = {c["id"] for c in chans} | {p["id"] for p in people}
         known |= {c["parent_id"] for c in chans if c["parent_id"]}
         known |= set(re.findall(r"\d{15,25}", extra or ""))      # 用户自己粘的 ID 也算真的
+        known |= self.names_ids()          # 名录里的也算真的（扩展亲眼看见的，见 names_ids）
         L = ["已知的频道和人（只能用这里的 ID，其它一律留空）："]
         L += [f"频道 {c['nm']} = {c['id']}"
               + (f"（是 {c['parent_id']} 的子区/帖子）" if c["parent_id"] else "")
               + f"，收到过 {c['n']} 条" for c in chans] or ["（本机还没收到过任何消息，没有可用 ID）"]
         L += [f"人 {p['nm']} = {p['id']}，发过 {p['n']} 条" for p in people]
+        nst = self.names_stat()
+        if nst["total"]:
+            L.append(f"另外**名录里有 {nst['total']} 条名字→ID**（扩展从侧栏抄的，服务器 {nst['guild']}／"
+                     f"频道 {nst['channel']}／帖子 {nst['thread']}／人 {nst['user']}），上面没列出来是因为"
+                     "他们还没发过消息。用 find_target 按名字查，**查到的 ID 同样是真的、可以直接写进规则**。")
         mode = self.cfg["discord"].get("mode", "browser")
         L.append({"browser": "当前是浏览器旁听模式：能收不能发，action 不要用 ai_reply。",
                   "bot": "当前是 Bot Token 模式：能收也能发。",
@@ -3629,6 +3643,16 @@ class App:
             return []
         return [r_["kind"] for r_ in self.db.q(
             "SELECT kind FROM names WHERE id=? ORDER BY seen DESC", (nid,))]
+
+    def names_ids(self):
+        """名录里出现过的所有 ID。**这些 ID 一律当真的**，别被防编 ID 的闸门洗掉。
+
+        为什么必须有这一条（F2 复核时抓到的真 bug）：`sanitize_draft` 只认「消息库里见过的
+        ID」，而名录（names 表）是扩展从侧栏抄的，那些频道/人**可能一条消息都还没发**。
+        模型照规矩用 find_target 从名录查到 ID，拿去建规则，反而被当成编的悄悄丢掉 ——
+        规则被洗成「全部消息」，用户又是等半天等到一堆不相干的东西。
+        名录里的 ID 是扩展亲眼在页面上看见的，比消息库更可信，不存在编造的可能。"""
+        return {r_["id"] for r_ in self.db.q("SELECT DISTINCT id FROM names WHERE id<>''")}
 
     def id_label(self, nid):
         """一串数字 → 人话「频道 公告」。名录没见过就回空字符串。"""
