@@ -8,19 +8,15 @@
 
 ## 当前状态（2026-08-01）
 
-**🔨 W 窗口正在做：BACKLOG「新反馈（W 窗口三条）」——D2 自动开帖改新开最小化窗口 →
-D3 服务开服监听 → D1 贴纸消息解析（用户明说解决不了可放弃，排最后）。**
-三条需求原文已落 BACKLOG 并推送。顺序按用户在意程度：D2 > D3 > D1。
-做完一起 bump 三处版本出包（用户 10 条消息额度，能一个窗口干完就一次干完）。
-
-步骤：①读 extension/background.js 的 C2 开帖代码 + tests 里 tabs 桩 → ②改
-windows.create(state:"minimized") 并补桩和断言 → ③server.py 加开服监听（定时探 URL，
-翻「开」走通知管线）+ ui.html 一栏 + e2e 断言 → ④content.js 贴纸解析 → ⑤三处钉齐
-bump + 全回归 + 冒烟 + 双 zip 进 release/ 和 outputs/ → ⑥NOW/HANDOFF/BACKLOG 收尾。
-
-**上一轮的尾巴**：v1.11.2（C6 后台标签页防冻结）已出包，用户真机验收仍欠着——
-**这轮出包后他要装的是最新版，验收点照旧（见 HANDOFF「当前状态」）外加三条新功能的验法，
-收尾时会写进 HANDOFF。**
+**🔨 X 窗口正在做：D1 贴纸/表情解析收尾 + 出 v1.11.3 包。**
+W 窗口已把 D2（开帖改新开最小化窗口 `7f186ee`）和 D3（开服监听 `ca25b59`）落盘，断了。
+本窗口接手剩 D1：content.js 解析现状是「纯表情消息翻译成 [贴纸 xx]/:emoji: 占位」已有（v1.8.0），
+真正的缺口是 ①正文里的行内表情被 innerText 整个丢掉（「看 :kekw: 这个」变「看 这个」）
+②Discord 现在给表情码加 ~N 后缀（:cat_cry~1:）像乱码。
+修法：parseLi 改用 textWithEmoji（克隆节点把表情 img 换成代码文字再取文本）+ 剥 ~N 后缀，
+mediaOf 的 emoji 分支同步剥；content_test.mjs 补断言；跑浏览器侧三套回归。
+然后 bump 三处到 v1.11.3 + 全套服务端回归 + 冒烟 + 双 zip 进 release/ 和 outputs/ +
+NOW/HANDOFF/BACKLOG 收尾。
 
 ## 窗口工作协议（用户 2026-07-31 定的，严格执行）
 1. 用户消息有新需求 → **动任何代码之前**先写进 `BACKLOG.md` 并推送。
