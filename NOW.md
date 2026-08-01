@@ -107,8 +107,23 @@ VERSION，不碰 manifest/EXT_MIN，不出扩展包**。步骤：
 （release/ + outputs/）→ ⑦ NOW/BACKLOG/HANDOFF 收尾推送。
 **C2 扩展侧不碰**（单独一轮）；e2e_chk.py 专项债有余力就还。
 
+## L 窗口（第十二个，2026-08-01）认领：C2 扩展侧（自动开帖 + 闲置自关）
+
+照 `PLAN_C2.md` 施工。服务端 F 窗口已全落地（`f5cd2c5`，本窗口核实过：norm_browser /
+threads_open / tab_orders / /api/ext/tabs / list_open_threads / 诊断[5.8] 全在）。
+**剩下全是本窗口的活**：extension/（manifest 加 tabs 权限 + background 执行开/关 + 回报 +
+storage 记 opened + popup 自检行 + 药丸「· 自动」标记）、ui.html 设置页「自动点开新帖」折叠区、
+tests/e2e_tabs.py（≥35 条）+ content_test.mjs 加 chrome.tabs 桩（≥10 条）、README 新一节、
+三处版本号一起 bump（1.10.0→1.11.0，动了扩展，硬规矩 2）。
+工作区又是新的：clone ✓、五文档读完 ✓、根 AGENTS.md 指针 ✓、PAT 长存 secrets/ ✓（token1 …0Dx28of）、
+环境自检 e2e 50/50 + imp 74/74 全绿 ✓、远端核实 HEAD=887e22d 无人撞车 ✓。
+
 ## 状态
-**✅ v1.10.0 已出包已推送（K 窗口，2026-08-01），本轮（A1–A5、B1–B6、C1、C3、C4、D）全部落地。**
+**🔨 L 窗口正在做 C2 扩展侧（见上面一段），步骤：① 接手 ✓ → ② 状态认领推送 → ③ extension/
+四件 → ④ ui.html 折叠区 → ⑤ e2e_tabs.py + content_test 新断言 → ⑥ 全套回归 → ⑦ bump 1.11.0 +
+README → ⑧ 出程序+扩展两个 zip → ⑨ NOW/BACKLOG/HANDOFF 收尾。**
+
+~~✅ v1.10.0 已出包已推送（K 窗口，2026-08-01），本轮（A1–A5、B1–B6、C1、C3、C4、D）全部落地。~~
 K 窗口做完：全套回归 **566/566 全绿**（e2e 50 · ai 27 · multi 26 · wb 118 · imp 74 · ext 53 ·
 v17 46 · diag 47 · chat 42 · wiz 83）→ bump VERSION 1.9.4→1.10.0（**EXT_MIN/manifest 没动**：
 extension/ 自 458e1e6 起 0 commit，实测过）→ README/release/START_HERE 改版
