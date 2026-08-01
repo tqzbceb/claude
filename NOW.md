@@ -124,11 +124,20 @@ tests/e2e_tabs.py（≥35 条）+ content_test.mjs 加 chrome.tabs 桩（≥10 �
 （L 窗口的地盘 extension/ 还张着嘴，撞车代价大）。核销结论：**16 条 15 条已落地**
 （A1–A6 / B1–B6 / C1 / C3 / C4 / D 全部 ✅，见 BACKLOG 各条 commit），只有 **C2 未完**。
 
-**L 窗口真实断点（本窗口逐项 grep 实测，远端 HEAD=842d069 之后无人推）**：
-- ✅ 已做：manifest 加 `tabs` 权限 + version bump 到 **1.11.0**；ui.html 设置页「自动点开新帖」折叠区
-- ❌ 没做：extension 侧 `tabs_report` / `tab_orders` / `threads_open` / `idle_close` **一行都没有**
-  （开帖执行、回报、闲置自关三件核心全空）；`tests/e2e_tabs.py` **文件不存在**；README 新节没写
-- 服务端侧确认全在（`tab_orders`×5 / `tabs_report`×2 / `list_open_threads`×5 / `norm_browser`×2）
+**L 窗口真实断点（M 窗口 11:00 UTC 复核，已修正本条早前的错判）**：
+- ⚠ **更正**：本窗口第一版写「extension 侧一行没做」是**错的** —— 我拿服务端字段名
+  （`tabs_report`/`threads_open`/`idle_close`）去 grep 扩展，扩展里用的是另一套命名
+  （`aoOn` / `rep.opened|closed|failed` / `chrome.tabs.create|remove` / `onRemoved` / `/api/ext/tabs`）。
+  **C2 扩展侧实际已落地**（`c13a0d8`）：3 秒轮询取指令、开帖建后台标签、闲置关帖、失败回报、
+  标签被手关时清 opened —— 全在 background.js 里。别重做。
+- ✅ 已做：extension 四件（`c13a0d8`，manifest 加 tabs 权限 + bump 1.11.0）· ui.html 折叠区
+  （`842d069`）· `tests/e2e_tabs.py` 53 条全绿（`66a78a9`，还顺带修出服务端幻影桥真 bug）
+- ❌ **剩余（下个窗口从这里接）**：① `tests/content_test.mjs` 的 chrome.tabs 桩（≥10 条，现在只有
+  1 处提及）→ ② 全套回归 → ③ **三处版本号钉齐 1.11.0**（现在 1.10.0 / 1.9.4 / 1.11.0 不一致）
+  → ④ README 新一节（现在没有「自动点开」字样）→ ⑤ 出程序 + 扩展两个 zip 进 release/ 和 outputs/
+  → ⑥ NOW/BACKLOG/HANDOFF 收尾
+- L 窗口最后一次推送 10:53:39 UTC，到 11:00 无新 commit：要么在跑回归，要么已断（用户侧看不到，
+  因为它跑在池子 key 的项目里）。接手前先 `git fetch` 看有没有新 commit。
 
 **⚠ 雷：三处版本号现在不一致** —— `server.py VERSION=1.10.0` / `EXT_MIN=1.9.4` /
 `manifest=1.11.0`。违反硬规矩 2+5，**在这个状态出包用户必装错版本**。下个窗口第一件事：
