@@ -76,12 +76,18 @@
 诊断包 0801-2242：端点 `openai → https://youzi.today/v1 | Key 已填`，报错
 `ClientPayloadError…`（悬停才看得到全文），近 24 小时调模型 0 次。
 
-- [ ] **E1 · 拉模型失败的红字横向撑破页面** —— 根因：错误塞进 `<span class="tag">`
+- [x] **E1 · 拉模型失败的红字横向撑破页面** ✅ 已修（AA 窗口 `8a7924e`）：
+      服务卡片下改为独立多行错误块（可换行可选中、长 URL 断得开、不截断不靠悬停），
+      toast 同步限宽换行。 —— 根因：错误塞进 `<span class="tag">`
       （CSS `white-space:nowrap`）而它待在 `.row`（`display:flex` 不换行）里，
       一长串就把整页向右撑开，还得靠 `title` 悬停看全文（140 字截断）。
       改法：服务卡片下面给一个独立的多行错误块（可换行、可选中、长 URL 也断得开），
       不截断不靠悬停；toast 同步限宽 + 换行。
-- [ ] **E2 · 中转站（youzi.today）拉不到模型：ClientPayloadError** —— 根因：
+- [x] **E2 · 中转站（youzi.today）拉不到模型：ClientPayloadError** ✅ 已修（AA 窗口 `8a7924e`+`829ec2e`）：
+      出网调用显式 `Accept-Encoding: identity`+UA；兜底宽容读取（原始字节、容截断、
+      gzip/deflate/br/明文依次试解）；JSON 截断/前缀垃圾可抢救，实在不行从文本捞模型 id；
+      删掉「多半是你代理/杀毒」的误导提示（用户根本没设代理）。
+      mockllm 加 4 种不规范中转站桩，e2e 53→60 全绿。 —— 根因：
       `ClientPayloadError: 400, message='Can not decode content-encoding: …'`
       ＝对方回的压缩体 aiohttp 解不开（br 无解码器 / gzip 头骗人）。浏览器和别的软件能拉到
       是因为它们要么带 br 解码器、要么根本不要压缩。
