@@ -152,11 +152,16 @@ tests/e2e_tabs.py（≥35 条）+ content_test.mjs 加 chrome.tabs 桩（≥10 �
    A2 回复消息盯人 / A3 多标签只弹一条 / A5 关开关立刻停 → 导一份诊断包发来
 
 ## 状态
-**🔨 N 窗口 C2 收尾：① content_test chrome.tabs 桩 27/27 ✓ → ② 全套回归（进行中）→ ③ 三处版本号已钉 1.11.0 → ④ README → ⑤ 出包 → ⑥ 收尾。**
+**✅ C2 收尾完成，v1.11.0 已出包已推送（N 窗口，2026-08-01）。**
+六步全做完：① content_test chrome.tabs 桩 27/27 ✓ → ② 全套回归 **619 服务端 + 89 浏览器侧全绿**
+（e2e 50 · ai 27 · multi 26 · wb 118 · imp 74 · ext 53 · v17 46 · diag 47 · chat 42 · wiz 83 · tabs 53；
+content run 46 · runFresh 16 · runTabs 27）→ ③ VERSION/EXT_MIN/manifest 钉齐 **1.11.0** →
+④ README 新节「不点开的帖子看不到帖内消息」+ v1.11.0 改版说明 + 故障表 → ⑤ 程序 zip（27 文件）+
+扩展 zip（10 文件）进 release/ 和 outputs/，旧 1.10.0/1.9.4 删了 → ⑥ NOW/BACKLOG/HANDOFF 收尾。
+**没有进行中的任务。下一件在用户侧**：装 v1.11.0（程序+扩展都换，扩展重装三步必做）→
+验自动开帖（设置页默认关；开了看后台标签页 + 药丸「· 自动」）+ 老验收项 + 要诊断包。
+代码侧下一件：e2e_chk.py 专项债（PLAN_B1 §3.3）。
 
-## N 窗口（第十四个，2026-08-01）认领：C2 收尾六步
-照 M 窗口断点接。扩展侧（c13a0d8）/ ui.html（842d069）/ e2e_tabs.py（66a78a9）已落地，**别重做**。
-本窗口只做剩余六步。PAT …0Dx28of 已存 secrets/。
 
 ~~✅ v1.10.0 已出包已推送（K 窗口，2026-08-01），本轮（A1–A5、B1–B6、C1、C3、C4、D）全部落地。~~
 K 窗口做完：全套回归 **566/566 全绿**（e2e 50 · ai 27 · multi 26 · wb 118 · imp 74 · ext 53 ·
