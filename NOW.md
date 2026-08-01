@@ -97,6 +97,16 @@ C2 扩展侧（extension/ 无 tabs_report 痕迹）、回归目检出包都没�
 **C2 扩展侧本窗口不碰**（动 extension 要 bump 版本逼用户重装，单独一轮，见 PLAN_C2.md）。
 工作区又是新的：clone ✓、五文档读完 ✓、PAT 长存 secrets/ ✓（还是 …0Dx28of 那个）。
 
+## K 窗口（第十一个，2026-08-01）认领：全套回归 + 出 v1.10.0 包（本轮最后一步）
+
+J 窗口留的唯一一件事。A6/C4/B6/B1 全是程序侧，扩展自 v1.9.4 起一行没动 → **只 bump
+VERSION，不碰 manifest/EXT_MIN，不出扩展包**。步骤：
+① 接手（新工作区：clone ✓、五文档读完 ✓、根 AGENTS.md 指针 ✓、PAT 长存 secrets/ ✓，token1 可推）
+→ ② 远端核实 HEAD=e046e9c 无人撞车 → ③ 全套回归（e2e/ai/multi/wb/imp/ext/v17/diag/chat/wiz）
+→ ④ bump VERSION 1.9.4→1.10.0 + README/release 文档改版 → ⑤ /version 冒烟 → ⑥ 出程序 zip
+（release/ + outputs/）→ ⑦ NOW/BACKLOG/HANDOFF 收尾推送。
+**C2 扩展侧不碰**（单独一轮）；e2e_chk.py 专项债有余力就还。
+
 ## 状态
 **I 窗口进度：A6 ✅（50ea64d）→ C4 ✅ CSS 钉死 → B6 ✅ 只读工具 6 个（list_providers/list_hooks/
 recent_hits/test_message/get_logs/export_extract_templates）+ WB_TOOLS/WB_TEXT_PROTO/READ_HUMAN 同步 +
