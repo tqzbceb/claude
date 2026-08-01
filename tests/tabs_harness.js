@@ -3,12 +3,15 @@
   const t = (name, cond, extra) => checks.push({ name, ok: !!cond, ...(cond ? {} : { got: extra }) });
 
   let nextId = 100;
+  let nextWinId = 900;
   const liveTabs = new Map();
+  const liveWindows = new Map();
   const storage = { opened: {}, st: {}, port: 8777, bridge: "test-br" };
   const fetchLog = [];
   let hbResp = null;
   let tabsResp = { ok: true, open_now: 0 };
   let createShouldFail = null;
+  let createWinShouldFail = null;
   let removeShouldFail = null;
 
   const chrome = {
@@ -44,7 +47,16 @@
           throw new Error(err);
         }
         if (!liveTabs.has(id)) throw new Error("No tab with id: " + id);
+        const tab = liveTabs.get(id);
         liveTabs.delete(id);
+        // 模仿真 Chrome：窗口里最后一个标签页被关掉，窗口跟着没
+        if (tab.windowId != null) {
+          const w = liveWindows.get(tab.windowId);
+          if (w) {
+            w.tabs = w.tabs.filter(x => x.id !== id);
+            if (!w.tabs.length) liveWindows.delete(tab.windowId);
+          }
+        }
       },
       get: async (id) => {
         if (!liveTabs.has(id)) throw new Error("No tab with id: " + id);
@@ -86,6 +98,21 @@
       setBadgeText: async () => {},
       setBadgeBackgroundColor: async () => {},
       setTitle: async () => {},
+    },
+    windows: {
+      create: async ({ url, state, focused }) => {
+        if (createWinShouldFail) {
+          const err = createWinShouldFail;
+          createWinShouldFail = null;
+          throw new Error(err);
+        }
+        const winId = nextWinId++;
+        const tab = { id: nextId++, url, active: true, windowId: winId };
+        const w = { id: winId, state: state || "normal", focused: focused !== false, tabs: [tab] };
+        liveWindows.set(winId, w);
+        liveTabs.set(tab.id, tab);
+        return w;
+      },
     },
   };
 
@@ -156,7 +183,7 @@
           try { await chrome.tabs.get(opened[o.tid]); rep.opened.push(o.tid); continue; }
           catch (e) { delete opened[o.tid]; }
         }
-        const tab = await chrome.tabs.create({ url: o.url, active: false, pinned: false });
+        const tab = await openPostTab(o.url);      // D2：新开最小化窗口，镜像 background.js
         opened[o.tid] = tab.id;
         rep.opened.push(o.tid);
       } catch (e) { rep.failed.push({ tid: o.tid, err: String((e && e.message) || e) }); }
@@ -202,6 +229,20 @@
   chrome.tabs.onCreated.addListener(t => { if (isDiscordTab(t)) protectTab(t.id); });
   chrome.tabs.onUpdated.addListener((id, info, t) => { if (info.status === "loading" && isDiscordTab(t)) protectTab(id); });
 
+  /* ---- D2 开帖开新窗口（background.js 的镜像，改动必须两边同步） ---- */
+  async function openPostTab(url) {
+    try {
+      const w = await chrome.windows.create({ url, state: "minimized", focused: false });
+      const t = w && w.tabs && w.tabs[0];
+      if (t && t.id != null) { await protectTab(t.id); return t; }
+      throw new Error("窗口建好了但没拿到标签页");
+    } catch (e) {
+      const t = await chrome.tabs.create({ url, active: false, pinned: false });
+      await protectTab(t.id);
+      return t;
+    }
+  }
+
   chrome.tabs.onRemoved.addListener(async (tabId) => {
     const opened = await getOpened();
     const tid = Object.keys(opened).find(k => opened[k] === tabId);
@@ -225,15 +266,19 @@
   let rep;
 
   // 1) 心跳带 open → create + opened + 回报
-  fetchLog.length = 0; liveTabs.clear(); storage.opened = {}; storage.st = {};
+  fetchLog.length = 0; liveTabs.clear(); liveWindows.clear(); storage.opened = {}; storage.st = {};
   hbResp = { ok: true, open: [{ tid: T1, url: url(T1), why: "新帖" }], close: [],
              limits: { auto_open: true, open_now: 0, max_tabs: 6 } };
   tabsResp = { ok: true, open_now: 1 };
   rep = await tabOrders();
   t("心跳带 open 时调了 create", liveTabs.size === 1 && [...liveTabs.values()][0].url === url(T1),
     { size: liveTabs.size, tabs: [...liveTabs.values()] });
-  t("create 用 active:false（不抢焦点）", [...liveTabs.values()][0].active === false,
-    [...liveTabs.values()][0]);
+  t("D2 开帖走的是新开窗口，不是当前窗口加标签页",
+    liveWindows.size === 1 && [...liveWindows.values()][0].tabs[0].id === [...liveTabs.values()][0].id,
+    { wins: [...liveWindows.values()], tabs: [...liveTabs.values()] });
+  t("D2 新窗口最小化且不抢焦点",
+    [...liveWindows.values()][0].state === "minimized" && [...liveWindows.values()][0].focused === false,
+    [...liveWindows.values()][0]);
   t("storage.local 记了 opened[tid]", storage.opened[T1] != null, storage.opened);
   t("回报 opened 含该 tid", rep.opened.includes(T1), rep);
   t("POST /api/ext/tabs 发出去了", fetchLog.some(f => f.url.includes("/api/ext/tabs")
@@ -252,8 +297,9 @@
     { size: liveTabs.size, opened: storage.opened });
   t("幂等回报仍含 opened", rep.opened.includes(T1), rep);
 
-  // 3) create 失败 → failed
-  fetchLog.length = 0; liveTabs.clear(); storage.opened = {};
+  // 3) create 失败 → failed（D2：窗口和退回的标签页两条路都失败才算失败）
+  fetchLog.length = 0; liveTabs.clear(); liveWindows.clear(); storage.opened = {};
+  createWinShouldFail = "User gesture required";
   createShouldFail = "User gesture required";
   hbResp = { ok: true, open: [{ tid: T2, url: url(T2) }], close: [],
              limits: { auto_open: true, open_now: 0 } };
@@ -264,7 +310,7 @@
     && f.body && (f.body.failed || []).some(x => x.tid === T2)), fetchLog);
 
   // 4) close：对照表有 → remove
-  liveTabs.clear(); storage.opened = {};
+  liveTabs.clear(); liveWindows.clear(); storage.opened = {};
   const tabA = await chrome.tabs.create({ url: url(T3), active: false, pinned: false });
   storage.opened = { [T3]: tabA.id };
   hbResp = { ok: true, open: [], close: [{ tid: T3, why: "闲置" }],
@@ -276,7 +322,7 @@
   t("回报 closed 含该 tid", rep.closed.includes(T3), rep);
 
   // 5) close：URL 兜底
-  liveTabs.clear(); storage.opened = {};
+  liveTabs.clear(); liveWindows.clear(); storage.opened = {};
   const tabB = await chrome.tabs.create({ url: url(T4), active: false, pinned: false });
   hbResp = { ok: true, open: [], close: [{ tid: T4, why: "闲置" }],
              limits: { auto_open: true, open_now: 0 } };
@@ -284,7 +330,7 @@
   t("close 按 URL 兜底找到并关掉", !liveTabs.has(tabB.id) && rep.closed.includes(T4), rep);
 
   // 6) close：已不在 → failed.gone
-  liveTabs.clear(); storage.opened = {};
+  liveTabs.clear(); liveWindows.clear(); storage.opened = {};
   hbResp = { ok: true, open: [], close: [{ tid: "710000000000000099", why: "闲置" }],
              limits: { auto_open: true, open_now: 0 } };
   rep = await tabOrders();
@@ -292,7 +338,7 @@
     rep.failed.some(f => f.tid === "710000000000000099" && f.gone === true), rep);
 
   // 7) 一次最多开 3 条
-  liveTabs.clear(); storage.opened = {};
+  liveTabs.clear(); liveWindows.clear(); storage.opened = {};
   const five = [1, 2, 3, 4, 5].map(i => ({
     tid: "71000000000000010" + i, url: url("71000000000000010" + i)
   }));
@@ -302,7 +348,7 @@
     { size: liveTabs.size, opened: rep.opened });
 
   // 8) 手动关 → onRemoved 立刻回报
-  liveTabs.clear(); storage.opened = {};
+  liveTabs.clear(); liveWindows.clear(); storage.opened = {};
   const tabC = await chrome.tabs.create({ url: url(T1), active: false, pinned: false });
   storage.opened = { [T1]: tabC.id };
   fetchLog.length = 0;
@@ -330,7 +376,7 @@
     { size: liveTabs.size, fetchLog });
 
   // 11) 回报 stamp 带 bridge + ver
-  liveTabs.clear(); storage.opened = {};
+  liveTabs.clear(); liveWindows.clear(); storage.opened = {};
   hbResp = { ok: true, open: [{ tid: T1, url: url(T1) }], close: [],
              limits: { auto_open: true, open_now: 0 } };
   fetchLog.length = 0;
@@ -340,7 +386,7 @@
     && tabsPost.body.bridge === "test-br" && tabsPost.body.ver === "1.11.0", tabsPost);
 
   // 12) 桩基本行为 query/get/remove
-  liveTabs.clear();
+  liveTabs.clear(); liveWindows.clear();
   const tq1 = await chrome.tabs.create({ url: "https://discord.com/channels/1/2", active: false });
   const tq2 = await chrome.tabs.create({ url: "https://example.com/", active: true });
   const q = await chrome.tabs.query({ url: "*://discord.com/*" });
@@ -354,7 +400,7 @@
   t("remove 只关目标 tab", liveTabs.has(tq2.id), [...liveTabs.keys()]);
 
   // 13) C6：onCreated  Discord 频道页 → autoDiscardable=false
-  liveTabs.clear(); storage.opened = {}; storage.st = {};
+  liveTabs.clear(); liveWindows.clear(); storage.opened = {}; storage.st = {};
   const td1 = await chrome.tabs.create({ url: "https://discord.com/channels/1/2", active: false });
   await chrome.tabs.onCreated.fire(td1);
   await new Promise(r => setTimeout(r, 30));
@@ -380,7 +426,7 @@
     liveTabs.get(td4.id));
 
   // 16) C6：protectAll 全量设 + 回收/冻结的救回
-  liveTabs.clear(); storage.st = {};
+  liveTabs.clear(); liveWindows.clear(); storage.st = {};
   const tp1 = await chrome.tabs.create({ url: "https://discord.com/channels/1/2", active: false });
   const tp2 = await chrome.tabs.create({ url: "https://ptb.discord.com/channels/1/3", active: false });
   const tp3 = await chrome.tabs.create({ url: "https://discord.com/channels/1/4", active: false });
@@ -401,6 +447,34 @@
   await protectAll();
   t("再次巡检不重复救回", storage.st.rescued === 2 && liveTabs.get(tp2.id).reloaded === 1,
     { st: storage.st, tp2: liveTabs.get(tp2.id) });
+
+  // 18) D2：开帖建最小化窗口；建完就上防回收；关掉唯一标签页窗口跟着没
+  liveTabs.clear(); liveWindows.clear(); storage.opened = {};
+  hbResp = { ok: true, open: [{ tid: T1, url: url(T1) }], close: [],
+             limits: { auto_open: true, open_now: 0 } };
+  rep = await tabOrders();
+  const w1 = [...liveWindows.values()][0];
+  t("D2 开帖建了一个最小化窗口", w1 && w1.state === "minimized" && w1.focused === false,
+    [...liveWindows.values()]);
+  t("D2 opened 记的是窗口里那个标签页", storage.opened[T1] === w1.tabs[0].id, storage.opened);
+  t("D2 建完立刻上了防回收保护", liveTabs.get(w1.tabs[0].id).autoDiscardable === false,
+    liveTabs.get(w1.tabs[0].id));
+  await chrome.tabs.remove(w1.tabs[0].id);
+  t("D2 关掉唯一标签页，窗口跟着没", liveWindows.size === 0 && liveTabs.size === 0,
+    { wins: liveWindows.size, tabs: liveTabs.size });
+
+  // 19) D2：windows.create 抛错 → 退回 tabs.create，帖照样开
+  liveTabs.clear(); liveWindows.clear(); storage.opened = {};
+  createWinShouldFail = "minimized not supported on this platform";
+  hbResp = { ok: true, open: [{ tid: T2, url: url(T2) }], close: [],
+             limits: { auto_open: true, open_now: 0 } };
+  rep = await tabOrders();
+  t("D2 windows.create 失败退回 tabs.create 开成",
+    liveTabs.size === 1 && liveWindows.size === 0 && rep.opened.includes(T2) && !rep.failed.length,
+    { tabs: liveTabs.size, wins: liveWindows.size, rep });
+  t("D2 退回路径不抢焦点且上了防回收",
+    [...liveTabs.values()][0].active === false && [...liveTabs.values()][0].autoDiscardable === false,
+    [...liveTabs.values()][0]);
 
   return {
     pass: checks.filter(c => c.ok).length,

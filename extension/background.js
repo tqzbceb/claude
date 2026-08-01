@@ -196,6 +196,26 @@ chrome.tabs.onUpdated.addListener((id, info, t) => { if (info.status === "loadin
 const getOpened = async () => (await chrome.storage.local.get("opened")).opened || {};
 const setOpened = m => chrome.storage.local.set({ opened: m });
 
+/* D2：开帖用「新开一个最小化窗口」，不在当前窗口里加标签页。
+   为什么：用户实测挂在当前窗口的后台标签页里 Discord 不更新（消息漏收），
+   独立窗口哪怕最小化也会照常加载；而且一个窗口就一个帖子，你（或程序）关掉
+   那唯一的标签页时窗口跟着一起没 —— 所以对照表照旧只记 tabId，
+   关帖 / 手动关的清理路径一行都不用改。
+   state:"minimized" 在个别平台/旧版本上会抛错 → 退回老路 tabs.create(active:false)，
+   开帖这件事本身不能因此断掉。建完顺手给它上 C6 的防回收保护。 */
+async function openPostTab(url) {
+  try {
+    const w = await chrome.windows.create({ url, state: "minimized", focused: false });
+    const t = w && w.tabs && w.tabs[0];
+    if (t && t.id != null) { await protectTab(t.id); return t; }
+    throw new Error("窗口建好了但没拿到标签页");
+  } catch (e) {
+    const t = await chrome.tabs.create({ url, active: false, pinned: false });
+    await protectTab(t.id);
+    return t;
+  }
+}
+
 async function tabOrders() {
   const port = await getPort();
   let j = null;
@@ -241,7 +261,7 @@ async function tabOrders() {
         try { await chrome.tabs.get(opened[o.tid]); rep.opened.push(o.tid); continue; }
         catch (e) { delete opened[o.tid]; }
       }
-      const t = await chrome.tabs.create({ url: o.url, active: false, pinned: false });
+      const t = await openPostTab(o.url);        // D2：新开最小化窗口，不在当前窗口堆标签页
       opened[o.tid] = t.id;
       rep.opened.push(o.tid);
     } catch (e) { rep.failed.push({ tid: o.tid, err: String((e && e.message) || e) }); }

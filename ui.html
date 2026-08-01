@@ -747,8 +747,9 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
               <summary style="cursor:pointer;font-size:13px;color:var(--text2)">自动点开新帖（实验性）—— 论坛里的新帖不点开是读不到帖内消息的，展开看</summary>
               <div style="margin-top:10px">
                 <div class="hint" style="margin:0 0 12px">论坛里的新帖，只要没点开，网页里就没有它的消息 —— 扩展也就读不到。
-                  开了这个之后，程序会替你在后台悄悄点开新帖（不抢你的焦点），闲置超过设定时间自动关掉。
-                  <b>要装新版扩展（v1.11.0）才有效</b>，而且新版会多要一个「标签页」权限（就是用来自动开帖的，不开这个功能就不会用到）。</div>
+                  开了这个之后，程序会替你点开新帖：每个帖子<b>单独开一个最小化的浏览器窗口</b>（不在你当前窗口堆标签页，
+                  不抢焦点；后台标签页 Discord 不更新，独立窗口才收得到消息），闲置超过设定时间自动连窗口一起关掉。
+                  <b>要装新版扩展（v1.12.0）才有效</b>，而且扩展会多要一个「标签页」权限（就是用来自动开帖的，不开这个功能就不会用到）。</div>
                 <div class="chk"><input type="checkbox" id="aoOn"><label for="aoOn">替我在后台自动点开新帖（默认不开）</label></div>
                 <div class="grid3" style="margin-top:10px">
                   <label class="f"><span>同时最多开几个</span><input id="aoMax" type="number" min="1" max="20"></label>
