@@ -9,7 +9,7 @@
 
 **dcwatch** —— 盯 Discord 指定频道的消息，按规则筛，命中了本机弹窗 + 转发到微信 / Telegram /
 Webhook，可选让大模型判分打标签。单进程 aiohttp + SQLite + 单文件网页界面 + 一个 MV3 浏览器扩展。
-当前版本：程序 **v1.11.0**、扩展 **v1.11.0**（C2 自动开帖，必须重装扩展）。
+当前版本：程序 **v1.11.1**、扩展 **v1.11.0**（v1.11.1 只动程序，不用重装扩展）。
 
 用户是**一个人在用的普通 Windows 11 用户，不写代码、不用命令行**。他要的是双击就能跑的东西。
 
@@ -28,9 +28,11 @@ Webhook，可选让大模型判分打标签。单进程 aiohttp + SQLite + 单�
    本页 → `AGENTS.md`（项目怎么运作、用户是谁、**十一条硬规矩**、排查「它没提醒我」的固定顺序）。
    其余按需查：`HANDOFF.md`（NOW 说"没有进行中的任务"时去那儿挑新活 + 历轮踩坑）、
    `CLAUDE.md`（收尾时 HANDOFF 的固定结构照它写）、`tests/RUN.md`（跑回归前读）。
-4. **v1.11.0 已出包（2026-08-01），欠用户真机验收**：程序 + 扩展两个 zip 都在 `release/`。
-   **必须重装扩展**（三步：覆盖 → ⟳ → Discord F5）。验新东西：自动点开新帖（设置页，默认关）、
-   拉模型（A6）、规则「AI 复核」（B1）、采样参数 + 后处理（B4/B2）、提示词抽屉（B3）。
+4. **v1.11.1 已出包（2026-08-01），欠用户真机验收**：程序 zip 在 `release/`（扩展 zip 还是
+   v1.11.0 那份，没动）。**只换程序、不用重装扩展**（覆盖时别删 `dcwatch.db`）。验新东西：
+   收信箱规则驱动（A7：没规则=零收信，诊断包[3]段看拦下数）、工作台输入框单光标（C5）、
+   自动点开新帖（设置页，默认关）、拉模型（A6）、规则「AI 复核」（B1）、采样参数 + 后处理（B4/B2）、
+   提示词抽屉（B3）。
    早前三条别丢：A2 回复消息盯人、A3 两标签页只弹一条、A5 关三开关立刻全停。
    另外他机器上的规则填得对不对，
    一直没人见过——发版后顺嘴要一次诊断包（界面「运行日志」页→「导出诊断」→ txt 发你），
@@ -73,7 +75,8 @@ V=$(grep -oP 'VERSION = "\K[^"]+' server.py)        # 版本号只有一个来�
 rm -rf __pycache__ tests/__pycache__
 rm -rf /tmp/pack && mkdir -p /tmp/pack/dcwatch && cp -r ./. /tmp/pack/dcwatch/
 cd /tmp/pack/dcwatch && rm -rf .git tests release .gitignore .gitattributes __pycache__ \
-    AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md NOW.md agent   # README.md 要留下
+    AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md NOW.md BACKLOG.md BOOTSTRAP.md agent PLAN_*.md docs
+    # README.md 和 dcwatch.spec 要留下（spec 是 build.bat 打包 exe 用的）
 find . -type f | wc -l                              # 必须是 27（v1.10.0 起）
 cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch
 ```

@@ -88,8 +88,8 @@ V=$(grep -oP 'VERSION = "\K[^"]+' server.py)          # 版本号只有一个来
 rm -rf /tmp/pack && mkdir -p /tmp/pack/dcwatch
 cp -r ./. /tmp/pack/dcwatch/
 cd /tmp/pack/dcwatch && rm -rf .git tests release .gitignore .gitattributes __pycache__ \
-    AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md NOW.md agent
-find . -type f | wc -l                                # 必须是 27（v1.10.0 起；少了就是同步把 .bat 弄丢了）
+    AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md NOW.md BACKLOG.md BOOTSTRAP.md agent PLAN_*.md docs
+find . -type f | wc -l                                # 必须是 27（v1.10.0 起；`dcwatch.spec` 要留下，build.bat 靠它打包 exe）
 cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch   # 环境里没有 zip 命令
 ```
 
