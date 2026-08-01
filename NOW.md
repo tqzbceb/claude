@@ -8,15 +8,13 @@
 
 ## 当前状态（2026-08-01）
 
-**🔨 X 窗口正在做：D1 贴纸/表情解析收尾 + 出 v1.11.3 包。**
-W 窗口已把 D2（开帖改新开最小化窗口 `7f186ee`）和 D3（开服监听 `ca25b59`）落盘，断了。
-本窗口接手剩 D1：content.js 解析现状是「纯表情消息翻译成 [贴纸 xx]/:emoji: 占位」已有（v1.8.0），
-真正的缺口是 ①正文里的行内表情被 innerText 整个丢掉（「看 :kekw: 这个」变「看 这个」）
-②Discord 现在给表情码加 ~N 后缀（:cat_cry~1:）像乱码。
-修法：parseLi 改用 textWithEmoji（克隆节点把表情 img 换成代码文字再取文本）+ 剥 ~N 后缀，
-mediaOf 的 emoji 分支同步剥；content_test.mjs 补断言；跑浏览器侧三套回归。
-然后 bump 三处到 v1.11.3 + 全套服务端回归 + 冒烟 + 双 zip 进 release/ 和 outputs/ +
-NOW/HANDOFF/BACKLOG 收尾。
+**🔨 Y 窗口正在做：v1.11.3 出包收尾（X 窗口断在 bump 后、打包前）。**
+X 窗口已落：D1 表情解析（`2cf049b`）+ 三处版本 bump 1.11.3 + README/release-README/START_HERE 同步
+（`ed09f9a`）。W 窗口已落：D2 新开最小化窗口开帖（`7f186ee`）、D3 开服监听（`ca25b59`）。
+**断点：release/ 里还是 1.11.2 双 zip，v1.11.3 没打包；D2/D3 在 BACKLOG 没打勾；NOW/HANDOFF 没收尾。**
+本窗口步骤：①全套服务端回归（13 件，含 e2e_watch 26 条）②浏览器侧三套（49+16+42=107）
+③全新解压冒烟 ④打双 zip（27+10）进 release/ 和 outputs/ 删旧 1.11.2
+⑤BACKLOG 勾 D2/D3 + NOW/HANDOFF 收尾 ⑥推送+远端实查。
 
 ## 窗口工作协议（用户 2026-07-31 定的，严格执行）
 1. 用户消息有新需求 → **动任何代码之前**先写进 `BACKLOG.md` 并推送。
