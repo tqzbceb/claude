@@ -3,7 +3,7 @@
 这个目录就在项目根下面（`<项目>/tests/`），`runall.sh` 自己会找到 `../server.py`，
 不需要配任何路径。布局不一样时用 `DC=/path/to/dcwatch ./runall.sh ...`。
 
-改完 server.py，**566 条全跑一遍**（一次两三套，命令超时一般 120s）：
+改完 server.py，**704 条全跑一遍**（一次两三套，命令超时一般 120s）：
 
 ```bash
 pip install aiohttp        # 唯一依赖；某些一次性环境每次都要重装
@@ -13,6 +13,8 @@ cd tests
 ./runall.sh e2e_v17.py e2e_diag.py                # 46 + 47
 ./runall.sh e2e_wb.py e2e_imp.py                 # 96 + 74
 ./runall.sh e2e_ext.py e2e_chat.py               # 53 + 42
+./runall.sh e2e_tabs.py e2e_chk.py               # 53 + 56
+./runall.sh e2e_watch.py                         # 26（D3 开服监听专项）
 ```
 
 `runall.sh` 做的事：起假 OpenAI（`mockllm.py` :8899）和假 webhook（`echo.py` :8898 → /tmp/bcode/echo.jsonl），
