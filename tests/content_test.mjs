@@ -446,3 +446,257 @@ export async function runTabs(session) {
   }
   return r.result.value;
 }
+
+/* ============ 第四套：F1 名录收割（侧栏名字 → ID） ============
+   为什么单独一套：F1 让用户「打名字就能建规则」，而名录**全靠扩展逛 Discord 时
+   从侧栏抄**。这块只读 DOM，一条消息都不用来，所以前三套（都是喂消息）碰不到它。
+   F1 落地时只在云浏览器里对合成侧栏临时验过一次，脚本没留下 —— content.js 的
+   收割器一改就没人守，用户那边的表现是「打名字查不到东西」，还会以为是模型笨。
+
+   造的是一份「像 Discord 那样」的侧栏：左边服务器图标列（data-dnd-name）、
+   频道列（分类头 + 频道，**外面套一层 <nav>**，Discord 就是这么套的）、
+   论坛帖子卡片、右边成员栏、左下私信列表。断言四类都抄到、面包屑对得上、
+   括号说明和 # 前缀剥干净、抠不到 ID 的人不瞎报、切频道能补扫。 */
+const NG1 = "900000000000000001";   // 服务器：测试服（当前所在）
+const NG2 = "900000000000000002";   // 服务器：交易群（切过去用）
+const NCAT = "600000000000000010";  // 分类：信息区
+const NCH_ANN = "800000000000000011";   // 频道：公告（在信息区下面）
+const NCH_ARC = "800000000000000012";   // 频道：公告归档（只有 aria-label，带括号说明）
+const NCH_CHAT = "800000000000000013";  // 频道：闲聊（可见文字带 # 前缀）
+const NCH_FORUM = "810000000000000014"; // 频道：论坛（URL 当前就在这儿）
+const NCH_NEW = "800000000000000015";   // 切服务器后才出现的频道
+const NTH = "700000000000000021";       // 帖子：登录 500 怎么修
+const NU1 = "500000000000000031";       // 成员：小明（有自定义头像 → 抠得到 ID）
+const NU2 = "500000000000000032";       // 私信：Ana
+const NDM = "820000000000000041";       // 私信频道 ID（人的 ID 不在这儿，在头像里）
+
+const FAKE_SIDEBAR = `<!doctype html><html><head><title>(3) #论坛 | 测试服</title></head>
+<body>
+  <section class="panels-abc panels">
+    <img src="https://cdn.discordapp.com/avatars/777000111/abc.png">
+    <div class="nameTag-xyz"><span class="hovered-1">alice#1234</span></div>
+  </section>
+
+  <!-- 左边一列服务器图标 -->
+  <nav data-list-id="guildsnav" aria-label="服务器" class="guilds-1">
+    <div data-dnd-name="测试服" class="listItem-1"><a href="/channels/${NG1}"><div class="blob-1"></div></a></div>
+    <div data-dnd-name="交易群 (2 条未读)" class="listItem-1"><a href="/channels/${NG2}"></a></div>
+    <a href="/channels/@me" aria-label="私信">私信</a>
+  </nav>
+
+  <!-- 频道列：Discord 外面套了一层 nav，别让它被当成服务器 -->
+  <div class="sidebar-1">
+    <nav aria-label="频道" class="container-1">
+      <ul data-list-id="channels" class="list-1">
+        <li data-list-item-id="channels___categoryid_${NCAT}" class="containerDefault-1">
+          <div class="containerDefault-1"><h3 class="headerContent-1">信息区</h3></div>
+        </li>
+        <li data-list-item-id="channels___${NCH_ANN}" class="containerDefault-2">
+          <a href="/channels/${NG1}/${NCH_ANN}" aria-label="公告 (文字频道)" class="link-1">
+            <div class="name-1">公告</div></a>
+        </li>
+        <li data-list-item-id="channels___${NCH_ARC}" class="containerDefault-2">
+          <a href="/channels/${NG1}/${NCH_ARC}" aria-label="公告归档 (文字频道, 已静音)" class="link-1"></a>
+        </li>
+        <li data-list-item-id="channels___${NCH_CHAT}" class="containerDefault-2">
+          <a href="/channels/${NG1}/${NCH_CHAT}" aria-label="闲聊 (文字频道)" class="link-1">
+            <div class="name-1">#闲聊</div></a>
+        </li>
+        <li data-list-item-id="channels___${NCH_FORUM}" class="containerDefault-2">
+          <a href="/channels/${NG1}/${NCH_FORUM}" aria-label="论坛 (论坛频道)" class="link-1">
+            <div class="name-1">论坛</div></a>
+        </li>
+      </ul>
+    </nav>
+  </div>
+
+  <!-- 论坛里的帖子卡片 -->
+  <div class="forumPostList-1">
+    <div data-item-id="${NTH}" class="postCard-1">
+      <div class="titleText-1">登录 500 怎么修</div>
+      <div class="messageContent-1">我这边也是</div>
+    </div>
+  </div>
+
+  <!-- 右边成员栏：小明抠得到 ID，小花用默认头像抠不到 -->
+  <div aria-label="成员" class="membersWrap-1">
+    <div class="member-1"><img src="https://cdn.discordapp.com/avatars/${NU1}/m.png">
+      <div class="name-1">小明</div></div>
+    <div class="member-1"><img src="https://cdn.discordapp.com/embed/avatars/3.png">
+      <div class="name-1">小花</div></div>
+  </div>
+
+  <!-- 左下私信列表 -->
+  <div class="privateChannels-1">
+    <a href="/channels/@me/${NDM}" class="channel-1">
+      <img src="https://cdn.discordapp.com/avatars/${NU2}/d.png">
+      <div class="name-1">Ana</div></a>
+  </div>
+
+  <ol id="feed"></ol>
+</body></html>`;
+
+export async function runNames(session, contentJsPath) {
+  const fs = await import("fs/promises");
+  const path = contentJsPath || process.env.DCW_CONTENT_JS ||
+    new URL("../extension/content.js", import.meta.url).pathname;
+  const code = await fs.readFile(path, "utf8");
+
+  const tid = (await session.Target.getTargets({})).targetInfos
+    .find(t => t.type === "page" && !t.url.startsWith("chrome://")).targetId;
+  await session.use(tid);
+  await session.Page.enable();
+  await session.Page.bringToFront();      // 后台标签页的定时器被节流，3 秒那次开机扫描会迟到
+  await session.Runtime.enable();
+
+  const loaded = session.waitFor("Page.loadEventFired"); loaded.catch(() => {});
+  await session.Page.navigate({ url: "https://usercontent.browser-use.tools" });
+  await Promise.race([loaded, new Promise(r => setTimeout(r, 8000))]);
+  await session.Page.setDocumentContent({ frameId: tid, html: FAKE_SIDEBAR });
+  await session.Runtime.evaluate({ expression: `
+    history.replaceState({}, "", "/channels/${NG1}/${NCH_FORUM}");
+    window.__sent = [];       // 所有 sendMessage 都记下来：要验名录没混进消息投递
+    window.__direct = [];     // 名录退回页面直连时走 fetch，也记下来
+    window.chrome = { runtime: {
+      id: "stub-ext-id",
+      getManifest: () => ({ version: "1.12.0" }),
+      sendMessage: (m, cb) => { window.__sent.push(m); if (cb) cb({ ok: true, st: {} }); },
+      onMessage: { addListener: (fn) => { window.__onMsg = fn; } },
+      lastError: null } };
+    window.fetch = (u, o) => { try { window.__direct.push(JSON.parse(o.body)); } catch (e) {}
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) }); };
+  ` });
+  const ev = await session.Runtime.evaluate({ expression: code });
+  if (ev.exceptionDetails) return { boot: "FAIL", error: ev.exceptionDetails.text };
+
+  /* 名录的开机扫描排在 3 秒（等页面渲染完），轮询到有货为止 ——
+     单次 sleep 读一把是 content_test 老抖动的根因，RUN.md 里写着。 */
+  const names = async () => {
+    const r = await session.Runtime.evaluate({ expression:
+      `JSON.stringify(window.__sent.filter(s => s.type === "dcwatch-names"))`,
+      returnByValue: true });
+    return JSON.parse(r.result.value);
+  };
+  const waitNames = async (pred, ms = 8000) => {
+    const t0 = Date.now();
+    for (;;) {
+      const pk = await names();
+      if (pred(pk) || Date.now() - t0 > ms) return pk;
+      await new Promise(r => setTimeout(r, 400));
+    }
+  };
+  const flat = (pk) => pk.flatMap(p => (p.payload && p.payload.names) || []);
+  const pick = (pk, kind, id) => flat(pk).find(n => n.kind === kind && n.id === id);
+
+  const packs = await waitNames(pk => flat(pk).length >= 8);
+  const all = flat(packs);
+
+  const checks = [];
+  const t = (name, cond, extra) => checks.push({ name, ok: !!cond, ...(cond ? {} : { got: extra }) });
+
+  t("抄到名录并上报了", packs.length > 0 && all.length > 0, { packs: packs.length, n: all.length });
+  t("名录走自己的口子 dcwatch-names", packs.every(p => p.type === "dcwatch-names"), packs.map(p => p.type));
+  t("上报带扩展版本和在盯的频道",
+    packs[0] && packs[0].payload.ver === "1.12.0" && packs[0].payload.where === "论坛", packs[0]);
+  /* 名录和「有没有新消息」无关：混进消息批次会把诊断里的「上报了几条」搅乱 */
+  const msgPacks = await session.Runtime.evaluate({ expression:
+    `JSON.stringify(window.__sent.filter(s => s.type === "dcwatch")
+       .map(s => Object.keys(s.payload || {})))`, returnByValue: true });
+  t("名录没混进消息投递", !JSON.parse(msgPacks.result.value).some(k => k.includes("names")),
+    msgPacks.result.value);
+
+  // ---- 四类都要抄到 ----
+  const g1 = pick(packs, "guild", NG1), g2 = pick(packs, "guild", NG2);
+  t("服务器抄到了（当前这个）", g1 && g1.name === "测试服", g1);
+  t("侧栏别的服务器也抄到", g2 && g2.name === "交易群", g2);
+  /* data-dnd-name 上 Discord 会挂「(2 条未读)」这种说明，得剥掉，
+     不然用户打「交易群」查不着 */
+  t("服务器名剥掉括号里的未读说明", g2 && !/未读/.test(g2.name), g2);
+  /* 频道列外面也套着 <nav>，频道链接的 href 同样是 /channels/<服务器ID>/... ——
+     按 nav 里的链接认服务器，会把频道名当成服务器名写进名录，
+     用户打服务器名就查不到、或者查出来是个频道 */
+  t("服务器名不被频道名顶掉",
+    !all.some(n => n.kind === "guild" && ["公告", "闲聊", "论坛", "公告归档"].includes(n.name)),
+    all.filter(n => n.kind === "guild"));
+  t("@me 不当服务器抄", !all.some(n => n.kind === "guild" && /私信/.test(n.name)),
+    all.filter(n => n.kind === "guild"));
+
+  const cat = pick(packs, "category", NCAT);
+  t("分类抄到了", cat && cat.name === "信息区", cat);
+  t("分类挂在服务器下", cat && cat.guild_id === NG1 && cat.guild_name === "测试服", cat);
+
+  const ann = pick(packs, "channel", NCH_ANN);
+  t("频道抄到了", ann && ann.name === "公告", ann);
+  /* 名字重了（好几个服务器都有 #公告）时，用户就靠这条面包屑认出是哪个 */
+  t("频道带面包屑：服务器 › 分类",
+    ann && ann.guild_name === "测试服" && ann.parent_name === "信息区", ann);
+  t("频道 ID 是频道自己的不是服务器的", ann && ann.id === NCH_ANN, ann);
+  const arc = pick(packs, "channel", NCH_ARC);
+  t("只有 aria-label 的频道也抄到，括号说明剥掉", arc && arc.name === "公告归档", arc);
+  const chat = pick(packs, "channel", NCH_CHAT);
+  t("频道名前面的 # 剥掉", chat && chat.name === "闲聊", chat);
+
+  const th = pick(packs, "thread", NTH);
+  t("帖子抄到了", th && th.name === "登录 500 怎么修", th);
+  t("帖子挂在当前频道下", th && th.parent_id === NCH_FORUM && th.parent_name === "论坛", th);
+  t("帖子正文不当标题", th && !/我这边也是/.test(th.name || ""), th);
+
+  const u1 = pick(packs, "user", NU1);
+  t("成员抄到了", u1 && u1.name === "小明", u1);
+  t("人的 ID 从头像地址抠出来", u1 && u1.id === NU1, u1);
+  /* 用默认头像的人抠不到 ID —— 宁可不报，也不能瞎猜一个 ID 塞进名录：
+     名录错一条，用户按名字建的规则就盯错人 */
+  t("默认头像的人不瞎报", !all.some(n => n.kind === "user" && n.name === "小花"),
+    all.filter(n => n.kind === "user"));
+  const u2 = pick(packs, "user", NU2);
+  t("私信列表里的人也抄到", u2 && u2.name === "Ana", u2);
+
+  // ---- 卫生：不许有垃圾条目 ----
+  t("每条都有 kind/id/name", all.every(n => n.kind && n.id && n.name), all.filter(n => !(n.kind && n.id && n.name)));
+  t("ID 都是 15-25 位 snowflake", all.every(n => /^\d{15,25}$/.test(n.id)),
+    all.filter(n => !/^\d{15,25}$/.test(n.id)));
+  t("名字不带首尾空白/换行", all.every(n => n.name === n.name.trim() && !n.name.includes("\n")),
+    all.filter(n => n.name !== n.name.trim() || n.name.includes("\n")));
+  t("一个包最多 500 条（大服务器不打巨包）",
+    packs.every(p => (p.payload.names || []).length <= 500), packs.map(p => (p.payload.names || []).length));
+
+  // ---- 切服务器要补扫：侧栏整片换掉了，新服务器的频道名只有这时候看得见 ----
+  await session.Runtime.evaluate({ expression: `
+    document.title = "#新频道 | 交易群";
+    history.replaceState({}, "", "/channels/${NG2}/${NCH_NEW}");
+    document.querySelector('[data-list-id="channels"]').insertAdjacentHTML("beforeend",
+      '<li data-list-item-id="channels___${NCH_NEW}" class="containerDefault-2">' +
+      '<a href="/channels/${NG2}/${NCH_NEW}" aria-label="新频道 (文字频道)" class="link-1">' +
+      '<div class="name-1">新频道</div></a></li>');
+  ` });
+  const after = await waitNames(pk => !!pick(pk, "channel", NCH_NEW), 9000);
+  const nw = pick(after, "channel", NCH_NEW);
+  t("切服务器后补扫，新频道抄到了", nw && nw.name === "新频道", nw);
+  t("新频道挂在新服务器下", nw && nw.guild_id === NG2 && nw.guild_name === "交易群", nw);
+
+  // ---- 标签页重新可见也补扫（切回来时侧栏可能已经改过名了）----
+  const before = (await names()).length;
+  await session.Runtime.evaluate({ expression:
+    `document.dispatchEvent(new Event("visibilitychange"))` });
+  const vis = await waitNames(pk => pk.length > before, 6000);
+  t("标签页重新可见时补扫", vis.length > before, { before, after: vis.length });
+
+  /* Discord 改版把「服务器图标那一列」的标记换掉了怎么办：认不出那一列时
+     只收「光是服务器」的地址（/channels/<id>），宁少不错 —— 少一条用户可以贴链接，
+     错一条他会盯错服务器还以为程序坏了。 */
+  const fb = await session.Runtime.evaluate({ expression: `(() => {
+    const nav = document.querySelector('[data-list-id="guildsnav"]');
+    nav.removeAttribute("data-list-id"); nav.className = "xx-1";   // 装成认不出的样子
+    const got = []; window.__dcwatch.harvestGuilds(got);
+    return JSON.stringify(got);
+  })()`, returnByValue: true });
+  const fbg = JSON.parse(fb.result.value);
+  t("认不出服务器列时也不把频道当服务器",
+    !fbg.some(n => ["公告", "闲聊", "论坛", "公告归档", "新频道"].includes(n.name)), fbg);
+  t("认不出服务器列时，光是服务器的地址照样收",
+    fbg.some(n => n.id === NG1 && n.name === "测试服"), fbg);
+
+  const fail = checks.filter(c => !c.ok);
+  return { pass: checks.length - fail.length, fail: fail.length, failed: fail,
+           kinds: [...new Set(all.map(n => n.kind))], n: all.length };
+}

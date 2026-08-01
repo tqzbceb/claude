@@ -25,7 +25,9 @@ cd tests
 DCWATCH_DB=/tmp/p.db python3 server.py     # 别用真配置库
 ```
 
-改完 `extension/content.js`：跑 `content_test.mjs` 的 `run()`（49 条）和 `runFresh()`（16 条）；改了 `background.js` 自动开帖再跑 `runTabs()`（42 条 chrome.tabs/windows 桩，含 C6 防回收 8 条 + D2 新开最小化窗口 7 条），
+改完 `extension/content.js`：跑 `content_test.mjs` 的 `run()`（49 条）和 `runFresh()`（16 条）；
+**动了名录收割器（harvestGuilds/Channels/Threads/Users）就跑 `runNames()`（32 条）**；
+改了 `background.js` 自动开帖再跑 `runTabs()`（42 条 chrome.tabs/windows 桩，含 C6 防回收 8 条 + D2 新开最小化窗口 7 条），
 要一个 CDP 会话（`browser_execute` 之类）。它默认读 `../extension/content.js`，
 也可以传路径或设 `DCW_CONTENT_JS`。
 
@@ -40,6 +42,22 @@ console.log(JSON.stringify(await m.run(session), null, 1))   // 期望 {syntax:"
 子区认父频道 + 侧栏标题 / 私信 / 去重 / 合批 / 心跳带账号和频道 / 批次带 account+account_id / 页面药丸挂载。
 **换路径会重新触发 4 秒静默期**（切频道不重报历史，设计如此）——测试里换完 URL 必须再等 4.6s，
 否则新塞的消息会被当历史丢掉，看着像 is_dm 解析坏了。
+
+## runNames()：F1 名录收割（32 条，也不用真装扩展）
+```js
+console.log(JSON.stringify(await m.runNames(session), null, 1))   // 期望 {pass:32, fail:0}
+```
+造一份「像 Discord 那样」的侧栏（服务器图标列 / 分类+频道，**外面套 <nav>** / 论坛帖子卡 /
+右侧成员栏 / 左下私信列），断言：四类都抄到 / 频道带面包屑（服务器 › 分类）/
+aria-label 的括号说明和 `#` 前缀剥干净 / 帖子挂当前频道 / 人的 ID 从头像地址抠、
+默认头像的人不瞎报 / 名录走 `dcwatch-names` 不混进消息投递 / 切服务器和标签页回前台会补扫 /
+认不出「服务器图标那一列」时退化成只收 `/channels/<id>`。
+- **这一套抓出过真 bug（2026-08-02）**：频道列外面也套着 `<nav>`，老 `harvestGuilds` 收
+  `nav a[href^="/channels/"]`，把 `/channels/<服务器ID>/<频道ID>` 也算成服务器，
+  服务端同 ID 覆盖 → 服务器那条名录被侧栏最后一个频道的名字顶掉，用户打服务器名查不到。
+  **加断言时一定要造「频道列在 nav 里」的 DOM**，不然这类污染测不出来。
+- 名录扫描是 `force=true` 的全量推（开机 3s / 每 5 分钟 / 切频道 / 回前台），
+  所以同一条会重复上报 —— 服务端是 upsert，别断言「只报一次」。
 
 ## e2e_multi.py 覆盖（多浏览器 / 多账号 / 跨桥去重）
 心跳带身份被单独列成桥（account/browser/ver/where/fresh）/ 两个桥不互相覆盖 / 旧版扩展版本可见 /

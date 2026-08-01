@@ -450,14 +450,26 @@ function guildNameNow() {
   return txt(h).split("\n")[0].slice(0, 120);
 }
 
-/* 左边那一列服务器图标：每个都是 /channels/<服务器ID>，名字在 data-dnd-name / aria-label 上 */
+/* 左边那一列服务器图标：每个都是 /channels/<服务器ID>，名字在 data-dnd-name / aria-label 上。
+   **只在那一列里认**：频道列外面 Discord 也套了一层 <nav>，频道链接长成
+   /channels/<服务器ID>/<频道ID>，开头那截同样是服务器 ID —— 一起收的话，
+   服务器那条名录会被侧栏最后一个频道的名字顶掉（同 ID 后来的覆盖先前的），
+   于是用户打服务器名一个候选都查不到，还会多出一堆「服务器：公告」的假候选。
+   认不出那一列时（Discord 改版）退一步：只收「光是服务器」的地址，宁少不错。 */
 function harvestGuilds(out) {
-  for (const a of document.querySelectorAll('nav a[href^="/channels/"], [data-list-id*="guildsnav"] a[href^="/channels/"]')) {
-    const m = /^\/channels\/(\d{15,25})\b/.exec(a.getAttribute("href") || "");
-    if (!m) continue;
+  const take = (a, bareOnly) => {
+    const m = /^\/channels\/(\d{15,25})([/?#]|$)/.exec(a.getAttribute("href") || "");
+    if (!m || (bareOnly && m[2] === "/")) return;
     const holder = a.closest("[data-dnd-name]") || a.querySelector("[data-dnd-name]") || a;
     const nm = nameOf(holder);
     if (nm) out.push({ kind: "guild", id: m[1], name: nm });
+  };
+  const boxes = document.querySelectorAll(
+    '[data-list-id*="guildsnav"], nav[class*="guilds"], [class*="guildsWrapper"]');
+  if (boxes.length) {
+    for (const b of boxes) for (const a of b.querySelectorAll('a[href^="/channels/"]')) take(a, false);
+  } else {
+    for (const a of document.querySelectorAll('nav a[href^="/channels/"]')) take(a, true);
   }
 }
 
@@ -774,5 +786,8 @@ setInterval(() => { if (!document.hidden) refreshUI(); }, 10000);
 
 globalThis.__dcwatch = { parseLi, seen, queue, refreshUI, stats, snowflakeMs,
   scanHistory, scanThreads, seenThreads, threadIdOf,
+  // 名录（F1）：控制台里 __dcwatch.harvestNames(true) 能手动补一次，
+  // harvestGuilds(a=[]) 只看「这一列认出了哪些服务器」，查名录抄错时先看这儿
+  harvestNames, harvestGuilds,
   show: () => { localStorage.removeItem(HIDE_KEY); mountUI(); refreshUI(); } };
 console.log("[dcwatch] bridge 已挂载，转发到", ENDPOINT, "，右下角有状态药丸；隐藏了就在控制台跑 __dcwatch.show()");
