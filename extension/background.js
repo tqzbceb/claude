@@ -134,10 +134,11 @@ async function badge() {
    chrome.alarms 不受标签页可见性影响，所以由后台脚本兜这一手。
    只在「标签页确实超过 30 秒没报上来」时才拉，正常情况一个多余请求都不发。
 
-   为什么不按 url 筛标签页：那要么加 "tabs" 权限（安装时吓人的「读取浏览记录」），
-   要么把 discord.com 写进 host_permissions（会让已经装好的扩展被 Chrome 停用、
-   等你重新授权）。不筛就不用加任何权限：没有内容脚本的标签页收不到消息，
-   sendMessage 直接失败，我们吞掉就是了，那些页面里什么都不会跑。 */
+   为什么不按 url 筛标签页：v1.11.0 之前这个扩展没有 "tabs" 权限，按 url 筛会
+   吓用户一条「读取浏览记录」。v1.11.0 起为了自动开帖（C2）已经加了 tabs 权限，
+   这里**可以**顺手改成 query({url:"*://discord.com/*"})—— 没改只是因为广播法
+   实测无害（没有内容脚本的标签页 sendMessage 直接失败，吞掉就是），
+   而心跳路径是全家当，不为省几次失败调用去动它。 */
 async function pullTabs() {
   const st = await getSt();
   if (Date.now() - (st.lastTabPing || 0) < 30_000) return;   // 它自己报得上来，不打扰
@@ -150,6 +151,98 @@ async function pullTabs() {
     } catch (e) { /* 这个标签页里没有内容脚本（装扩展前就开着，没按 F5）——角标的「?」会说明 */ }
   }
 }
+
+/* ---------- 自动开帖：跟心跳一起每 30 秒问一次「有什么要我干的」（C2） ----------
+   开哪些 / 关哪些全由服务端决定（它才知道规则在盯哪些频道、同时开着几个、
+   一小时开了几个），扩展只执行 + 回报。「现在到底开着哪些」这个事实只认
+   扩展的回报 —— 用户手动关掉标签页，服务端自己猜不到（PLAN_C2 第 2 节）。
+   本地存的 opened 对照表（tid → tabId）有两个用处：扩展重载后不重复开；
+   你手动关掉程序开的标签页时，立刻认出来并告诉服务端把名额腾出来。 */
+const getOpened = async () => (await chrome.storage.local.get("opened")).opened || {};
+const setOpened = m => chrome.storage.local.set({ opened: m });
+
+async function tabOrders() {
+  const port = await getPort();
+  let j = null;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/ext/hb`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(await stamp({})),      // 带 bridge + ver：服务端按它选「谁来执行」
+    });
+    if (r.ok) j = await r.json().catch(() => null);
+    // 老版本程序（< v1.10.0）没有这个接口 → 404，安静跳过，什么都不会开
+  } catch (e) { return; }                          // 程序没起：角标的「!」已经在说这件事了
+  if (!j || !j.ok) return;
+  const lim = j.limits || {};
+  await setSt({ aoOn: !!lim.auto_open, aoNow: lim.open_now || 0 });   // popup 读这个，不自己再请求
+  const opened = await getOpened();
+  const rep = { opened: [], closed: [], failed: [] };
+
+  // 先关后开：关掉才腾得出位置。一次最多各 3 条（服务端也是这么给的，这里再保一道）
+  for (const c of (j.close || []).slice(0, 3)) {
+    try {
+      let tabId = opened[c.tid], alive = false;
+      if (tabId != null) {
+        try { await chrome.tabs.get(tabId); alive = true; } catch (e) { delete opened[c.tid]; }
+      }
+      if (!alive) {
+        // 对照表里没有（或记录过期）：按 URL 兜底找一遍再下手
+        const tabs = await chrome.tabs.query({ url: "*://discord.com/*" });
+        const hit = tabs.find(t => t.url && t.url.includes("/" + c.tid));
+        if (hit) { await chrome.tabs.remove(hit.id); rep.closed.push(c.tid); }
+        else rep.failed.push({ tid: c.tid, err: "标签页已经不在了（你手动关了？）", gone: true });
+      } else {
+        await chrome.tabs.remove(tabId);
+        rep.closed.push(c.tid);
+      }
+      delete opened[c.tid];
+    } catch (e) { rep.failed.push({ tid: c.tid, err: String((e && e.message) || e) }); }
+  }
+
+  for (const o of (j.open || []).slice(0, 3)) {
+    try {
+      if (opened[o.tid] != null) {
+        // 本地记过这个帖子：标签页还活着就不重复开（服务端也会记，这是双保险）
+        try { await chrome.tabs.get(opened[o.tid]); rep.opened.push(o.tid); continue; }
+        catch (e) { delete opened[o.tid]; }
+      }
+      const t = await chrome.tabs.create({ url: o.url, active: false, pinned: false });
+      opened[o.tid] = t.id;
+      rep.opened.push(o.tid);
+    } catch (e) { rep.failed.push({ tid: o.tid, err: String((e && e.message) || e) }); }
+  }
+
+  await setOpened(opened);
+  if (rep.opened.length || rep.closed.length || rep.failed.length) {
+    try {
+      const r2 = await fetch(`http://127.0.0.1:${port}/api/ext/tabs`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(await stamp({ ...rep })),
+      });
+      if (r2.ok) {
+        const j2 = await r2.json().catch(() => null);
+        if (j2 && j2.open_now != null) await setSt({ aoNow: j2.open_now });
+      }
+    } catch (e) { /* 程序刚好挂了：下一轮心跳还会来，状态服务端自己攒着 */ }
+  }
+}
+
+/* 你手动关掉了程序开的标签页 → 立刻回报。不说的话服务端一直以为它还开着，
+   「同时最多开几个」的名额就这样一点点漏光，最后看着像「自动开帖坏了」。 */
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const opened = await getOpened();
+  const tid = Object.keys(opened).find(k => opened[k] === tabId);
+  if (!tid) return;
+  delete opened[tid];
+  await setOpened(opened);
+  try {
+    const port = await getPort();
+    await fetch(`http://127.0.0.1:${port}/api/ext/tabs`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(await stamp({ closed: [tid] })),
+    });
+  } catch (e) { /* 程序不在就不在了：服务端那边闲置自关会兜底把这笔勾掉 */ }
+});
 
 /* ---------- 消息路由 ---------- */
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
@@ -179,7 +272,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
 });
 
 chrome.alarms.create("hc", { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener(a => { if (a.name === "hc") pullTabs().finally(health); });
-chrome.runtime.onStartup.addListener(health);
+chrome.alarms.onAlarm.addListener(a => { if (a.name === "hc") { pullTabs().finally(health); tabOrders(); } });
+chrome.runtime.onStartup.addListener(() => { health(); tabOrders(); });
 chrome.runtime.onInstalled.addListener(health);
 health();

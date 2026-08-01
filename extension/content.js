@@ -469,7 +469,19 @@ const CSS = `
   .tip{margin-top:6px;font-size:11px;line-height:1.5;color:#6b665d}
 `;
 
-let shadow = null, openPanel = false, lastSt = null;
+let shadow = null, openPanel = false, lastSt = null, lastAuto = false;
+
+/* 这个标签页是不是程序替你点开的（C2 自动开帖）。后台脚本开着一份
+   tid → tabId 的对照表在 storage 里，本页 URL 里的频道/帖子 id 在里面
+   就说明「是程序开的，不是我自己点的」—— 药丸上要看得出来（PLAN_C2：这条不许省）。 */
+async function autoMark() {
+  try {
+    if (!(globalThis.chrome && chrome.storage && chrome.storage.local)) return false;
+    const k = await chrome.storage.local.get("opened");
+    const my = fromUrl().channel_id;
+    return !!(my && k && k.opened && k.opened[my] != null);
+  } catch (e) { return false; }
+}
 
 function mountUI() {
   if (shadow || localStorage.getItem(HIDE_KEY) === "1") return;
@@ -511,7 +523,7 @@ function paint() {
   const st = lastSt;
   const [cls, short, hint] = judge(st);
   shadow.querySelector(".dot").className = "dot " + cls;
-  shadow.querySelector(".st").textContent = short;
+  shadow.querySelector(".st").textContent = short + (lastAuto ? " · 自动" : "");
   const p = shadow.querySelector(".panel");
   if (!openPanel) { p.innerHTML = ""; return; }
   const ago = t => !t ? "还没有" : (Math.round((Date.now() - t) / 1000) < 60
@@ -521,6 +533,7 @@ function paint() {
       <div class="row"><span>本机程序</span><b>${st && st.serverOk ? "在跑 :" + (st.port || 8777) : "连不上"}</b></div>
       <div class="row"><span>当前账号</span><b>${myAccount().name || "认不出（不影响）"}</b></div>
       <div class="row"><span>本页在盯</span><b>#${(st && st.where) || titleChannelName() || "?"}</b></div>
+      ${lastAuto ? `<div class="row"><span>这个标签页</span><b>程序自动点开的，闲置了它会自己关</b></div>` : ""}
       <div class="row"><span>已上报</span><b>${(st && st.sent) || 0} 条${st && st.lastMsgAt ? "（" + ago(st.lastMsgAt) + "）" : ""}</b></div>
       <div class="row"><span>服务端累计</span><b>${(st && st.srvCount) || 0} 条</b></div>
       <div class="hint ${cls === "ok" ? "g" : ""}">${hint}</div>
@@ -564,7 +577,7 @@ function paint() {
   };
 }
 
-async function refreshUI() { lastSt = await askStatus(); paint(); }
+async function refreshUI() { lastSt = await askStatus(); lastAuto = await autoMark(); paint(); }
 
 mountUI();
 refreshUI();

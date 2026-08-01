@@ -38,6 +38,12 @@ function render(st) {
     set(4, st.srvOnline && st.srcOn ? "ok" : "warn", bits.join("，"));
   } else set(4, "bad", "问不到");
 
+  // 5 自动开帖（C2）：数据是后台脚本每 30 秒问服务端时顺手存进 st 的，弹窗不自己再请求
+  if (st.aoOn == null) set(5, "warn", st.serverOk ? "还没问到（后台脚本半分钟内会问一次）"
+                                                 : "问不到（程序没起）");
+  else if (!st.aoOn) set(5, "ok", "关着 — 要开去 dcwatch「设置」页");
+  else set(5, "ok", `开着 · 程序正帮你开着 ${st.aoNow || 0} 个帖子标签页`);
+
   // 顶部结论 + 怎么办
   let cls, title, sum, fix = "";
   if (!st.serverOk) {
