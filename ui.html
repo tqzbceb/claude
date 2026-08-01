@@ -314,8 +314,14 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .composer{border:1px solid var(--line2);border-radius:var(--r-lg);background:var(--bg-elev);padding:10px 12px;
   box-shadow:var(--shadow)}
 .composer textarea{border:none;box-shadow:none!important;padding:2px 0 0;display:block;
-  text-align:left;vertical-align:top;line-height:1.5;resize:none;
-  min-height:26px;height:26px;max-height:160px}  /* C4：钉死左上角 + 单行起步随内容长高；E4：禁手动拉高（resize:none），盒子永远贴合内容，能出光标的区域只有文本区一处 */
+  text-align:left;vertical-align:top;line-height:1.5;resize:vertical;overflow:auto;
+  min-height:26px;height:26px;max-height:60vh}
+/* C4：钉死左上角 + 单行起步随内容长高。
+   E7：手动拉高**还给用户**（resize:vertical）。「两处能点出光标」的真凶不是拉高，
+   是盒子里留了看不见的空行（发送/输入法确认那一下漏进来的 \n）：值不为空 → 灰底提示字消失、
+   盒子变两行高、于是第 1 行和第 2 行两个位置都能落光标。现在从根上治：
+   ① 只剩空白的值一律归零（提示字回来、盒子收回一行）；② 输入法确认候选词的那一下不再漏 \n；
+   ③ 就算你把盒子拉得很高，点下面的空白区域光标也只会落到文字末尾那一个位置（跟 Discord 一样）。 */
 .composer .cf{display:flex;align-items:center;gap:8px;margin-top:8px}
 .stat{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
 .stat .b{flex:1;min-width:120px;background:var(--bg-elev);border:1px solid var(--line);border-radius:var(--r);
@@ -920,8 +926,13 @@ const ini=s=>String(s||'?').replace(/[^\p{L}\p{N}]/gu,'').slice(0,2).toUpperCase
    e.isComposing / keyCode 229 = 中文输入法正在选词，这时的回车是确认候选，不能当发送。 */
 function enterToSend(el,send){
   if(!el)return;
+  /* 中文输入法用 Enter 确认候选词。那一下 keydown 有的输入法报 isComposing、有的已经报完
+     compositionend 才补一个干净的 Enter —— 后者以前会「既确认了词、又插进一个换行」，
+     于是盒子里多出一个看不见的空行（E7 两处光标的根因之一）。统一吃掉它：不换行也不发送。 */
+  el.addEventListener('compositionend',()=>{el._ime=Date.now();});
   el.onkeydown=e=>{
-    if(e.key!=='Enter'||e.shiftKey||e.isComposing||e.keyCode===229)return;
+    if(e.key!=='Enter'||e.shiftKey)return;
+    if(e.isComposing||e.keyCode===229||(Date.now()-(el._ime||0))<120){e.preventDefault();return;}
     e.preventDefault();send();
   };
 }
@@ -3039,8 +3050,23 @@ enterToSend($('#wbInput'),wbSend);
 /* C4：输入框单行起步、跟着内容长（最高 160px）。空盒只有一行高，
    第一个字永远顶着左上角 —— 不会再出现「高盒子，字的位置跟点的地方对不上」。 */
 function wbGrow(){const el=$('#wbInput');if(!el)return;
-  el.style.height='26px';el.style.height=Math.min(Math.max(el.scrollHeight,26),160)+'px';}
+  /* 只剩空白（空格/换行）的值一律归零：灰底提示字回来、盒子收回一行。
+     这一条治的就是「发完一条之后提示字没了、盒子莫名变高、两个地方都能点出光标」。 */
+  if(el.value && !el.value.trim())el.value='';
+  if(el._man)return;                                   // 你自己拉过高度就尊重它，不再自动收回
+  el.style.height='26px';
+  const h=Math.min(Math.max(el.scrollHeight,26),Math.round(innerHeight*.6));
+  el.style.height=h+'px';el._auto=h;}
 $('#wbInput').addEventListener('input',wbGrow);
+/* 手动拉高（resize:vertical）与自动长高的分工：拉过就记下来，别被自动长高覆盖；
+   拉回到接近单行就交还给自动。不管盒子多高，点空白区域光标只落到文字末尾 —— 只有一个位置。 */
+(function(){const el=$('#wbInput');if(!el||!window.ResizeObserver)return;
+  new ResizeObserver(()=>{const h=el.getBoundingClientRect().height;
+    if(el._auto&&Math.abs(h-el._auto)>3)el._man=true;
+    if(h<=30){el._man=false;el._auto=h;}}).observe(el);
+})();
+/* 点盒子里文字下面的空白：浏览器本来就把光标放到文字末尾（跟 Discord 一样，只有一个位置）。
+   前提是盒子里没有看不见的空行 —— 上面 wbGrow 的「空白归零」和输入法那一下的修复保证了这点。 */
 /* C5：不绑「点盒子空白处＝点输入框」。空盒只有 textarea 那一行能聚焦，
    光标只出现在左上角 —— 点下面的空白区域不再蹦出光标。 */
 wbGrow();

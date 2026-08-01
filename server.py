@@ -18,8 +18,8 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.11.6"                              # 服务端版本，界面和扩展都能看到
-EXT_MIN = "1.11.6"                               # 低于这个版本的扩展要提示用户更新
+VERSION = "1.11.7"                              # 服务端版本，界面和扩展都能看到
+EXT_MIN = "1.11.7"                               # 低于这个版本的扩展要提示用户更新
 # ---- E2：宽容读响应体 ----------------------------------------------------
 # 有些中转站（youzi.today 这类）返回的 Content-Length 跟实际字节数不符，或者压缩
 # 编码不规范。aiohttp 默认很严格，一发现对不上就抛 ClientPayloadError，并且把
@@ -2342,14 +2342,32 @@ class App:
             elif stale:
                 add("warn", "有一个 Discord 标签页需要按 F5",
                     "那个页面还连着旧脚本（扩展重载过）。按 F5 后这条就没了。")
+            # E8：这里以前一律说「扩展是旧版，去 chrome://extensions 点刷新」——
+            # 但报上来的版本号是**那个 Discord 标签页里跑着的脚本**的版本，不是磁盘上扩展的版本。
+            # 用户明明已经把扩展换成新版了，只要有一个老标签页没按 F5，它就照旧喊「扩展是旧版」，
+            # 把人往「去重装扩展」这条错路上带。所以先跟磁盘上那份比一比，再决定说哪句话。
+            disk = ext_version()
+            ao_tail = ("你还开着「自动点开新帖」——那个功能全靠新版扩展执行指令，"
+                       "旧版根本不认，所以现在一个帖子都不会被打开。"
+                       if self.br_cfg()["auto_open"] else "")
             for b in real:
-                if b.get("ver") and cmp_ver(b["ver"], EXT_MIN) < 0:
+                if not (b.get("ver") and cmp_ver(b["ver"], EXT_MIN) < 0):
+                    continue
+                who = " / ".join(x for x in (b.get("browser"), b.get("account"),
+                                             b.get("where")) if x) or b["id"]
+                if disk and cmp_ver(disk, b["ver"]) > 0:
+                    # 磁盘上的扩展已经比这个页面新 —— 扩展本身没问题，是这个标签页没刷新。
+                    add("warn", f"有个 Discord 标签页还跑着旧脚本 v{b['ver']}"
+                                f"（磁盘上的扩展已经是 v{disk}，扩展本身没问题）",
+                        f"要刷的是这个页面：{who}。回那个 Discord 标签页按一次 F5 就好 —— "
+                        "**不用**再去 chrome://extensions 重装扩展。"
+                        "（内容脚本只在页面加载时注入，换了扩展但没刷新的页面会一直用旧的那份。）"
+                        + ao_tail)
+                else:
                     add("warn", f"扩展是旧版 v{b['ver']}（程序要求 v{EXT_MIN}）",
                         "chrome://extensions 点这个扩展卡片上的刷新箭头，再回 Discord 按 F5。"
-                        + ("你还开着「自动点开新帖」——那个功能全靠新版扩展执行指令，"
-                           "旧版根本不认，所以现在一个帖子都不会被打开。"
-                           if self.br_cfg()["auto_open"] else ""))
-                    break
+                        + ao_tail)
+                break
         elif self.dc and self.dc.state != "online":
             add("bad", f"Discord 直连状态是 {self.dc.state}",
                 "Token 模式下这里必须是 online，看下面 [2] 段的报错。")
