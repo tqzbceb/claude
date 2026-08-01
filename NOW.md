@@ -152,7 +152,7 @@ tests/e2e_tabs.py（≥35 条）+ content_test.mjs 加 chrome.tabs 桩（≥10 �
    A2 回复消息盯人 / A3 多标签只弹一条 / A5 关开关立刻停 → 导一份诊断包发来
 
 ## 状态
-**🔨 N 窗口正在做 C2 收尾（扩展侧+e2e_tabs 已完成，别重做），步骤：① content_test.mjs chrome.tabs 桩 ≥10 条 → ② 全套回归 → ③ 三处版本号钉齐 1.11.0 → ④ README 新一节 → ⑤ 出程序+扩展两个 zip 进 release/ 和 outputs/ → ⑥ NOW/BACKLOG/HANDOFF 收尾。每步立刻 commit+push。**
+**🔨 N 窗口 C2 收尾：① content_test chrome.tabs 桩 27/27 ✓ → ② 全套回归（进行中）→ ③ 三处版本号已钉 1.11.0 → ④ README → ⑤ 出包 → ⑥ 收尾。**
 
 ## N 窗口（第十四个，2026-08-01）认领：C2 收尾六步
 照 M 窗口断点接。扩展侧（c13a0d8）/ ui.html（842d069）/ e2e_tabs.py（66a78a9）已落地，**别重做**。
