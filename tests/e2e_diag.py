@@ -82,7 +82,13 @@ ok("两个身份同一页，条数仍然是 22 不是 44", "22 条" in (w or {})
 
 print("3. 旧版扩展")
 ping("b-old", ver="1.5.0", browser="Chrome 149", stats={"parsed": 1, "sent": 1, "skip": {}})
-ok("旧版扩展会被点名", has("旧版 v1.5.0", "warn"), fnd())
+# E8：报上来的版本是「那个标签页里跑的脚本」的版本。磁盘上的扩展已经够新时，
+# 必须说「这个标签页跑着旧脚本、按 F5」，不能再喊「扩展是旧版、去 chrome://extensions 重装」。
+w = has("旧脚本 v1.5.0", "warn")
+ok("旧脚本的标签页会被点名（带版本号）", w, fnd())
+ok("说清扩展本身没问题", "扩展本身没问题" in (w or {}).get("what", ""), w)
+ok("点名是哪个页面要按 F5", "Chrome 149" in (w or {}).get("why", "") and "F5" in (w or {}).get("why", ""), w)
+ok("不再误导去重装扩展", "不用" in (w or {}).get("why", ""), w)
 
 print("4. 规则")
 rid = call("/api/rules", {"name": "t", "enabled": 0, "keywords_any": ["密钥"],
