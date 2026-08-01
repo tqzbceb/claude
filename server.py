@@ -18,8 +18,8 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.11.7"                              # 服务端版本，界面和扩展都能看到
-EXT_MIN = "1.11.7"                               # 低于这个版本的扩展要提示用户更新
+VERSION = "1.12.0"                              # 服务端版本，界面和扩展都能看到
+EXT_MIN = "1.12.0"                               # 低于这个版本的扩展要提示用户更新
 # ---- E2：宽容读响应体 ----------------------------------------------------
 # 有些中转站（youzi.today 这类）返回的 Content-Length 跟实际字节数不符，或者压缩
 # 编码不规范。aiohttp 默认很严格，一发现对不上就抛 ClientPayloadError，并且把

@@ -140,7 +140,10 @@ async def chat(req):
     user = "\n".join(m["content"] for m in b["messages"] if m["role"] == "user")
     kind = classify(system)
     CALLS.append({"kind": kind, "user": user[:400], "json_mode": bool(b.get("response_format")),
-                  "system": system[:6000], "stream": bool(b.get("stream")),
+                  # 别把这个上限调小：工作台的 system 是「身份 + 工具用法 + 实况」三段拼出来的，
+                  # 实况（拆好的链接 ID、最近的频道）在最后面。上限 6000 时 F1 一加提示词
+                  # 就把实况切掉了，e2e_wiz 尾巴上 8 条一起假红 —— 那是这里截的，不是程序丢的。
+                  "system": system[:40000], "stream": bool(b.get("stream")),
                   "tools": [t["function"]["name"] for t in (b.get("tools") or [])],
                   # 工具执行结果是 role=tool 发回来的，测试要断言「真喂回去了」就得看这里
                   "tool_out": "\n".join(str(m.get("content") or "") for m in b["messages"]
