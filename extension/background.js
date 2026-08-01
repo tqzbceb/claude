@@ -76,6 +76,27 @@ async function post(body) {
   }
 }
 
+/* ---------- 名字→ID 名录（F1） ----------
+   单独一个函数而不是复用 post()：名录不是消息，不能去动「上报了几条」的计数和
+   lastMsgAt —— 那两个数字是排查「为什么没提醒我」的依据，掺进名录就不准了。
+   失败也不写 sendErr（名录报不上去不代表旁听断了，别让状态灯误报红）。 */
+async function postNames(body) {
+  const port = await getPort();
+  try {
+    const full = await stamp(body);
+    const r = await fetch(`http://127.0.0.1:${port}/api/ext/names`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(full),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`dcwatch 返回 ${r.status}`);
+    await setSt({ namesAt: Date.now(), namesN: (j.stat && j.stat.total) || 0 });
+    return { ok: true, learned: j.learned || 0, stat: j.stat || {} };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 /* ---------- 体检：只 GET /api/state，不碰服务端的心跳时间 ---------- */
 async function health() {
   const port = await getPort();
@@ -304,6 +325,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (!msg) return false;
   if (msg.type === "dcwatch") {                    // 内容脚本来的消息/心跳
     post(msg.payload).then(reply).catch(e => reply({ ok: false, error: String(e) }));
+    return true;
+  }
+  if (msg.type === "dcwatch-names") {              // 内容脚本抄来的名字→ID 名录（F1）
+    postNames(msg.payload).then(reply).catch(e => reply({ ok: false, error: String(e) }));
     return true;
   }
   if (msg.type === "dcwatch-status") {             // 弹窗要状态

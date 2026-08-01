@@ -2,6 +2,7 @@
    只读 DOM，不改页面、不发请求给 Discord、不碰你的 token。
    端口和 dcwatch 的 --port 一致，默认 8777。 */
 const ENDPOINT = "http://127.0.0.1:8777/api/ingest";
+const NAMES_ENDPOINT = "http://127.0.0.1:8777/api/ext/names";   // 名字→ID 名录（F1）
 const BOOT_QUIET_MS = 4000;   // 刚打开/刚切频道时已有的历史消息不算“新消息”
 const MSG_MAX_AGE_MS = 3 * 60 * 1000;  // 消息自己的时间戳超过这么久 = 历史，不上报
 const RENDER_BURST = 8;       // 一批冒出这么多条才怀疑是渲染/回填（还要看消息本身新不新）
@@ -338,7 +339,11 @@ async function scanHistory(want = 300, onProgress = () => {}) {
 }
 
 const observer = new MutationObserver(muts => {
-  if (location.pathname !== lastPath) { lastPath = location.pathname; boot = Date.now(); }
+  if (location.pathname !== lastPath) {
+    lastPath = location.pathname; boot = Date.now();
+    // 切了服务器/频道就补一次名录（侧栏整片换掉了，新服务器的频道名只有这时候看得见）
+    setTimeout(() => { try { harvestNames(true); } catch (e) { } }, 1500);
+  }
   const fresh = Date.now() - boot > BOOT_QUIET_MS;
   const lis = [];
   const added = [];
@@ -395,6 +400,173 @@ const observer = new MutationObserver(muts => {
 /* 先把当前已渲染的消息记为“见过” */
 document.querySelectorAll('li[id^="chat-messages-"]').forEach(li => seen.add(li.id));
 observer.observe(document.body, { childList: true, subtree: true });
+
+/* ================= 名字→ID 名录（F1） =================
+   用户的原话：「我输入用户名字或者频道名字他没法监听啊，必须要我给 id」。
+   规则在服务端匹配、服务端只认 ID，而名字只在浏览器里看得见 —— 所以这一段的活儿是：
+   把侧栏里「这个名字是哪个 ID」抄下来报给 dcwatch，之后界面和工作台就能按名字建规则。
+
+   为什么抄侧栏而不是等消息：侧栏的频道链接天然带 /channels/<服务器ID>/<频道ID>，
+   名字就在旁边 —— 进了服务器就有，不用等有人说话，也就不受「没规则不收信」的闸影响。
+   （那个闸正是「第一条规则没处抄 ID」的由来。）
+   只读 DOM，一条请求都不发给 Discord。 */
+const NAME_PUSH_MS = 5 * 60 * 1000;      // 最多 5 分钟报一次全量（改名/新服务器跟得上就够）
+const sentNames = new Map();             // kind:id -> 上次报的内容签名，只报变化的
+let lastNameScan = 0;
+
+/* 一个元素身上「像名字」的字。
+   textFirst：频道/成员这种要**先看可见文字** —— Discord 给频道链接的 aria-label 是
+   「公告 (文字频道)」这种带括号说明的串，直接拿会把说明当成名字的一部分，
+   用户按「公告」就查不着了。属性值里的尾巴括号一律剥掉，前缀的 # / @ 也剥。 */
+function cleanName(v) {
+  return String(v || "").trim().replace(/\s*[(（][^()（）]{1,20}[)）]\s*$/, "")
+    .replace(/^[#@]\s*/, "").trim().slice(0, 120);
+}
+function nameOf(el, textFirst = false) {
+  if (!el) return "";
+  const attrs = () => {
+    for (const a of ["data-dnd-name", "aria-label", "title"]) {
+      const v = cleanName(el.getAttribute && el.getAttribute(a));
+      if (v) return v;
+    }
+    return "";
+  };
+  const text = () => {
+    const inner = el.querySelector && el.querySelector('[class*="name"]');
+    return cleanName((txt(inner) || txt(el)).split("\n")[0]);
+  };
+  return textFirst ? (text() || attrs()) : (attrs() || text());
+}
+
+/* 当前服务器的名字。页面标题的尾巴最稳（"#general | 服务器名"），
+   拿不到就退回侧栏顶部的服务器头。 */
+function guildNameNow() {
+  const t = (document.title || "").replace(/^\(\d+\)\s*/, "");
+  const parts = t.split("|").map(s => s.trim()).filter(Boolean);
+  if (parts.length >= 2 && !/^Discord$/i.test(parts[parts.length - 1])) {
+    return parts[parts.length - 1].slice(0, 120);
+  }
+  const h = document.querySelector('nav[class*="guildSidebar"] header h1, header[class*="header"] h1');
+  return txt(h).split("\n")[0].slice(0, 120);
+}
+
+/* 左边那一列服务器图标：每个都是 /channels/<服务器ID>，名字在 data-dnd-name / aria-label 上 */
+function harvestGuilds(out) {
+  for (const a of document.querySelectorAll('nav a[href^="/channels/"], [data-list-id*="guildsnav"] a[href^="/channels/"]')) {
+    const m = /^\/channels\/(\d{15,25})\b/.exec(a.getAttribute("href") || "");
+    if (!m) continue;
+    const holder = a.closest("[data-dnd-name]") || a.querySelector("[data-dnd-name]") || a;
+    const nm = nameOf(holder);
+    if (nm) out.push({ kind: "guild", id: m[1], name: nm });
+  }
+}
+
+/* 频道侧栏：按 DOM 顺序走，分类头记住，后面的频道就都挂在它下面 ——
+   名字重了（好几个服务器都有 #公告）时，用户靠「服务器 › 分类」才认得出是哪个。 */
+function harvestChannels(out) {
+  const gname = guildNameNow();
+  const box = document.querySelector('[data-list-id="channels"], nav[class*="sidebar"] ul, #channels') || document;
+  let cat = { id: "", name: "" };
+  for (const li of box.querySelectorAll('[data-list-item-id], li')) {
+    const raw = li.getAttribute("data-list-item-id") || "";
+    const idm = /(\d{15,25})/.exec(raw);
+    const a = li.querySelector('a[href*="/channels/"]');
+    const href = a ? (a.getAttribute("href") || "") : "";
+    const hm = /\/channels\/(\d{15,25}|@me)\/(\d{15,25})/.exec(href);
+    if (!a || !hm) {
+      // 没有链接但有 ID 的条目 = 分类（分类点了只是折叠，没有自己的地址）
+      if (idm && li.querySelector('h3, [class*="containerDefault"] > div')) {
+        const nm = nameOf(li.querySelector('h3') || li, true);
+        if (nm) { cat = { id: idm[1], name: nm }; out.push({ kind: "category", id: cat.id, name: nm,
+                                                            guild_id: fromUrl().guild_id, guild_name: gname }); }
+      }
+      continue;
+    }
+    const nm = nameOf(a, true);
+    if (!nm) continue;
+    out.push({ kind: "channel", id: hm[2], name: nm,
+               guild_id: hm[1] === "@me" ? "" : hm[1], guild_name: hm[1] === "@me" ? "" : gname,
+               parent_id: cat.id, parent_name: cat.name });
+  }
+}
+
+/* 论坛/子区列表里的帖子：标题就是用户嘴里的「那个帖」 */
+function harvestThreads(out) {
+  const u = fromUrl();
+  const gname = guildNameNow();
+  for (const el of document.querySelectorAll('[data-item-id], [class*="threadItem"], [class*="postCard"], li[class*="thread"]')) {
+    const id = threadIdOf(el);
+    if (!id) continue;
+    const nm = threadTitleOf(el, id);
+    if (!nm || nm === id) continue;
+    out.push({ kind: "thread", id, name: nm, guild_id: u.guild_id, guild_name: gname,
+               parent_id: u.channel_id, parent_name: titleChannelName() });
+  }
+}
+
+/* 人：右边成员栏和私信列表。用户 ID 只能从头像地址 /avatars/<id>/ 抠 ——
+   用默认头像的人抠不到，那种就只能等他说话时从消息头学（服务端也在学）。 */
+function harvestUsers(out) {
+  const gname = guildNameNow();
+  const rows = document.querySelectorAll(
+    '[aria-label*="成员"] [class*="member"], [aria-label*="Members"] [class*="member"], ' +
+    '[class*="memberList"] [class*="member"], [class*="privateChannels"] a[href^="/channels/@me/"]');
+  for (const row of rows) {
+    const img = row.querySelector('img[src*="/avatars/"]');
+    const m = img && /\/avatars\/(\d{15,25})\//.exec(img.getAttribute("src") || "");
+    if (!m) continue;
+    const nm = nameOf(row.querySelector('[class*="name"]') || row, true);
+    if (!nm) continue;
+    out.push({ kind: "user", id: m[1], name: nm,
+               guild_id: fromUrl().guild_id, guild_name: gname });
+  }
+}
+
+function harvestNames(force = false) {
+  if (!force && Date.now() - lastNameScan < 20000) return;   // 别每次 DOM 变动都全量扫
+  lastNameScan = Date.now();
+  const raw = [];
+  try { harvestGuilds(raw); } catch (e) { /* Discord 改版就少一类，不影响其他 */ }
+  try { harvestChannels(raw); } catch (e) { }
+  try { harvestThreads(raw); } catch (e) { }
+  try { harvestUsers(raw); } catch (e) { }
+  const fresh = [];
+  const full = force || Date.now() - (harvestNames.lastFull || 0) > NAME_PUSH_MS;
+  for (const it of raw) {
+    if (!it.id || !it.name) continue;
+    const k = it.kind + ":" + it.id;
+    const sig = JSON.stringify(it);
+    if (!full && sentNames.get(k) === sig) continue;   // 没变过的不重复报
+    sentNames.set(k, sig);
+    fresh.push(it);
+  }
+  if (sentNames.size > 6000) sentNames.clear();
+  if (full) harvestNames.lastFull = Date.now();
+  if (!fresh.length) return;
+  // 一次最多 500 条，剩下的下一轮再报（侧栏很长的大服务器不至于一口气打一个巨包）
+  sendNames(fresh.slice(0, 500));
+}
+
+/* 名录走自己的口子 /api/ext/names，不混进消息投递 —— 名录和「有没有新消息」无关，
+   混在一起会把「上报了几条消息」的计数搅乱，诊断就不可信了。 */
+function sendNames(names) {
+  const body = { names, where: titleChannelName(), ver: EXT_VER };
+  try {
+    if (globalThis.chrome && chrome.runtime && chrome.runtime.id) {
+      chrome.runtime.sendMessage({ type: "dcwatch-names", payload: body },
+                                 () => void chrome.runtime.lastError);
+      return;
+    }
+  } catch (e) { /* 扩展被重载：退回页面直连 */ }
+  fetch(NAMES_ENDPOINT, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, bridge: "page-direct" }),
+  }).catch(() => { });
+}
+
+setTimeout(() => harvestNames(true), 3000);      // 页面刚渲染完扫一遍
+setInterval(() => harvestNames(true), NAME_PUSH_MS);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) harvestNames(true); });
 
 /* 心跳：让 dcwatch 界面左下角亮绿灯（服务端判定是 90 秒内有心跳），
    顺手把当前频道名带上，扩展图标的提示里会显示「正在旁听 #xxx」。
