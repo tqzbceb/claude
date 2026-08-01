@@ -2605,9 +2605,16 @@ class App:
         px = ((self.cfg.get("net") or {}).get("proxy") or "").strip()
         hint = ""
         if any("TimeoutError" in t or "Cannot connect" in t or "ClientConnector" in t for t in tried):
-            hint = ("。连不上对方服务器：国内直连 api.openai.com 一般是通不过的，"
-                    f"去「设置」填一个代理{'（当前填的是 ' + px + '）' if px else ''}，"
-                    "或者换 DeepSeek / 通义 / 本机 Ollama 这类能直连的")
+            from urllib.parse import urlparse as _up
+            _host = _up(base_url if "://" in base_url else "https://" + base_url).netloc or base_url
+            hint = (f"。连不上 {_host}：TCP 连接根本没建立起来。"
+                    + (f"你在「设置」里填了代理（{px}），但走这个代理还是连不上——换个节点或检查代理软件。"
+                       if px else
+                       "如果你开着代理软件（TUN/全局）它还是连不上，多半是 TUN 抓不到 python.exe"
+                       "——不少加速器只接管浏览器和游戏，不接管这种命令行程序，浏览器能通≠它能通。"
+                       "最稳的办法：去「设置」直接填代理软件的本地端口"
+                       "（Clash 一般是 http://127.0.0.1:7890 或 7897，v2rayN 一般是 http://127.0.0.1:10809），"
+                       "填完再拉一次；也可以换 DeepSeek / 通义 / 本机 Ollama 这类能直连的"))
         elif any("HTTP 401" in t or "HTTP 403" in t for t in tried):
             hint = "。看着像 Key 不对或没权限"
         elif any("HTTP 404" in t for t in tried):
