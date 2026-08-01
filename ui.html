@@ -279,6 +279,16 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .tnode.c{padding-left:26px} .tnode.t{padding-left:44px;font-size:12.5px;color:var(--text2)}
 .tnode .add{margin-left:auto;opacity:0}
 .tnode:hover .add{opacity:1}
+/* F3：一个服务器几十个频道，铺开就把抽屉拉得老长 → 服务器和「子区」做成可折叠块。
+   summary 自己就是那一行，所以要把浏览器默认的小三角关掉，换成自己画的 ▸。 */
+.tree details>summary{list-style:none}
+.tree details>summary::-webkit-details-marker{display:none}
+.tree summary.tnode{cursor:pointer}
+.tree summary.tnode::before{content:'▸';width:11px;flex-shrink:0;color:var(--text3);
+  transition:transform .12s;text-align:center}
+.tree details[open]>summary.tnode::before{transform:rotate(90deg)}
+.tnode .tc{font:11px var(--sans);color:var(--text3);font-weight:400}
+.tnode.t{border-bottom:1px solid var(--line)}
 .wb{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px;height:100%}
 /* ============ workbench sessions ============ */
 #wbSide{width:210px;flex-shrink:0;display:flex;flex-direction:column;gap:8px;
@@ -1676,6 +1686,15 @@ async function impPreview(mode){
     toast(`导入完成：新增 ${p.new}、覆盖 ${p.overwrite}、没变 ${p.same}`+(p.remove?`、删除 ${p.remove}`:''));};
 }
 
+/* ---------- 可折叠块（F3） ----------
+   给任何 <details data-fold="键"> 记住展开状态：折起来一次，下次打开这个抽屉还是折着的，
+   不然每次进「挑频道」都得重新收一遍。localStorage 读不了（隐私模式）就当没这功能，不报错。 */
+function wireFolds(root){(root||document).querySelectorAll('details[data-fold]').forEach(d=>{
+  const key='dcw.fold.'+d.dataset.fold;
+  try{const v=localStorage.getItem(key);if(v!==null)d.open=(v==='1');}catch(e){}
+  d.addEventListener('toggle',()=>{try{localStorage.setItem(key,d.open?'1':'0');}catch(e){}});});}
+function foldAll(sel,open){$$(sel+' details[data-fold]').forEach(d=>{d.open=open;});}
+
 /* ---------- drawer ---------- */
 function openDrawer(html){$('#drawer').innerHTML=html;$('#drawer').classList.add('on');$('#scrim').classList.add('on');}
 function closeDrawer(){$('#drawer').classList.remove('on');$('#scrim').classList.remove('on');}
@@ -1921,16 +1940,33 @@ async function openPicker(){
   const gs=res?.ok?res.guilds:[{id:'9312…4471',name:'（演示）我的服务器',channels:[
     {id:'1102…8830',name:'general',threads:[]},{id:'1188…2201',name:'bug-report',threads:[
       {id:'1201…7788',name:'登录 500'},{id:'1201…7799',name:'移动端白屏'}]}]}];
+  // F3：默认收起。只有一个服务器时它自己展开——省一次点击，也不至于拉长页面
+  const one=gs.length===1;
+  const chan=c=>`# ${esc(c.name)}<span class="tc">${esc(c.id)}</span>
+    <button class="btn sm add" data-k="channel_ids" data-id="${esc(c.id)}">加为频道</button>`;
   openDrawer(`<div class="dh"><h2>挑频道 / 子区</h2><span class="sp" style="flex:1"></span>
+      <button class="btn ghost sm" id="pkOpen">全部展开</button>
+      <button class="btn ghost sm" id="pkShut">全部收起</button>
       <button class="btn ghost" id="pkBack">返回规则</button></div>
     <div class="db">${res?.ok?'':'<div class="banner">没连上 Discord，下面是示例结构。填好 Token 后这里会列出真实频道。</div>'}
-    <div class="tree">${gs.map(g=>`<div class="tnode g">${esc(g.name)}<code class="mono" style="margin-left:auto;color:var(--text3)">${esc(g.id)}</code></div>
-      ${g.channels.map(c=>`<div class="tnode c"># ${esc(c.name)}
-        <button class="btn sm add" data-k="channel_ids" data-id="${esc(c.id)}">加为频道</button></div>
-        ${c.threads.map(t=>`<div class="tnode t">⤷ ${esc(t.name)}
-          <button class="btn sm add" data-k="thread_ids" data-id="${esc(t.id)}">加为子区</button></div>`).join('')}`).join('')}`).join('')}</div></div>`);
-  $$('.add').forEach(b=>b.onclick=()=>{const k=b.dataset.k;(S.editing[k]=S.editing[k]||[]);
+    <div class="hint" style="margin:0 0 8px">点服务器名字展开它的频道；有子区的频道也能展开。<b>折起来的状态会记住</b>。</div>
+    <div class="tree" id="pkTree">${gs.map(g=>`<details data-fold="pk.g.${esc(g.id)}"${one?' open':''}>
+      <summary class="tnode g">${esc(g.name)}<span class="tc">${g.channels.length} 个频道</span>
+        <code class="mono" style="margin-left:auto;color:var(--text3)">${esc(g.id)}</code></summary>
+      ${g.channels.map(c=>(c.threads||[]).length
+        ? `<details data-fold="pk.c.${esc(c.id)}"><summary class="tnode c">${chan(c)}
+            <span class="tc">${c.threads.length} 个子区 ▾</span></summary>
+          ${c.threads.map(t=>`<div class="tnode t">⤷ ${esc(t.name)}
+            <button class="btn sm add" data-k="thread_ids" data-id="${esc(t.id)}">加为子区</button></div>`).join('')}</details>`
+        : `<div class="tnode c">${chan(c)}</div>`).join('')}
+      </details>`).join('')}</div></div>`);
+  // 「加为…」按钮长在 summary 里：不拦住事件的话，点一下会顺手把这个块折叠/展开
+  $$('.add').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();
+    const k=b.dataset.k;(S.editing[k]=S.editing[k]||[]);
     if(!S.editing[k].includes(b.dataset.id))S.editing[k].push(b.dataset.id);toast('已加入 '+b.dataset.id);});
+  wireFolds($('#pkTree'));
+  $('#pkOpen').onclick=()=>foldAll('#pkTree',true);
+  $('#pkShut').onclick=()=>foldAll('#pkTree',false);
   $('#pkBack').onclick=()=>editRule(S.editing);}
 /* E1：报错渲染成多行块。第一行是人能看懂的结论，后面「试过什么」压成灰字细节。 */
 function errHtml(txt){const t=String(txt||'');const i=t.indexOf('试过：');
