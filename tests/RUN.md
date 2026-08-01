@@ -3,14 +3,15 @@
 这个目录就在项目根下面（`<项目>/tests/`），`runall.sh` 自己会找到 `../server.py`，
 不需要配任何路径。布局不一样时用 `DC=/path/to/dcwatch ./runall.sh ...`。
 
-改完 server.py，**858 条全跑一遍**（14 件；F1 之后新增 e2e_name 82 条、e2e_wb 涨到 192）（一次两三套，命令超时一般 120s）：
+改完 server.py，**870 条全跑一遍**（14 件；F1 之后新增 e2e_name 82 条、e2e_wb 涨到 192。
+条数以实测为准 —— 2026-08-02 AO 窗口逐套点过，e2e.py 是 60 不是 48、e2e_diag 是 50 不是 47）（一次两三套，命令超时一般 120s）：
 
 ```bash
 pip install aiohttp        # 唯一依赖；某些一次性环境每次都要重装
 cd tests
-./runall.sh e2e.py e2e_ai.py                     # 48 + 27
+./runall.sh e2e.py e2e_ai.py                     # 60 + 27
 ./runall.sh e2e_multi.py e2e_wiz.py              # 26 + 83（wiz 单套约 40s，别再多塞）
-./runall.sh e2e_v17.py e2e_diag.py                # 46 + 47
+./runall.sh e2e_v17.py e2e_diag.py                # 46 + 50
 ./runall.sh e2e_wb.py e2e_imp.py                 # 192 + 74
 ./runall.sh e2e_ext.py e2e_chat.py               # 53 + 42
 ./runall.sh e2e_tabs.py e2e_chk.py               # 53 + 56
