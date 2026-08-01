@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "dcwatch bridge",
-  "version": "1.11.4",
+  "version": "1.11.5",
   "description": "把 Discord 网页版里看到的新消息转发给本机 dcwatch（只读，不发任何东西给 Discord）。Discord 页面右下角有状态显示，点扩展图标也能自检。",
   "host_permissions": [
     "http://127.0.0.1/*",
