@@ -152,6 +152,15 @@ tests/e2e_tabs.py（≥35 条）+ content_test.mjs 加 chrome.tabs 桩（≥10 �
    A2 回复消息盯人 / A3 多标签只弹一条 / A5 关开关立刻停 → 导一份诊断包发来
 
 ## 状态
+**🔨 O 窗口（第十五个，2026-08-01）认领：e2e_chk.py 专项债（PLAN_B1 §3.3，代码侧最后一块）。**
+用户发「1」让继续。接手核实：C2 已由 N 窗口收尾、v1.11.0 已出包（`6bc3ac8`），
+BACKLOG 代码侧只剩这一条债。步骤：① 认领推送 → ② 读 mockllm/e2e_wiz.msys/e2e_imp§13/e2e_tabs
+模板 → ③ 写 tests/e2e_chk.py（≥40 条，钉死 §3.3 的 13 条）→ ④ 自测全绿 + 相关回归复跑
+（e2e/ai/imp/diag/wb/chat）→ ⑤ RUN.md 加覆盖清单+两个坑、BACKLOG B1 打勾、NOW/HANDOFF 收尾推送。
+工作区又是新的：clone ✓、根 AGENTS.md 指针 ✓、PAT 长存 secrets/ ✓（token1 …0Dx28of 可推）、
+远端核实 HEAD=6bc3ac8 无人撞车 ✓。
+
+## 状态
 **✅ C2 收尾完成，v1.11.0 已出包已推送（N 窗口，2026-08-01）。**
 六步全做完：① content_test chrome.tabs 桩 27/27 ✓ → ② 全套回归 **619 服务端 + 89 浏览器侧全绿**
 （e2e 50 · ai 27 · multi 26 · wb 118 · imp 74 · ext 53 · v17 46 · diag 47 · chat 42 · wiz 83 · tabs 53；
