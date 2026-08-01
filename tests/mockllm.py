@@ -73,6 +73,42 @@ async def models(_):
     return web.json_response({"data": [{"id": "mock-1"}, {"id": "mock-2"}]})
 
 
+# ---- E2：模拟不规范中转站（youzi.today 那种）----------------------------
+async def models_cut(_):
+    """Content-Length 说 400 字节，实际只发一半就断 —— 严格客户端会抛
+    ClientPayloadError 并把已收到的数据丢掉，宽容读取应该救回来。"""
+    body = json.dumps({"data": [{"id": "cut-1"}, {"id": "cut-2"}, {"id": "cut-3"}]}).encode()
+    r = web.StreamResponse(status=200, headers={"Content-Type": "application/json",
+                                               "Content-Length": str(len(body) + 400)})
+    await r.prepare(_)
+    await r.write(body)          # 少发 400 字节就走
+    return r
+
+
+async def models_trunc(_):
+    """JSON 本身被截断（尾巴没了），只能靠从原始文本里捞 "id" 抢救。"""
+    body = json.dumps({"data": [{"id": "tr-1"}, {"id": "tr-2"}, {"id": "tr-3"}]})
+    return web.Response(body=body[: body.rindex("tr-3") + 5].encode(),
+                        content_type="application/json")
+
+
+async def models_junk(_):
+    """前面有垃圾/BOM，后面才是 JSON。"""
+    return web.Response(body="\ufeff)]}'\n".encode() +
+                        json.dumps({"data": [{"id": "junk-1"}]}).encode(),
+                        content_type="text/plain")
+
+
+async def models_enc(req):
+    """只有明确说 identity（不压缩）时才给正常数据，否则回一坨解不开的假压缩体。
+    用来验证第一轮 Accept-Encoding: identity 确实发出去了。"""
+    if "identity" in (req.headers.get("Accept-Encoding") or ""):
+        return web.json_response({"data": [{"id": "enc-ok"}]})
+    return web.Response(body=b"\x1f\x8b\x08\x00garbage-not-really-gzip",
+                        headers={"Content-Encoding": "gzip"},
+                        content_type="application/json")
+
+
 def tc(items):
     """把 [{"name":..,"args":{..}}] 变成 OpenAI 那种 tool_calls 结构。"""
     return [{"id": f"call_{i}", "type": "function",
@@ -228,6 +264,10 @@ async def script(req):
 
 app = web.Application()
 app.router.add_get("/v1/models", models)
+app.router.add_get("/cut/v1/models", models_cut)
+app.router.add_get("/trunc/v1/models", models_trunc)
+app.router.add_get("/junk/v1/models", models_junk)
+app.router.add_get("/enc/v1/models", models_enc)
 app.router.add_post("/v1/chat/completions", chat)
 app.router.add_get("/__calls", calls)
 app.router.add_post("/__reset", reset)

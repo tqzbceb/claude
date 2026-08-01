@@ -225,4 +225,30 @@ chk("失败且明说 Key 空", (not m3.get("ok")) and "API Key 是空的" in (m3
 call("/api/config", {"providers": [{"name": "mock", "base_url": "http://127.0.0.1:8899/v1",
                                     "api_key": "sk-test"}]})   # 复原，别影响后面的套
 
+print("15. E2：不规范中转站（响应体长度对不上/JSON 截断/前面有垃圾/压缩解不开）也要拉到模型")
+CASES = [
+    ("cut", "Content-Length 对不上、发一半就断", ["cut-1", "cut-2", "cut-3"], True),
+    ("trunc", "JSON 尾巴被截断，从原始文本捞 id", ["tr-1", "tr-2", "tr-3"], True),
+    ("junk", "前面有 BOM/垃圾字符", ["junk-1"], False),
+    ("enc", "只在 Accept-Encoding: identity 时才给数据", ["enc-ok"], False),
+]
+for tag, why, want, need_note in CASES:
+    call("/api/config", {"providers": [
+        {"name": "mock", "base_url": "http://127.0.0.1:8899/v1", "api_key": "sk-test"},
+        {"name": "bad", "base_url": f"http://127.0.0.1:8899/{tag}/v1", "api_key": "sk-test"}]})
+    r = call("/api/models", {"provider": "bad"})
+    chk(f"{why} → 照样拉到 {want}", r.get("ok") and r.get("models") == want, r)
+    if need_note:
+        chk(f"{why} → 界面能看到走了兜底", bool(r.get("rescued")), r)
+
+print("16. E2：真拉不到时，提示不能再甩锅给本机代理/杀毒")
+call("/api/config", {"providers": [
+    {"name": "mock", "base_url": "http://127.0.0.1:8899/v1", "api_key": "sk-test"},
+    {"name": "dead", "base_url": "http://127.0.0.1:8899/__chk", "api_key": "sk-test"}]})
+r = call("/api/models", {"provider": "dead"})
+chk("失败了且没有那句甩锅话", (not r.get("ok"))
+    and "杀毒软件" not in (r.get("error") or ""), r)
+call("/api/config", {"providers": [{"name": "mock", "base_url": "http://127.0.0.1:8899/v1",
+                                    "api_key": "sk-test"}]})   # 复原
+
 print(f"\n通过 {ok} / 失败 {fail}")
