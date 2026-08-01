@@ -584,9 +584,11 @@ ai(tools=True)
 pr = [x for x in call("/api/prompts")["builtin"] if x["key"] == "wb_text"][0]
 tl = [x for x in call("/api/prompts")["builtin"] if x["key"] == "wb_tools"][0]
 for nm in ("list_watch", "create_watch", "update_watch", "set_watch_enabled", "delete_watch",
-           "check_watch_now", "set_notify", "set_auto_open", "set_default_model"):
+           "check_watch_now", "set_notify", "set_auto_open", "set_default_model", "find_target"):
     ok(f"文本指令协议里有 {nm}", nm in pr["text"], pr["text"][:200])
     ok(f"函数版提示词里也点了 {nm}", nm in tl["text"], tl["text"][:200])
 ok("提示词明说别输出一二三步教用户自己点", "教他自己去点" in tl["text"], tl["text"][:400])
+# F1：用户说名字而不是 ID 时，模型的手是 find_target（名录专项断言在 e2e_name.py）
+ok("函数版提示词要求候选先给用户确认再动手", "确认" in tl["text"], tl["text"][:400])
 
 print(f"\n通过 {P} / 失败 {F}")

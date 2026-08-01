@@ -1522,11 +1522,11 @@ async def run_wb_tool(app, name, args, allow_ids):
         return {"known": txt}, "", False
 
     if name == "find_target":
-        q = str(a.get("name") or "").strip()
+        q = str(args.get("name") or "").strip()
         if not q:
             return {"error": "要找哪个名字？name 不能空"}, "", False
-        kind = str(a.get("kind") or "").strip()
-        hits = app.lookup_names(q, kind, a.get("limit") or 12)
+        kind = str(args.get("kind") or "").strip()
+        hits = app.lookup_names(q, kind, args.get("limit") or 12)
         st = app.names_stat()
         out = {"query": q, "kind": kind or "全部", "count": len(hits), "candidates": hits,
                "names_known": st}
