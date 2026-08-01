@@ -196,6 +196,11 @@ ok("gone 报告＝事实同步：标成已关", (row("610000000000000013") or {}
    row("610000000000000013"))
 
 print("5. close 闸门（闲置判定用最后一条消息的 ts；刚开的不关；0=不自动关）")
+# A7：帖内消息要有规则罩着才进库，而闲置判定读的正是 messages 里的最后 ts。
+# 前面建的规则只听「开新帖」（kinds=thread），帖内 msg 全被闸挡，这里补一条罩帖内消息的。
+call("/api/rules", {"name": "帖内消息兜底", "enabled": 1, "kinds": ["msg"],
+                    "thread_ids": ["610000000000000010", "610000000000000011", "610000000000000012"],
+                    "ignore_bots": False, "keywords_any": ["∅绝不出现∅"], "action": "notify"})
 # 61010/61011/61012 第 3 节「开着」；61013 已关。先把 61010 的 opened_at 改到 10 分钟前
 db("UPDATE threads_open SET opened_at=? WHERE tid=?", (time.time() - 600, "610000000000000010"))
 call("/api/ingest", {"messages": [{"msg_id": "m61010a", "guild_id": G,

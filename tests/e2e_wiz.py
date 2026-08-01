@@ -32,6 +32,10 @@ call("/api/config", {"providers": [{"name": "mock", "base_url": "http://127.0.0.
                                     "api_key": "sk-test"}],
                      "default_model": {"provider": "mock", "model": "mock-1"}})
 call("/api/messages/clear", {})
+# A7：没规则罩着的消息不进库。放一条罩得住但永不提醒的兜底规则，
+# 让下面那条 w1 落库，rule_ctx 才有真频道/真人 ID 喂给向导。
+call("/api/rules", {"name": "A7测试兜底", "enabled": 1, "kinds": ["msg", "thread"],
+                    "ignore_bots": False, "keywords_any": ["∅绝不出现∅"], "action": "notify"})
 call("/api/ingest", {"bridge": "wiz", "account": "小明",
                      "messages": [{"msg_id": "w1", "guild_id": "111111111111111111",
                                    "channel_id": "222222222222222222", "channel_name": "交易",

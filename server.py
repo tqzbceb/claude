@@ -1908,6 +1908,7 @@ class App:
         self.sum_buf: dict[str, list] = {}
         self.last_ingest = 0.0        # 浏览器旁听最后一次投递时间（所有桥里最新的那次）
         self.ingest_count = 0
+        self._gate_n = 0              # A7 收信闸拦下的条数（诊断包要印出来）
         self.started = now()          # 用于诊断包里的「已跑多久」
         self.bridges = {}             # 每个装了扩展的浏览器 = 一个桥，独立跟踪
         self.hb_seen = {}             # 来 /api/ext/hb 要过指令的桥：bid → 最后一次来的时间
@@ -2155,7 +2156,10 @@ class App:
                   "如果你确认刚刚有人发了新消息却没上报，把这份诊断发出去。")
         if live and not n_msg:
             add("warn", "库里一条消息都没有",
-                "从程序启动到现在，你正在看的那个频道可能就是没有新消息 —— 自己发一条测试最快。")
+                (f"启动以来有 {self._gate_n} 条消息被收信闸拦下了：它们所在的地方没有任何启用的规则在盯"
+                 "（现在没写规则就是不收信）。想收哪个频道，去「监听规则」建一条框住它；"
+                 "要是那个频道本来就安静，自己发一条测试最快。" if self._gate_n else
+                 "从程序启动到现在，你正在看的那个频道可能就是没有新消息 —— 自己发一条测试最快。"))
 
         # ---- 有消息之后，规则和出口 ----
         if not rules:
@@ -2580,8 +2584,10 @@ class App:
             return await r.json()
 
     # ---------- rule engine ----------
-    def match(self, rule, ev):
-        """ev: normalized event dict. returns (ok, reason)"""
+    def covers(self, rule, ev):
+        """A7 收信闸：这条规则的「什么时候 + 听哪里 + 听谁」罩不罩得住这条消息。
+        罩得住才收进收信箱；听内容（最短/关键词/正则）不在这里 —— 那档只筛提醒，
+        拿它挡收信会把 AI 复核、工作台要看的现场上下文掐死。match() = covers() + 听内容。"""
         if rule.get("source", "discord") != ev["source"]:
             return False, "source"
         if (ev.get("kind") or "msg") not in (rule.get("kinds") or ["msg"]):
@@ -2617,6 +2623,14 @@ class App:
             return False, "author-name"
         if rule["mention_only"] and not ev["mentions_me"]:
             return False, "mention"
+        return True, "罩得住"
+
+    def match(self, rule, ev):
+        """ev: normalized event dict. returns (ok, reason)。
+        收不收看 covers()；这里只管「提不提醒」的内容档（最短/关键词/正则）。"""
+        ok, why = self.covers(rule, ev)
+        if not ok:
+            return False, why
         c = ev["content"] or ""
         if len(c) < int(rule.get("min_len") or 0):
             return False, "len"
@@ -2666,6 +2680,12 @@ class App:
         if ev.get("kind") == "thread" and not ev.get("scanned"):
             with contextlib.suppress(Exception):
                 self.queue_thread(ev)
+        # A7 收信闸：收信箱只收「有启用规则罩得住」的消息，零规则 = 零收信。
+        # 闸只挡入库和实时推送：C2 自动开帖的排队在上面已经做完；抓历史走 store_only 不过闸。
+        # 扩展自检消息（channel_id 固定 "0"）永远放行 —— 那是验通路的，不是收信。
+        if ev["channel_id"] != "0" and not any(self.covers(r, ev)[0] for r in self.rules()):
+            self._gate_n += 1
+            return None
         matched, ai_json, score = [], None, None
         # AI 复核（B1）：passed 是「脚本命中且复核放行」的规则，通知只看它。
         # matched 仍记全部脚本命中的规则（那是事实，库里要留着），
@@ -4707,6 +4727,9 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                     P("        最近   ", (rc.get("what") or "")[:40], "→", rc.get("why") or "")
             else:
                 P("      扩展侧   （这个桥还没送来诊断数据，扩展可能是旧版）")
+        if app._gate_n:
+            P("    收信闸   ", f"服务端拦下 {app._gate_n} 条：没有任何启用的规则罩得住它们"
+              "（没写规则 = 不收信）。想收就去建/改一条规则把那个频道框进来。")
 
         P("\n[4] 规则（自上而下全部匹配）")
         rules = app.rules(False)

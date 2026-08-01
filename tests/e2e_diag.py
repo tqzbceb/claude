@@ -178,6 +178,10 @@ ok("正文截断有注脚", "前 40 字" in seg, seg[:900])
 call("/api/rules/%s" % r_on, method="DELETE")
 call("/api/rules", {"id": r_off, "name": "频道监听-所有消息", "enabled": 1,
                     "channel_ids": ["999999999999999999"], "action": "notify"})
+# A7：收信闸只收有规则罩着的消息。补一条罩得住但永不提醒的兜底规则，
+# 让 v173a 能落库 —— 不然 [4.5] 拿不到真消息试算，正是这一节要验的东西。
+call("/api/rules", {"name": "A7测试兜底", "enabled": 1, "kinds": ["msg", "thread"],
+                    "ignore_bots": False, "keywords_any": ["∅绝不出现∅"], "action": "notify"})
 call("/api/ingest", {"messages": [{"msg_id": "v173a", "guild_id": GID, "channel_id": CID,
                                    "channel_name": "资源区", "author": "Bob",
                                    "content": "有人送 mimo 的 key", "ts": time.time()}],

@@ -57,6 +57,19 @@ chk("两条出口都还在", len(hk) == 2 and hk[0]["url"].endswith("/hook"), hk
 chk("出口带 id 和默认字段", all(h.get("id") and h.get("method") == "POST" for h in hk), hk)
 chk("免打扰已写入", (sk.get("quiet_from"), sk.get("quiet_to")) == ("23:00", "08:00"))
 
+print("4.5 A7 收信闸：没规则罩着就是不收")
+r0 = call("/api/ingest", {"messages": [
+    {"msg_id": "0999", "guild_id": "700000000000000001", "channel_id": "800000000000000009",
+     "channel_name": "无人区", "author_id": "900000000000000009", "author": "Nobody",
+     "content": "没规则罩着的消息"}]})
+chk("请求照常受理", r0.get("accepted") == 1, r0)
+chk("零规则 = 零收信", not any(str(m.get("msg_id", "")).endswith("0999")
+                               for m in call("/api/messages?limit=50")["messages"]), "")
+shim = call("/api/rules", {"name": "A7测试兜底", "enabled": 1, "kinds": ["msg", "thread"],
+                           "ignore_bots": False, "keywords_any": ["∅绝不出现∅"], "action": "notify",
+                           "cooldown_sec": 0})
+chk("兜底规则存上（罩得住但永不提醒）", shim.get("ok") and shim.get("id"), shim)
+
 print("5. /api/ingest 浏览器旁听入库")
 r = call("/api/ingest", {"messages": [
     {"msg_id": "1001", "guild_id": "700000000000000001", "channel_id": "800000000000000001",

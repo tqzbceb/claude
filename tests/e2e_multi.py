@@ -47,6 +47,12 @@ call("/api/messages/clear", {})
 for r in call("/api/state")["rules"]:
     call(f"/api/rules/{r['id']}", method="DELETE")
 
+# A7：收信闸落地后，没规则罩着的消息一律不收。本套件只关心桥/账号/去重，
+# 放一条「罩得住一切但永远不提醒」的兜底规则，让消息照常见库。
+call("/api/rules", {"name": "A7测试兜底", "enabled": 1, "kinds": ["msg", "thread"],
+                    "ignore_bots": False, "keywords_any": ["∅绝不出现∅"], "action": "notify",
+                    "cooldown_sec": 0})
+
 sec("1. 心跳带身份：桥被单独列出来")
 call("/api/ingest", {"ping": True, "bridge": "brA", "account": "alice#1",
                      "account_id": "111", "ver": "1.4.0", "browser": "Chrome 140",

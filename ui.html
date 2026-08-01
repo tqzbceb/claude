@@ -2905,8 +2905,8 @@ enterToSend($('#wbInput'),wbSend);
 function wbGrow(){const el=$('#wbInput');if(!el)return;
   el.style.height='26px';el.style.height=Math.min(Math.max(el.scrollHeight,26),160)+'px';}
 $('#wbInput').addEventListener('input',wbGrow);
-$('.composer').addEventListener('click',e=>{          /* 点盒子空白处＝点输入框 */
-  if(e.target.closest('button,a,select,label'))return;$('#wbInput').focus();});
+/* C5：不绑「点盒子空白处＝点输入框」。空盒只有 textarea 那一行能聚焦，
+   光标只出现在左上角 —— 点下面的空白区域不再蹦出光标。 */
 wbGrow();
 /* ---------- 工作台快捷按钮：全部来自配置，不写死 ---------- */
 function quicks(){const c=S.cfg||{};return Array.isArray(c.quick_actions)?c.quick_actions:[];}
