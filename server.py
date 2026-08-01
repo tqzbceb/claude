@@ -1910,6 +1910,7 @@ class App:
         self.ingest_count = 0
         self.started = now()          # 用于诊断包里的「已跑多久」
         self.bridges = {}             # 每个装了扩展的浏览器 = 一个桥，独立跟踪
+        self.hb_seen = {}             # 来 /api/ext/hb 要过指令的桥：bid → 最后一次来的时间
         self._inflight = set()        # 正在处理的 msg_id，防两个桥同时报同一条
         self._last_toast = 0.0        # 系统通知防刷屏
         # 本机提醒合并：涌进来一批消息时攒成一条通知 + 一次提示音。
@@ -2005,9 +2006,12 @@ class App:
         return self.db.q("SELECT * FROM threads_open WHERE opened_at IS NOT NULL AND closed_at IS NULL")
 
     def lead_bridge(self):
-        """多浏览器时谁负责执行指令。取「最近 90 秒有心跳的桥里 id 最小的那个」——
-        必须是确定性的：按「最后活跃」选会来回抖，两个浏览器就会各开一遍同一个帖子。"""
-        live = sorted(b["id"] for b in self.bridge_list() if b.get("fresh"))
+        """多浏览器时谁负责执行指令。取「最近 90 秒来要过指令的桥里 id 最小的那个」——
+        必须是确定性的：按「最后活跃」选会来回抖，两个浏览器就会各开一遍同一个帖子。
+        候选人只看调过 /api/ext/hb 的桥，不能看所有 touch 过的：只 ingest 从不来要
+        指令的幻影桥（没填 bridge 的 "anon"、扩展重载后没按 F5 的 "page-direct" 旧页面）
+        一旦当选，指令发给了不存在的手，自动开帖就静默死掉（e2e_tabs 第 6 节钉着）。"""
+        live = sorted(b for b, t in self.hb_seen.items() if now() - t < 90)
         return live[0] if live else ""
 
     def tab_orders(self, bridge=""):
@@ -4433,6 +4437,12 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                                      headers=CORS)
         b = await _hb_body(req)
         bid = str(b.get("bridge") or req.query.get("bridge") or "")[:64]
+        if bid:
+            self_hb = app.hb_seen
+            self_hb[bid] = now()
+            # 别让这个表无限长：两天没来要过指令的桥忘掉（它再来时会重新登记）
+            for dead in [x for x, t in self_hb.items() if now() - t > 172800]:
+                del self_hb[dead]
         if b.get("ver") or req.query.get("ver"):
             # 顺手记一下这个桥还活着（不带 n，不影响消息计数）
             app.touch_bridge({"bridge": bid, "ver": b.get("ver") or req.query.get("ver")})
