@@ -722,16 +722,17 @@ html[data-sb="mini"] .pausebtn{width:34px;padding:7px 0}
   <section class="view" id="v-watch">
     <div class="pad narrow">
       <div class="card" style="margin-bottom:16px">
-        <h3>监视目标 <span class="hint">盯一个网址开没开 —— 服务关服维护、登记没开放，开了第一时间提醒你</span></h3>
+        <h3>加一个监视目标 <span class="hint">盯网址开没开 —— 想盯几个就加几个，没有数量上限，下面列表逐个显示</span></h3>
         <div class="bd">
-          <div class="hint" style="margin:0 0 12px">程序按你设的间隔去探这个网址：<b>由「关」翻「开」</b>时本机弹窗+提示音，
+          <div class="hint" style="margin:0 0 12px">每个目标各自按自己设的间隔独立探，互不影响；填完点「＋ 添加」就多一个，
+            接着填下一个即可。程序探到<b>由「关」翻「开」</b>时本机弹窗+提示音，
             并走「通知与转发」里配好的全部出口推一份（微信 / Telegram 都能收到）。加进来第一次探测只记状态、不提醒；
             「开了又关」默认不提醒（怕吵），想听单个目标自己勾。<br>
             怎么算「开」：默认「网址能打开（HTTP &lt; 400）就算开」；也可以填「<b>包含这个才算开</b>」
             （比如页面里出现「立即登记」才算开），或「<b>包含这个就算关</b>」（比如「维护中」「暂未开放」）——后者优先。</div>
           <input type="hidden" id="wId">
           <div class="grid3">
-            <label class="f"><span>名字（留空用域名）</span><input id="wName" type="text" placeholder="旅途"></label>
+            <label class="f"><span>名字（留空用域名）</span><input id="wName" type="text" placeholder="给它取个你认得的名字"></label>
             <label class="f" style="grid-column:span 2"><span>网址（http:// 或 https:// 开头）</span><input id="wUrl" type="text" placeholder="https://example.com/"></label>
           </div>
           <div class="grid3">
@@ -1211,7 +1212,7 @@ async function tplPreview(mode){
 const TITLES={inbox:['收信箱','实时监听命中的消息'],rules:['监听规则','决定“听谁、听哪、听到什么就做什么”'],
   ai:['AI 工作台','拿收到的消息直接喂给你接入的模型'],
   batch:['批量提取','把已经收到的一大堆消息交给模型，挑出你要的东西，导成表格'],models:['模型接入','填端点 → 拉取模型 → 设为默认'],
-  notify:['通知与转发','命中的消息怎么提醒你、往哪儿转'],watch:['开服监听','盯一个网址开没开，开了第一时间提醒你'],
+  notify:['通知与转发','命中的消息怎么提醒你、往哪儿转'],watch:['开服监听','盯网址开没开（可加多个），开了第一时间提醒你'],
   settings:['设置','Token、收信开关、保留与用量'],logs:['运行日志','连接状态与每次动作的痕迹']};
 function go(v){S.view=v;$$('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+v));
   $$('.nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
@@ -2418,9 +2419,11 @@ function renderWatch(){
   const box=$('#watchList');
   if(!W.list.length){
     box.innerHTML='<div class="card"><div class="bd"><span class="hint">还没有监视目标。在上面填一个网址加上 —— '
-      +'比如某个服务关服维护了，它一开你就知道。</span></div></div>';return;
+      +'比如某个社区关服维护了，它一开你就知道。加完可以接着加下一个，想盯几个加几个。</span></div></div>';return;
   }
-  box.innerHTML=W.list.map(w=>`<div class="card" style="margin-bottom:12px"><div class="bd">
+  const on=W.list.filter(w=>w.enabled).length;
+  box.innerHTML='<div class="hint" style="margin:0 0 10px">在盯 '+W.list.length+' 个目标（启用 '+on+' 个）· 每个独立计时，互不影响</div>'
+    +W.list.map(w=>`<div class="card" style="margin-bottom:12px"><div class="bd">
     <div class="row" style="gap:10px;align-items:center">
       ${wStatePill(w)}
       <b style="font-size:14.5px">${esc(w.name)}</b>
