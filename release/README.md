@@ -8,10 +8,10 @@
 > 打开 https://github.com/tqzbceb/claude/tree/main/release ，点里面那个 `dcwatch-v1.11.1.zip`，
 > 页面上点 **Download raw file**（右上角那个下载图标）。
 > 下载完解压出 `dcwatch` 文件夹，双击里面的 **启动.bat**。
-> 黑窗口第一行应该写 `dcwatch v1.11.1`。**这轮只动程序，扩展不用重装**（还是 v1.11.0）；
-> 如果你是从 v1.11.0 之前的版本升上来，扩展要重装到 v1.11.0，三步：覆盖 extension 文件夹 →
+> 黑窗口第一行应该写 `dcwatch v1.11.1`。**这轮扩展也要重装一次**：扩展功能没动，但版本号
+> 钉齐到 v1.11.1（程序和扩展版本必须对上），三步：覆盖 extension 文件夹 →
 > `chrome://extensions` 里 dcwatch 卡片点 ⟳ → 回 Discord 页面按 F5
-> （程序包里自带 extension 文件夹；另有 `dcwatch-extension-v1.11.0.zip` 给只换扩展的人）。
+> （程序包里自带 extension 文件夹；另有 `dcwatch-extension-v1.11.1.zip` 给只换扩展的人）。
 > 覆盖时**别删旧的 `dcwatch.db`**——你的规则和密钥都在里面。
 
 ## 给接手的 AI

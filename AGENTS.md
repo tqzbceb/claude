@@ -94,7 +94,7 @@ cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch   # 环境里没
 ```
 
 扩展单独还有一个包（10 个文件）：`cd extension && python3 -m zipfile -c ../dcwatch-extension-v$V.zip .`，
-**只在扩展真改了的时候才出**（见硬规矩 2）。两个包都放进 `outputs/`，把旧版本的 zip 删掉。**顺手把 `release/` 里那份也换成新的**
+**每次出程序包都跟着出**（版本钉齐，见硬规矩 2）。两个包都放进 `outputs/`，把旧版本的 zip 删掉。**顺手把 `release/` 里那份也换成新的**
 （那是用户在没有 AI 的时候唯一的下载入口，见 `release/README.md`）。
 
 打包前必做两件事：`rm -rf __pycache__`（`py_compile` 会留 .pyc，混进过交付包），
@@ -110,7 +110,9 @@ python3 -c "d=open('启动.bat','rb').read(); print(b'\r\n' in d, d.decode('gbk'
    「演示：6 个模型」，用户选了假模型后全线报错。现在 `S.live` 一旦为真永不回退，失败必须
    toast 出真实状态码和响应体。演示数据必须带「（演示）」前缀。
 2. **改了 `extension/` 就必须 bump `manifest.json` 的 version 和 server.py 的 `EXT_MIN`**，
-   并在回复里告诉用户该看到几点几。反过来，扩展没动就别碰这两个 —— 白让他重装一遍比不修还糟。
+   并在回复里告诉用户该看到几点几。**bump 程序 VERSION 时这两个也必须同步 bump**（用户 2026-08-01
+   定的：「拓展和程序版本必须对上，不然不好看」）——三处永远钉齐，即使扩展零改动也要重打扩展 zip、
+   让用户重装一次看新号。不存在「只动程序」的版本。
 3. **交付物一律带版本号**（`dcwatch-v1.8.0.zip`），旧版删掉。他拿错版本这件事发生过三次，
    来源分别是：GitHub 上没推的 commit、界面里下载到的是他自己磁盘上的旧 extension 文件夹、
    Chrome 的 load unpacked 记的是老文件夹路径。

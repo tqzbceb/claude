@@ -30,6 +30,19 @@
 **代码侧 BACKLOG 已清零。**
 
 ## 已完成
+
+### v1.11.1 补钉：版本号对齐（2026-08-01，U 窗口）
+
+- 起因：用户「拓展和程序版本必须对上，不然不好看」。v1.11.1 出包时按老规矩 2「扩展没动就别碰」
+  只 bump 了程序，导致程序 1.11.1 / 扩展 1.11.0。
+- 落盘：manifest + EXT_MIN 同步 1.11.1；README/release-README/START_HERE 的「不用重装扩展」全部
+  改成「这轮扩展也要重装一次」；双 zip 重打（程序 27 文件 / 扩展 10 文件）进 release/ + outputs/。
+- **规矩改写（AGENTS.md 硬规矩 2）：bump 程序 VERSION 时 manifest+EXT_MIN 必须同步 bump，
+  扩展 zip 每次跟着出——三处永远钉齐，不存在「只动程序」的版本。** 这是用户拍板的，以后别再用
+  「白让他重装一遍比不修还糟」当理由只 bump 程序。
+- 验证：ext/diag/tabs/e2e 四套 206 条绿（其余 8 套零版本引用）；全新解压冒烟启动行 + /version
+  自证页三处全 v1.11.1。
+
 - **v1.11.1（R 窗口）出包** —— VERSION 1.11.1（只 bump 程序）；README 改版节 + release/README +
   START_HERE 同步；AGENTS.md 打包清单修正（dcwatch.spec 要留）；全新解压冒烟过
 - **A7 + C5（Q 窗口，P 认领后断）** —— server 新增 `covers()`（什么时候+听哪里+听谁，
