@@ -810,6 +810,7 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
    所以他得装好扩展、并且**让那个频道在 Discord 里开着**。装完扩展必须在 Discord 页面按一次 F5。
    下面实况里会写现在有没有浏览器在旁听。
 2. **要有一条规则命中它**：规则里「听哪里」填上那个频道 ID，再写清听什么内容。
+   **他不用自己去抄 ID**：他说名字你就调 find_target 查名录，念候选让他认，认完你直接建规则。
 
 ## 「帮我写规则」指的是什么
 在这里，「规则」永远是 **dcwatch 的监听规则**：什么消息该提醒他。
@@ -863,6 +864,11 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
 - **模型接入** —— 多个模型服务、每个服务自己拉模型列表、采样参数（温度/top_p）、
   提示词抽屉（包括你现在这段身份提示词，他能改也能恢复出厂）、格式后处理三档。
   换默认模型**你自己就能改**（工具 set_default_model）；API Key 和端点地址只能他自己填。
+- **名字→ID 名录（不占侧栏，藏在各处）** —— 扩展会把他浏览器里见过的服务器/分类/频道/帖子名字
+  和说过话的人，连同真实 ID 攒成一份名录。**所以他说名字、不给一串数字，也能建规则**：
+  规则页的「频道」「用户」栏是可搜索选择器（打名字跳候选、选中自动填 ID），你这边用工具
+  find_target 查。两个限制要跟他讲明：名字**不唯一**（候选必须让他确认是哪一个）、
+  只认**扩展见过的**（没进过的服务器、从没说过话的人查不到 → 让他发链接，程序自己抠 ID）。
 - **运行日志 / 导出诊断** —— 一份 txt 说清「为什么它没提醒我」，排查时先要这个。
 - **设置** —— 收信方式（浏览器旁听 / Bot Token / 个人 Token）、代理、开机自启、抓历史。
 
@@ -873,7 +879,8 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
 能：**直接读写监听规则**（建、改、开关、删、试算）、**直接管开服监听目标**（加、改、暂停、删、
 立刻现探一次）、**直接改本机提醒**（弹窗、提示音、网页通知、免打扰时段、分数门槛）、
 **直接改自动点开新帖**、**换默认模型**（都见下面的工具）、解读给你的消息、总结、抽待办、
-起草回复、解释这个程序里的功能、把他贴的链接拆成 ID。
+起草回复、解释这个程序里的功能、把他贴的链接拆成 ID、**按名字查出真实 ID**（工具 find_target，
+查完念候选让他确认）。
 不能：上网查东西、改 API Key / 端点地址 / 转发出口地址（密址）、导入规则或模板
 （这几样都得他自己在对应页面填，你只能告诉他去哪一页、填什么）、替他在 Discord 发言。
 注意「不能」说的是**你这只手伸不到**，不是**程序做不到** —— 两件事别混起来答。
@@ -1252,6 +1259,22 @@ WB_TOOLS = [
         "description": "最近收到过消息的频道和人，带真实 ID。填 ID 前先查这个，不许编 ID。",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
+        "name": "find_target",
+        "description": "按**名字**找频道 / 帖子 / 服务器 / 分类 / 人的真实 ID。"
+                       "用户说的是名字（「教程分享区」「老王」）而不是一串数字时，先调它。"
+                       "返回的是**候选列表**（名字不唯一：不同服务器可以有同名频道、两个人能顶同一个"
+                       "显示名），每条带「在哪」面包屑（服务器 › 分类）。"
+                       "**必须把候选念给用户、等他确认是哪一个，再拿那个 id 去建/改规则，不许自己挑一个就用。**"
+                       "一条都查不到就照实说：名录只认浏览器在 Discord 网页上见过的东西，"
+                       "让他把那个频道/帖子的链接发来（链接里就带 ID），或者去那个频道翻一下让扩展见一面。",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "要找的名字，支持只写一部分"},
+            "kind": {"type": "string",
+                     "description": "限定类型：channel 频道 / thread 帖子 / user 人 / guild 服务器 / "
+                                    "category 分类；留空=全都找"},
+            "limit": {"type": "integer", "description": "最多几个候选，默认 12，上限 50"}},
+            "required": ["name"]}}},
+    {"type": "function", "function": {
         "name": "search_messages",
         "description": "在已经收到的消息里搜。回答「有人发过 xx 吗」用它。",
         "parameters": {"type": "object", "properties": {
@@ -1497,6 +1520,33 @@ async def run_wb_tool(app, name, args, allow_ids):
     if name == "list_channels":
         txt, known = app.rule_ctx()
         return {"known": txt}, "", False
+
+    if name == "find_target":
+        q = str(a.get("name") or "").strip()
+        if not q:
+            return {"error": "要找哪个名字？name 不能空"}, "", False
+        kind = str(a.get("kind") or "").strip()
+        hits = app.lookup_names(q, kind, a.get("limit") or 12)
+        st = app.names_stat()
+        out = {"query": q, "kind": kind or "全部", "count": len(hits), "candidates": hits,
+               "names_known": st}
+        if not hits:
+            out["note"] = (f"名录里没有叫「{q}」的。名录只认**浏览器在 Discord 网页上见过**的东西："
+                           "没进过的服务器、从没说过话的人都查不到。"
+                           "跟用户说：把那个频道/帖子的链接发来（链接里就带 ID，程序自己抠），"
+                           "或者去那个频道翻一下、让扩展见一面再来找。"
+                           + ("现在名录一条都没有 —— 大概是扩展没装 / 没打开 Discord 网页。"
+                              if not st["total"] else ""))
+        elif len(hits) == 1:
+            h = hits[0]
+            out["note"] = (f"只有一个候选：{h['kind_cn']}「{h['name']}」"
+                           + (f"（在 {h['where']}）" if h["where"] else "")
+                           + f"，id={h['id']}。**还是要先问一句「是这个吗」再动手** —— "
+                             "名录只覆盖见过的东西，他想的可能是另一个没见过的。")
+        else:
+            out["note"] = ("好几个同名的。把候选连「在哪」一起念给用户（编号让他挑），"
+                           "等他确认了再拿那个 id 建规则，不许自己挑。")
+        return out, "", False
 
     if name == "list_open_threads":
         c = app.br_cfg()
@@ -1864,7 +1914,10 @@ WB_TEXT_PROTO = """## 你可以直接动手（重要）
 - set_rule_enabled {"id":"3","enabled":true}：启用/停用。
 - delete_rule {"id":"3"}：删除（不可逆，用户没明说删就别用）。
 - test_rule {"id":"3","content":"[图片]"}：试算会不会命中。
-- list_channels {}：真实的频道 / 人 ID。
+- find_target {"name":"教程分享区","kind":"channel"}：**按名字**找频道/帖子/服务器/分类/人的
+  真实 ID（kind 留空=全找）。用户说名字不给数字时先调它；返回的是候选列表，带「在哪」，
+  **念给用户、等他确认是哪一个再动手**，名字不唯一。查不到就让他发那个频道的链接。
+- list_channels {}：真实的频道 / 人 ID（最近说过话的）。
 - search_messages {"query":"key","limit":20}：搜已收到的消息。
 - get_status {}：现在的收信状况和自查结论。
 - list_open_threads {}：程序自动开着哪些帖子标签页（只读，你不能关，只能建议）。
@@ -1900,8 +1953,9 @@ WB_TOOLS_HOWTO = """## 你可以直接动手（重要）
   check_watch_now
 - 设置：set_notify（弹窗、提示音、网页通知、免打扰、分数门槛）/ set_auto_open（自动点开新帖）/
   set_default_model（换默认模型）
-- 只读：list_channels / search_messages / get_status / list_open_threads / list_providers /
-  list_hooks / recent_hits / test_message / get_logs / export_rules / export_extract_templates
+- 只读：find_target（按名字找 ID）/ list_channels / search_messages / get_status /
+  list_open_threads / list_providers / list_hooks / recent_hits / test_message / get_logs /
+  export_rules / export_extract_templates
 
 用户说「帮我改一下这条规则」「让它连表情包也提醒」「把那条停掉」「盯着这个网址开服了叫我」
 「别再弹窗了」「半夜别叫我」「打开自动开帖」时，**直接调工具改完再回话**，
@@ -1912,7 +1966,11 @@ WB_TOOLS_HOWTO = """## 你可以直接动手（重要）
 2. 一次只改他要求的那部分，别顺手改别的。
 3. 改完用 test_rule 试算一次，然后用一句话告诉他：改了什么、现在会不会命中。
 4. 删除是不可逆的：他没明确说「删」，就用 set_rule_enabled 停用。
-5. 需要频道 / 人的 ID 就调 list_channels，绝不编 ID。
+5. 需要频道 / 人的 ID：用户给的是**名字**就调 find_target（按名字查名录），给的是链接就自己从
+   `/channels/服务器ID/频道ID` 里抠；只想看「最近谁说过话」才用 list_channels。绝不编 ID。
+   find_target 返回的是**候选**：先念给用户、等他确认是哪一个，再拿那个 id 去建规则 ——
+   名字不唯一（同名频道、同名的人都有），猜错了他要等好几天才发现没提醒。
+   查不到就说实话：名录只认扩展在网页上见过的，让他发链接或去那个频道露个面。
 6. 改完要提醒他：改动已经生效了，去「监听规则」页能看到。
 7. 他要「备份 / 换台电脑 / 把规则发给朋友」就调 export_rules 把包念给他，并告诉他
    「监听规则」页上就有「导出规则」按钮能直接下载完整文件（包里的转发地址你看到的是打码的）。
@@ -1952,6 +2010,7 @@ def strip_text_calls(text):
 
 
 READ_HUMAN = {"list_rules": "看了一遍你的规则", "list_channels": "查了真实的频道 ID",
+              "find_target": "按名字在名录里找了一遍真实 ID",
               "search_messages": "翻了已经收到的消息", "get_status": "看了现在的收信状况",
               "test_rule": "拿一条假消息试算了一下", "export_rules": "把你的规则整包导了一份出来",
               "list_open_threads": "看了一遍现在开着哪些帖子",
