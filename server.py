@@ -831,18 +831,21 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
   发一条「需要你人工看」的提醒，不会瞎编。
 - **批量提取** —— 对**已经在库里的**历史消息批量挑东西（密钥、名额之类），结果能导 CSV。
 - **AI 工作台** —— 就是你现在待的地方，可以多开会话，聊天记录存在本机、刷新不丢。
-- **通知与转发** —— 本机弹窗 / 提示音 / 免打扰时段 / 分数门槛；转发出口可以配多个
-  （Discord webhook、Telegram、Server酱、企业微信、任意 HTTP）。
+- **通知与转发** —— 本机弹窗 / 提示音 / 免打扰时段 / 分数门槛（这几样**你自己就能改**，
+  见下面的工具 set_notify）；转发出口可以配多个（Discord webhook、Telegram、Server酱、
+  企业微信、任意 HTTP），出口地址是密址，只能他自己填。
 - **开服监听** —— **盯「某个服务开没开」**：填一个网址（服务的登记页、官网、Discord 邀请链接都行），
   程序按他设的间隔去探，**由「关」翻「开」的那一刻**走全套提醒（弹窗+声音+全部转发出口）。
   可以加**任意多个**目标，每个目标能单独设「包含这段文字才算开」/「包含这段文字就算关」。
-  → **所以「能不能监听某个服务器/服务开没开、开放登记没有」的答案是：能，去侧栏「开服监听」页加一个目标。**
+  → **所以「能不能监听某个服务器/服务开没开、开放登记没有」的答案是：能，而且你自己就能加**
+  （工具 create_watch），加完在侧栏「开服监听」页能看到。他问「现在开了吗」用 check_watch_now 现探。
   这跟规则是两条独立的路：规则听的是频道里的消息，开服监听探的是网址状态。
 - **自动点开新帖（在「设置」里，默认关着）** —— 论坛里的新帖不点开是读不到帖内消息的，
   开了之后程序会替他在**新开的最小化浏览器窗口**里点开新帖，有同时开几个/每小时几个的上限，
-  闲置一段时间自动关掉腾位置。
+  闲置一段时间自动关掉腾位置。这几项**你自己就能改**（工具 set_auto_open）。
 - **模型接入** —— 多个模型服务、每个服务自己拉模型列表、采样参数（温度/top_p）、
   提示词抽屉（包括你现在这段身份提示词，他能改也能恢复出厂）、格式后处理三档。
+  换默认模型**你自己就能改**（工具 set_default_model）；API Key 和端点地址只能他自己填。
 - **运行日志 / 导出诊断** —— 一份 txt 说清「为什么它没提醒我」，排查时先要这个。
 - **设置** —— 收信方式（浏览器旁听 / Bot Token / 个人 Token）、代理、开机自启、抓历史。
 
@@ -850,10 +853,12 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
 断言做不到又恰好是有的功能，是这里最严重的错误（他就是因为这个骂过一次）。
 
 ## 你能做和不能做
-能：**直接读写监听规则**（建、改、开关、删、试算，见下面的工具）、解读给你的消息、总结、抽待办、
+能：**直接读写监听规则**（建、改、开关、删、试算）、**直接管开服监听目标**（加、改、暂停、删、
+立刻现探一次）、**直接改本机提醒**（弹窗、提示音、网页通知、免打扰时段、分数门槛）、
+**直接改自动点开新帖**、**换默认模型**（都见下面的工具）、解读给你的消息、总结、抽待办、
 起草回复、解释这个程序里的功能、把他贴的链接拆成 ID。
-不能：上网查东西、改模型 Key / 通知出口 / 开服监听目标这些设置（那些得他自己去对应的页面，
-你只能告诉他去哪一页、填什么）、替他在 Discord 发言。
+不能：上网查东西、改 API Key / 端点地址 / 转发出口地址（密址）、导入规则或模板
+（这几样都得他自己在对应页面填，你只能告诉他去哪一页、填什么）、替他在 Discord 发言。
 注意「不能」说的是**你这只手伸不到**，不是**程序做不到** —— 两件事别混起来答。
 
 ## 一句话原则
@@ -1290,6 +1295,86 @@ WB_TOOLS = [
                        "排查「哪里炸了」时调它。",
         "parameters": {"type": "object", "properties": {
             "limit": {"type": "integer", "description": "最多几条，默认 30，上限 100"}}}}},
+    # ---- E9：开服监听（D3）的手。用户原话「模型权限太低，只会教我怎么点」 ----
+    {"type": "function", "function": {
+        "name": "list_watch",
+        "description": "开服监听的全部监视目标：id、名字、网址、间隔、现在是开还是关、上次探测/上次变脸多久前。"
+                       "要改哪个先调它拿 id，别猜。用户问「那个服开了吗 / 我在盯几个」时也用它。",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "create_watch",
+        "description": "加一个开服监视目标并立刻开始盯。用户说「帮我盯着这个网址开没开 / 开服了叫我」时"
+                       "直接调它，不要教他自己去开服监听页填。想盯几个就加几个，没有上限。"
+                       "刚加进去第一次探测只记状态、不会提醒（不然每加一个先收一条「开了」像误报）。",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "要盯的网址，必须 http:// 或 https:// 开头。"
+                                                      "官网、登记页、Discord 邀请链接都行"},
+            "name": {"type": "string", "description": "给它取的名字；留空自动用域名"},
+            "every_sec": {"type": "integer", "description": "多久探一次（秒）。默认 60，太小会被下限夹住"},
+            "expect": {"type": "string", "description": "选填：正文里出现这段字才算「开」"},
+            "absent": {"type": "string", "description": "选填：正文里出现这段字就算「关」（如 维护中/未开放）"},
+            "notify_open": {"type": "boolean", "description": "关→开时提醒，默认 true"},
+            "notify_close": {"type": "boolean", "description": "开→关时也提醒，默认 false"},
+            "enabled": {"type": "boolean", "description": "是否直接启用，默认 true"}},
+            "required": ["url"]}}},
+    {"type": "function", "function": {
+        "name": "update_watch",
+        "description": "改一个已有的监视目标（换网址、改间隔、改判定文字、改提醒方向）。"
+                       "只在 patch 里写要改的字段，没写的保持原样。",
+        "parameters": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "监视目标 id，从 list_watch 拿"},
+            "patch": {"type": "object", "description": "要改的字段：url/name/every_sec/expect/absent/"
+                                                       "notify_open/notify_close/enabled"}},
+            "required": ["id", "patch"]}}},
+    {"type": "function", "function": {
+        "name": "set_watch_enabled",
+        "description": "启用或暂停一个监视目标（暂停＝不再探，但配置留着）。",
+        "parameters": {"type": "object", "properties": {
+            "id": {"type": "string"}, "enabled": {"type": "boolean"}},
+            "required": ["id", "enabled"]}}},
+    {"type": "function", "function": {
+        "name": "delete_watch",
+        "description": "删掉一个监视目标，不可逆。用户没明确说「删」就用 set_watch_enabled 暂停。",
+        "parameters": {"type": "object", "properties": {"id": {"type": "string"}},
+                       "required": ["id"]}}},
+    {"type": "function", "function": {
+        "name": "check_watch_now",
+        "description": "立刻探一次某个监视目标，不等巡检周期，直接回最新状态和 HTTP 码。"
+                       "用户问「现在开了吗」就调它 —— 比念上次的状态准。",
+        "parameters": {"type": "object", "properties": {"id": {"type": "string"}},
+                       "required": ["id"]}}},
+    # ---- E9：本机提醒 / 自动开帖 / 默认模型也交给模型改 ----
+    {"type": "function", "function": {
+        "name": "set_notify",
+        "description": "改本机提醒：系统弹窗、提示音、网页通知、免打扰时段、分数门槛。"
+                       "用户说「别再弹窗了 / 半夜别叫我 / 只提醒重要的」时直接调它改完。"
+                       "**改不了**转发出口（密址），那个要他自己在界面上填。",
+        "parameters": {"type": "object", "properties": {
+            "toast": {"type": "boolean", "description": "Windows 系统通知"},
+            "sound": {"type": "boolean", "description": "提示音"},
+            "browser": {"type": "boolean", "description": "网页通知（要开着界面）"},
+            "quiet_from": {"type": "string", "description": "免打扰开始，形如 23:00；空字符串=取消"},
+            "quiet_to": {"type": "string", "description": "免打扰结束，形如 08:00"},
+            "min_score": {"type": "integer", "description": "AI 打分低于这个不往外发，0~100"}}}}},
+    {"type": "function", "function": {
+        "name": "set_auto_open",
+        "description": "改「自动点开新帖」（C2）：总开关、同时最多几个、每小时最多几个、"
+                       "是否只开有规则在盯的父频道、闲置多少分钟自动关。"
+                       "用户说「帮我打开自动开帖 / 少开几个 / 别自动关」时直接调它。",
+        "parameters": {"type": "object", "properties": {
+            "auto_open": {"type": "boolean", "description": "总开关"},
+            "max_tabs": {"type": "integer", "description": "同时最多开几个，1~30"},
+            "per_hour": {"type": "integer", "description": "每小时最多开几个，1~60"},
+            "only_rule_channels": {"type": "boolean", "description": "只开有启用规则在盯的父频道下面的新帖"},
+            "close_idle_min": {"type": "integer", "description": "闲置这么多分钟就关掉；0=不自动关"}}}}},
+    {"type": "function", "function": {
+        "name": "set_default_model",
+        "description": "把默认模型换成别的（只能从已经配好的服务和拉到过的模型里选，先 list_providers 看清单）。"
+                       "**改不了** Key 和端点地址，那两样只能人在「模型接入」页填。",
+        "parameters": {"type": "object", "properties": {
+            "provider": {"type": "string", "description": "服务名，如 openai；留空=沿用现在这家"},
+            "model": {"type": "string", "description": "模型名，如 deepseek-chat"}},
+            "required": ["model"]}}},
     {"type": "function", "function": {
         "name": "export_extract_templates",
         "description": "把「批量提取」页存的模板整包导出来（跟界面「导出」按钮同一份）。"
@@ -1300,7 +1385,10 @@ WB_TOOLS = [
 # **故意没有 import_rules 工具**（硬规矩 10）：导入会覆盖、甚至删掉用户手填了一晚上的规则，
 # 那道「先预览再落库」的闸在界面上（`dry_run` 预览 → 他点确认才第二次请求真写）。
 # 模型自己吃一个文件就绕过了闸。要帮他搬别人的规则：把包念清楚，然后让他点界面上的「导入规则」按钮。
-WB_WRITE_TOOLS = ("update_rule", "create_rule", "set_rule_enabled", "delete_rule")
+WB_WRITE_TOOLS = ("update_rule", "create_rule", "set_rule_enabled", "delete_rule",
+                  # E9：开服监听 / 本机提醒 / 自动开帖 / 默认模型也归模型管了
+                  "create_watch", "update_watch", "set_watch_enabled", "delete_watch",
+                  "set_notify", "set_auto_open", "set_default_model")
 
 
 def ago_txt(ts):
@@ -1525,7 +1613,8 @@ async def run_wb_tool(app, name, args, allow_ids):
                               for p in app.cfg.get("providers", [])],
                 "ai_daily": f"{used} / {app.cfg.get('ai_daily_call_cap', 500)}",
                 "note": "Key 空的那一家：到「模型接入」页粘 Key → 按「保存服务商」→ 再拉模型列表。"
-                        "改端点配置只能人在界面上做，你没有写工具"}, "", False
+                        "换默认模型你可以直接调 set_default_model（只能挑上面 models 里有的）；"
+                        "Key 和端点地址你改不了，那两样只能人在界面上填"}, "", False
 
     if name == "list_hooks":
         sk = app.cfg.get("sinks") or {}
@@ -1536,7 +1625,8 @@ async def run_wb_tool(app, name, args, allow_ids):
                            "method": h.get("method"), "url": WB_MASK if h.get("url") else "",
                            "verified": bool(h.get("verified"))} for h in sk.get("hooks") or []],
                 "note": "转发地址是密址，不给模型看；界面上点「测试」过的那条 verified=true。"
-                        "你没有改出口的工具"}, "", False
+                        "弹窗/提示音/网页通知/免打扰/分数门槛你可以直接调 set_notify 改；"
+                        "转发出口（hooks）你改不了，那个只能人在界面上填"}, "", False
 
     if name == "recent_hits":
         lim = max(1, min(int(args.get("limit") or 20), 100))
@@ -1571,6 +1661,162 @@ async def run_wb_tool(app, name, args, allow_ids):
         return {"count": len(rows),
                 "logs": [{"level": r["level"], "text": (r["text"] or "")[:200],
                           "when": ago_txt(r["ts"])} for r in rows]}, "", False
+
+    # ---- E9：开服监听的手 ----
+    def watch_brief(w):
+        return {"id": str(w["id"]), "name": w["name"], "url": w["url"],
+                "every_sec": w["every_sec"], "enabled": bool(w["enabled"]),
+                "state": {"open": "开着", "closed": "关着", "unknown": "还没探过"}.get(w["state"], w["state"]),
+                "expect": w["expect"], "absent": w["absent"],
+                "notify_open": bool(w["notify_open"]), "notify_close": bool(w["notify_close"]),
+                "last_status": w["last_status"],
+                "last_check": ago_txt(w["last_check"]) if w["last_check"] else "还没探过",
+                "last_change": ago_txt(w["last_change"]) if w["last_change"] else "还没变过",
+                "err": (w["err"] or "")[:120]}
+
+    def need_watch():
+        wid = str(args.get("id") or "").strip()
+        rows = app.db.q("SELECT * FROM watch WHERE id=?", (wid,))
+        if not rows:
+            all_w = app.watch_list()
+            raise ValueError(f"没有 id={wid} 这个监视目标。现有的是：" +
+                             ("、".join(f"{x['id']}={x['name']}" for x in all_w) or "一个都没有"))
+        return wid, rows[0]
+
+    WATCH_KEYS = ("url", "name", "every_sec", "expect", "absent",
+                  "notify_open", "notify_close", "enabled")
+
+    if name == "list_watch":
+        rows = app.watch_list()
+        return {"count": len(rows), "watch": [watch_brief(w) for w in rows],
+                "min_every": App.WATCH_MIN_EVERY,
+                "note": ("他一个监视目标都没有 —— 用 create_watch 直接帮他加，别让他自己去点"
+                         if not rows else
+                         "想知道此刻开没开就调 check_watch_now，别念上面这个可能是旧的状态")}, "", False
+
+    if name == "create_watch":
+        body = {k: args[k] for k in WATCH_KEYS if k in args}
+        if not str(body.get("url") or "").strip():
+            raise ValueError("url 是空的：要盯的网址必须填，且以 http:// 或 https:// 开头")
+        row, err = app.watch_save(body)
+        if err:
+            raise ValueError(err)
+        return ({"ok": True, "watch": watch_brief(row),
+                 "note": "第一次探测只记状态不提醒；之后关→开就会走弹窗+声音+全部转发出口"},
+                f"加了一个开服监视目标「{row['name']}」（每 {row['every_sec']} 秒探一次）", True)
+
+    if name == "update_watch":
+        wid, old = need_watch()
+        patch = args.get("patch")
+        if not isinstance(patch, dict) or not patch:
+            raise ValueError("patch 是空的，没有可改的字段")
+        bad = [k for k in patch if k not in WATCH_KEYS]
+        body = {k: v for k, v in patch.items() if k in WATCH_KEYS}
+        if not body:
+            raise ValueError("patch 里没有一个是认识的字段。能改的是：" + "、".join(WATCH_KEYS))
+        touched = ", ".join(list(body)[:6])
+        row, err = app.watch_save(dict(body, id=wid))
+        if err:
+            raise ValueError(err)
+        return ({"ok": True, "watch": watch_brief(row),
+                 "notes": (["这些字段名不存在，已忽略：" + "、".join(bad[:5])] if bad else [])},
+                f"改了监视目标「{row['name']}」的 {touched}", True)
+
+    if name == "set_watch_enabled":
+        wid, old = need_watch()
+        on = 1 if args.get("enabled", True) else 0
+        app.db.x("UPDATE watch SET enabled=? WHERE id=?", (on, wid))
+        return ({"ok": True, "id": wid, "enabled": bool(on)},
+                f"{'启用' if on else '暂停'}了监视目标「{old['name']}」", True)
+
+    if name == "delete_watch":
+        wid, old = need_watch()
+        app.db.x("DELETE FROM watch WHERE id=?", (wid,))
+        return ({"ok": True, "deleted": wid},
+                f"删掉了监视目标「{old['name']}」（这一步不可逆）", True)
+
+    if name == "check_watch_now":
+        wid, old = need_watch()
+        row = await app.watch_run(old)
+        b = watch_brief(row)
+        return ({"ok": True, "watch": b,
+                 "note": "这是刚刚现探的结果，不是缓存"},
+                f"现探了一次「{row['name']}」：{b['state']}", False)
+
+    # ---- E9：本机提醒 / 自动开帖 / 默认模型 ----
+    if name == "set_notify":
+        sk = dict(app.cfg.get("sinks") or {})
+        done = []
+        for k in ("toast", "sound", "browser"):
+            if k in args:
+                sk[k] = bool(args[k])
+                done.append({"toast": "系统弹窗", "sound": "提示音", "browser": "网页通知"}[k]
+                            + ("开" if sk[k] else "关"))
+        for k in ("quiet_from", "quiet_to"):
+            if k in args:
+                v = str(args[k] or "").strip()
+                if v and not re.fullmatch(r"\d{1,2}:\d{2}", v):
+                    raise ValueError(f"{k} 要写成 23:00 这种格式，或者用空字符串取消")
+                sk[k] = v
+                done.append(("免打扰起" if k == "quiet_from" else "免打扰止") + (v or "取消"))
+        if "min_score" in args:
+            sk["min_score"] = max(0, min(100, int(args["min_score"] or 0)))
+            done.append(f"分数门槛 {sk['min_score']}")
+        if not done:
+            raise ValueError("一个能改的字段都没给。能改：toast/sound/browser/quiet_from/quiet_to/min_score")
+        app.cfg["sinks"] = sk
+        app.save_cfg()
+        return ({"ok": True, "sinks": {k: sk.get(k) for k in
+                                       ("toast", "sound", "browser", "quiet_from", "quiet_to", "min_score")},
+                 "note": "改完立刻生效，全部标签页同步；转发出口不在这里，那个只能人在界面上填"},
+                "改了本机提醒：" + "、".join(done), True)
+
+    if name == "set_auto_open":
+        bc = dict(app.cfg.get("browser") or {})
+        lim = {"max_tabs": (1, 30), "per_hour": (1, 60), "close_idle_min": (0, 10080)}
+        done = []
+        for k in ("auto_open", "only_rule_channels"):
+            if k in args:
+                bc[k] = bool(args[k])
+                done.append(("自动开帖" if k == "auto_open" else "只开有规则在盯的频道")
+                            + ("开" if bc[k] else "关"))
+        for k, (lo, hi) in lim.items():
+            if k in args:
+                bc[k] = max(lo, min(hi, int(args[k] or 0)))
+                done.append({"max_tabs": "同时最多", "per_hour": "每小时最多",
+                             "close_idle_min": "闲置自动关(分钟)"}[k] + f" {bc[k]}")
+        if not done:
+            raise ValueError("一个能改的字段都没给。能改：auto_open/max_tabs/per_hour/"
+                             "only_rule_channels/close_idle_min")
+        app.cfg["browser"] = bc
+        app.save_cfg()
+        c = app.br_cfg()
+        return ({"ok": True, "browser": c,
+                 "note": "改完立刻生效，扩展下次心跳就按新设置来。"
+                         "自动开帖会新开一个最小化的浏览器窗口，不往他当前窗口塞标签页"},
+                "改了自动点开新帖：" + "、".join(done), True)
+
+    if name == "set_default_model":
+        provs = app.cfg.get("providers") or []
+        dm = dict(app.cfg.get("default_model") or {})
+        pname = str(args.get("provider") or dm.get("provider") or "").strip()
+        model = str(args.get("model") or "").strip()
+        if not model:
+            raise ValueError("model 是空的：要换成哪个模型？先调 list_providers 看拉到过哪些")
+        hit = next((p for p in provs if p.get("name") == pname), None)
+        if not hit:
+            raise ValueError(f"没有叫「{pname}」的服务。现有的是：" +
+                             ("、".join(p.get("name") or "?" for p in provs) or "一家都没配"))
+        cache = (app.cfg.get("models_cache") or {}).get(pname) or []
+        if cache and model not in cache:
+            raise ValueError(f"「{pname}」这家拉到的模型里没有 {model}。它有的是："
+                             + "、".join(cache[:20]) + "。要用别的先让他在「模型接入」页拉一次列表")
+        app.cfg["default_model"] = {"provider": pname, "model": model}
+        app.save_cfg()
+        return ({"ok": True, "default": f"{pname} / {model}",
+                 "note": "改完立刻生效；没单独指定模型的规则和工作台都用这个。"
+                         "Key 和端点地址你改不了，那两样只能人在界面上填"},
+                f"默认模型换成了 {pname} / {model}", True)
 
     if name == "export_extract_templates":
         tpls = [tpl_for_export(t) for t in norm_tpls(app.cfg.get("extract_templates"))]
@@ -1612,6 +1858,18 @@ WB_TEXT_PROTO = """## 你可以直接动手（重要）
   回答「这条为什么没提醒我」用它（只读）。
 - get_logs {"limit":30}：最近的运行日志（只读）。
 - export_extract_templates {}：批量提取的模板整包导出（只读，没有导入工具）。
+- list_watch {}：开服监听在盯的网址（含 id）。要改哪个先调它。
+- create_watch {"url":"https://...","name":"某服官网","every_sec":60}：加一个监视目标，
+  想盯几个就加几个，没有上限。用户说「盯着这个网址开没开」就直接加，别教他自己去点。
+- update_watch {"id":"2","patch":{"every_sec":30}}：改一个监视目标。
+- set_watch_enabled {"id":"2","enabled":false}：暂停/启用。
+- delete_watch {"id":"2"}：删除（不可逆）。
+- check_watch_now {"id":"2"}：立刻现探一次，回最新状态 —— 问「现在开了吗」用它。
+- set_notify {"toast":false,"quiet_from":"23:00","quiet_to":"08:00","min_score":60}：
+  改本机提醒（弹窗/提示音/网页通知/免打扰/分数门槛）。改不了转发出口。
+- set_auto_open {"auto_open":true,"max_tabs":4,"close_idle_min":30}：改自动点开新帖。
+- set_default_model {"provider":"openai","model":"gpt-4o-mini"}：换默认模型
+  （只能挑 list_providers 里已经拉到的；Key 和端点你改不了）。
 - export_rules {"ids":["3"]}：把规则整包导出（ids 留空=全部），可以念给用户、或让他搬到另一台机器。
   **没有导入工具**：导入会覆盖他手填的规则，必须他自己在界面上点「导入规则」看过预览再确认。
 
@@ -1619,12 +1877,17 @@ WB_TEXT_PROTO = """## 你可以直接动手（重要）
 
 
 WB_TOOLS_HOWTO = """## 你可以直接动手（重要）
-你有一组工具，能**真的**读写这个程序的配置：list_rules / update_rule / create_rule /
-set_rule_enabled / delete_rule / test_rule / list_channels / search_messages / get_status /
-export_rules / list_open_threads / list_providers / list_hooks / recent_hits / test_message /
-get_logs / export_extract_templates。
+你有一组工具，能**真的**读写这个程序的配置：
+- 规则：list_rules / update_rule / create_rule / set_rule_enabled / delete_rule / test_rule
+- 开服监听：list_watch / create_watch / update_watch / set_watch_enabled / delete_watch /
+  check_watch_now
+- 设置：set_notify（弹窗、提示音、网页通知、免打扰、分数门槛）/ set_auto_open（自动点开新帖）/
+  set_default_model（换默认模型）
+- 只读：list_channels / search_messages / get_status / list_open_threads / list_providers /
+  list_hooks / recent_hits / test_message / get_logs / export_rules / export_extract_templates
 
-用户说「帮我改一下这条规则」「让它连表情包也提醒」「把那条停掉」时，**直接调工具改完再回话**，
+用户说「帮我改一下这条规则」「让它连表情包也提醒」「把那条停掉」「盯着这个网址开服了叫我」
+「别再弹窗了」「半夜别叫我」「打开自动开帖」时，**直接调工具改完再回话**，
 不要输出一二三步教他自己去点。他要是想自己点，他不会来问你。
 
 纪律：
@@ -1636,14 +1899,20 @@ get_logs / export_extract_templates。
 6. 改完要提醒他：改动已经生效了，去「监听规则」页能看到。
 7. 他要「备份 / 换台电脑 / 把规则发给朋友」就调 export_rules 把包念给他，并告诉他
    「监听规则」页上就有「导出规则」按钮能直接下载完整文件（包里的转发地址你看到的是打码的）。
-   **你没有导入工具**：导入会覆盖他手填的规则，得他自己点「导入规则」，先看预览再确认。"""
+   **你没有导入工具**：导入会覆盖他手填的规则，得他自己点「导入规则」，先看预览再确认。
+8. 开服监听：要盯网址就 create_watch 直接加（可以加很多个，没有上限），别叫他自己去填表；
+   问「现在开了吗」用 check_watch_now 现探，不要念 list_watch 里那个可能过期的状态；
+   刚加进去的第一次探测只记状态、不会提醒，这一点要跟他说清楚，免得他以为坏了。
+9. 这三样你永远改不了，被要求时直接说「这个得你自己在界面上填」：API Key、端点地址、
+   转发出口（密址），以及导入规则 / 导入模板。"""
 
 
 # 用户在「模型接入」页把「允许模型直接改规则」关掉了。上面那两段都不发，
 # 换成这段 —— 不然它会照着 ```dcwatch 的写法输出，程序又不执行，用户看着一团乱码。
 WB_HANDS_OFF = """## 你这轮不能动手（用户自己关掉了）
 用户在「模型接入」页把「允许模型直接改规则」这个勾**关掉**了，所以这一轮你只能说话，
-不能改他的配置。要改规则时：讲清楚该改哪一栏、改成什么，并告诉他
+不能改他的任何配置 —— 规则、开服监听、通知开关、自动开帖、默认模型全都动不了。
+要改东西时：讲清楚该去哪一页、改哪一栏、改成什么，并告诉他
 「你把『模型接入』页的『允许模型直接改规则』打开，我就能自己动手了」。
 不要输出 ```dcwatch 这种代码块 —— 现在没人执行它。"""
 
