@@ -510,6 +510,21 @@ TOAST_B64 = base64.b64encode(TOAST_PS.encode("utf-16-le")).decode()
 NAME_KINDS = {"guild": "服务器", "category": "分类", "channel": "频道",
               "thread": "帖子", "user": "用户"}
 
+# F2：ID 栏位 ←→ 名录里的类型。用户原话：「模型好像分不清用户id和频道id，我每次都要跟他解释，
+# 他还是搞错，我说监听某个用户，他给我建成监听频道，我等半天没消息」。
+# 根因：Discord 的 snowflake **不管是人还是频道，长相完全一样**（17–19 位数字），
+# 光看 ID 判断不了类型 —— 只有名录（names 表，F1 建的）知道哪个 ID 是谁。
+# 填错栏位的后果特别阴：规则语法完全合法、程序照跑，但 channel_id 永远不等于一个人的 ID，
+# 所以**永远不触发**，用户只能干等。所以保存前必须对一遍。
+# SLOT_OK = 填进这个栏位能真的触发的类型（帖子 ID 填进 channel_ids 是对的：
+# 帖子里的消息，channel_id 就是帖子 ID）。
+SLOT_OK = {"guild_ids": ("guild",), "channel_ids": ("channel", "thread"),
+           "thread_ids": ("thread", "channel"), "author_ids": ("user",)}
+SLOT_CN = {"guild_ids": "只听这些服务器", "channel_ids": "听哪里·只听这些频道",
+           "thread_ids": "只听这些帖子", "author_ids": "听谁·只听这些人"}
+KIND_SLOT = {"guild": "guild_ids", "channel": "channel_ids",
+             "thread": "thread_ids", "user": "author_ids"}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS messages(
@@ -812,6 +827,14 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
 2. **要有一条规则命中它**：规则里「听哪里」填上那个频道 ID，再写清听什么内容。
    **他不用自己去抄 ID**：他说名字你就调 find_target 查名录，念候选让他认，认完你直接建规则。
 
+## 「盯人」和「盯频道」千万别搞混（用户为这个骂过一次）
+Discord 的 ID 不管是人还是频道，长相完全一样（一串 17–19 位数字），**看数字分不出类型**。
+盯人 → `author_ids`（听谁）；盯频道/帖子 → `channel_ids`/`thread_ids`（听哪里）。
+填错栏位规则语法照样合法、程序照样跑，但**永远不触发**，他会干等半天才发现。
+所以：他说「监听某个人」就往 author_ids 填；只给了一串数字又没说是谁 → 先把这串数字当
+name 传给 find_target 反查类型 → 名录里没见过就**stage=ask 问他一句**
+「这个 ID 是一个人，还是一个频道？」。**不确定就问，绝不猜着出 stage=done。**
+
 ## 「帮我写规则」指的是什么
 在这里，「规则」永远是 **dcwatch 的监听规则**：什么消息该提醒他。
 **不是**群聊管理规则、不是游戏规则、不是服务器公约。绝对不要反问「你指的是群规还是游戏规则」。
@@ -869,6 +892,15 @@ dcwatch 是一个**已经装在用户自己电脑上、正在运行**的 Discord
   规则页的「频道」「用户」栏是可搜索选择器（打名字跳候选、选中自动填 ID），你这边用工具
   find_target 查。两个限制要跟他讲明：名字**不唯一**（候选必须让他确认是哪一个）、
   只认**扩展见过的**（没进过的服务器、从没说过话的人查不到 → 让他发链接，程序自己抠 ID）。
+  名录还存了**每个 ID 是什么**（服务器/分类/频道/帖子/人）：给 find_target 传一串数字就是
+  **反查类型**。规则页和规则卡片上，填好的 ID 会显示成「用户 老王」「频道 公告」这种人话，
+  填错栏位会当场红字点出来。
+- **「盯人」和「盯频道」是两回事（他为这个骂过一次）** —— Discord 的 ID 不管是人还是频道，
+  长相完全一样（一串 17–19 位数字），**光看数字判断不了类型**。盯人填「听谁」（author_ids），
+  盯频道填「听哪里」（channel_ids）。填错了规则语法照样合法、程序照样跑，但**永远不触发**，
+  他只能干等。所以：拿不准这串数字是人还是频道 → find_target 反查 → 查不到就**直接问他**。
+  保存时程序还会拿名录再对一遍，对不上直接**拒绝保存**并告诉你正确栏位。
+  **不确定就问，不许猜着生成**，这是硬纪律。
 - **运行日志 / 导出诊断** —— 一份 txt 说清「为什么它没提醒我」，排查时先要这个。
 - **设置** —— 收信方式（浏览器旁听 / Bot Token / 个人 Token）、代理、开机自启、抓历史。
 
@@ -1192,7 +1224,12 @@ def sanitize_import_tpl(draft):
 RULE_FIELDS_DOC = """规则字段（只写你确定要改的，别的别动）：
   name  规则名（中文短句）
   kinds  ["msg"]=有人发消息，["thread"]=有人开新帖/新子区，两个都要就都写
-  guild_ids / channel_ids / thread_ids  只听这些 ID（空数组=不限）
+  guild_ids / channel_ids / thread_ids  只听这些 ID（空数组=不限）—— 这是「在哪听」
+  ⚠️ **人的 ID 绝不能填进 channel_ids**。Discord 的 ID 不管是人还是频道，长相完全一样
+  （一串 17–19 位数字），**光看数字判断不了类型**。「盯一个人」= author_ids；
+  「盯一个频道」= channel_ids。填错了规则语法照样合法、程序照样跑，但**永远不触发**，
+  用户只能干等 —— 这是他最常踩、最恨的坑。不确定这串数字是人还是频道：
+  把它当 name 传给 find_target 反查，查不到就**直接问用户**，不许猜着填。
   include_threads_of_channels  true 时 channel_ids 连它下面的子区/帖子一起算
   dm  true=连私信一起听（默认 false，所以私信默认不提醒）
   accounts  只听这些 Discord 账号（多号旁听时分流用）
@@ -1514,7 +1551,15 @@ async def run_wb_tool(app, name, args, allow_ids):
         return rid, r
 
     if name == "list_rules":
-        return {"rules": [brief_rule(r) for r in rules],
+        # F2：顺手把 ID 翻成人话（听谁 / 听哪里）—— 一眼看穿哪条把人填成了频道
+        out = []
+        for r in rules:
+            b = brief_rule(r)
+            cn = app.rule_targets_cn(r)
+            if cn:
+                b["听的是"] = cn
+            out.append(b)
+        return {"rules": out,
                 "note": "改哪条就用它的 id 调 update_rule" if rules else "他一条规则都没有"}, "", False
 
     if name == "list_channels":
@@ -1526,6 +1571,24 @@ async def run_wb_tool(app, name, args, allow_ids):
         if not q:
             return {"error": "要找哪个名字？name 不能空"}, "", False
         kind = str(args.get("kind") or "").strip()
+        # F2 反查：传进来的是一串数字 → 他想知道「这个 ID 到底是人还是频道」。
+        # 光看数字判断不了类型，这是唯一能问的地方。
+        if q.isdigit() and len(q) >= 15:
+            ks = app.kinds_of_id(q)
+            if not ks:
+                return {"id": q, "kind": "不知道", "known": False,
+                        "note": f"名录里没见过 {q} 这个 ID，**判断不出它是人还是频道**。"
+                                f"Discord 的 ID 两者长相完全一样，猜不出来。"
+                                f"必须问用户：「{q} 这个 ID 是一个人，还是一个频道？」"
+                                f"问清楚了再填 —— 填错栏位规则永远不触发，他会干等半天。"}, "", False
+            rows = [{"id": q, "kind": k, "kind_cn": NAME_KINDS[k], "name": app.name_of(k, q),
+                     "该填的栏位": SLOT_CN.get(KIND_SLOT.get(k, ""), "（分类不能直接填）")}
+                    for k in ks]
+            return {"id": q, "known": True, "is": rows,
+                    "note": f"{q} 是【{NAME_KINDS[ks[0]]}】"
+                            + (f"「{app.name_of(ks[0], q)}」" if app.name_of(ks[0], q) else "")
+                            + f"，要填进「{SLOT_CN.get(KIND_SLOT.get(ks[0], ''), '（分类不能直接填）')}」。"
+                              "别填错栏位 —— 人填进频道栏，规则永远不触发。"}, "", False
         hits = app.lookup_names(q, kind, args.get("limit") or 12)
         st = app.names_stat()
         out = {"query": q, "kind": kind or "全部", "count": len(hits), "candidates": hits,
@@ -1546,6 +1609,14 @@ async def run_wb_tool(app, name, args, allow_ids):
         else:
             out["note"] = ("好几个同名的。把候选连「在哪」一起念给用户（编号让他挑），"
                            "等他确认了再拿那个 id 建规则，不许自己挑。")
+        # F2：每个候选直接标「这个 id 该填哪个栏位」，省得又把人填进频道栏
+        for h in hits:
+            h["该填的栏位"] = SLOT_CN.get(KIND_SLOT.get(h["kind"], ""), "（分类不能直接填）")
+        ks = {h["kind"] for h in hits}
+        if len(ks) > 1:
+            out["注意"] = ("这些候选的**类型不一样**（" + "、".join(NAME_KINDS[k] for k in ks) + "）。"
+                           "「盯一个人」和「盯一个频道」是两条完全不同的规则、填的栏位也不同。"
+                           "**必须先问清楚他要哪一种**，问都不问就建，他会等半天没消息。")
         return out, "", False
 
     if name == "list_open_threads":
@@ -1657,6 +1728,20 @@ async def run_wb_tool(app, name, args, allow_ids):
         ok_ids = set(allow_ids) | {str(x) for k in ("guild_ids", "channel_ids", "thread_ids", "author_ids")
                                    for x in ((byid.get(str(rid)) or {}).get(k) or [])}
         rule, notes = sanitize_draft(merged, notes, ok_ids, app.cfg["default_model"].get("model") or "")
+        # F2：ID 是人还是频道？对不上就**不保存**，把正确栏位点给模型让它改对。
+        # 用户原话：「我说监听某个用户，他给我建成监听频道，我等半天没消息。
+        # 他不确定的时候就该问我，不许直接生成。」
+        errs, warns = app.check_slot_kinds(rule)
+        if errs:
+            return ({"ok": False, "saved": False, "填错栏位了": errs,
+                     "为什么会错": "Discord 的 ID 不管是人还是频道，长相完全一样（一串 17–19 位数字），"
+                                   "光看数字判断不了类型。名录知道，你不查就是在猜。",
+                     "怎么办": "① 用 find_target 查清楚（直接把这串数字当 name 传进去，"
+                               "它会反查告诉你这是人还是频道）；② 还是不确定就**直接问用户**"
+                               "「你要盯的是这个人，还是这个频道？」；③ 改对栏位再调一次。"
+                               "**不许猜着重试。**"},
+                    "想建的规则 ID 填错栏位了，没保存（已把正确栏位告诉模型）", False)
+        notes += warns
         blob = json.dumps({k: v for k, v in rule.items() if k in DEFAULT_RULE}, ensure_ascii=False)
         if rid:
             app.db.x("UPDATE rules SET json=?,enabled=? WHERE id=?", (blob, enabled, rid))
@@ -1666,6 +1751,8 @@ async def run_wb_tool(app, name, args, allow_ids):
             rid = app.db.x("INSERT INTO rules(json,enabled) VALUES(?,?)", (blob, enabled))
             human = f"新建了规则「{rule.get('name')}」" + ("" if enabled else "（先停用着）")
         return ({"ok": True, "id": str(rid), "rule": brief_rule(dict(rule, id=rid, enabled=enabled)),
+                 # 人话版的「听谁 / 听哪里」：念给用户听，让他能当场否掉填错的那条
+                 "听的是": app.rule_targets_cn(rule) or "没限定任何频道/人",
                  "notes": notes}, human, True)
 
     # ---- B6：只读工具一批（模型「能调用的功能太少」）。写工具仍只有规则那四个 ----
@@ -1917,6 +2004,9 @@ WB_TEXT_PROTO = """## 你可以直接动手（重要）
 - find_target {"name":"教程分享区","kind":"channel"}：**按名字**找频道/帖子/服务器/分类/人的
   真实 ID（kind 留空=全找）。用户说名字不给数字时先调它；返回的是候选列表，带「在哪」，
   **念给用户、等他确认是哪一个再动手**，名字不唯一。查不到就让他发那个频道的链接。
+  name 里直接塞一串数字 = **反查这个 ID 是人还是频道**（长相一样，看数字分不出来）。
+  盯人填 author_ids、盯频道填 channel_ids，**分不清就问用户，不许猜** —— 填错栏位规则
+  永远不触发，用户会干等半天。
 - list_channels {}：真实的频道 / 人 ID（最近说过话的）。
 - search_messages {"query":"key","limit":20}：搜已收到的消息。
 - get_status {}：现在的收信状况和自查结论。
@@ -1971,6 +2061,18 @@ WB_TOOLS_HOWTO = """## 你可以直接动手（重要）
    find_target 返回的是**候选**：先念给用户、等他确认是哪一个，再拿那个 id 去建规则 ——
    名字不唯一（同名频道、同名的人都有），猜错了他要等好几天才发现没提醒。
    查不到就说实话：名录只认扩展在网页上见过的，让他发链接或去那个频道露个面。
+5b. **「人」和「频道」分清楚，这是用户点名骂过的坑**（原话：「我说监听某个用户，
+   他给我建成监听频道，我等半天没消息。他不确定的时候就该问我，不许直接生成」）：
+   - 盯**人** → `author_ids`；盯**频道/帖子** → `channel_ids`/`thread_ids`。两者的 ID
+     长得一模一样，**看数字分不出来**，靠猜必错。
+   - 用户只给了一串数字、没说这是谁：先把这串数字当 `name` 传给 find_target **反查类型**，
+     它会告诉你「这是【用户】老王，该填 author_ids」。名录里没见过就**直接问他**：
+     「这个 ID 是一个人，还是一个频道？」——**问一句永远比让他白等半天强。**
+   - find_target 的候选**跨类型**时（既有同名的人又有同名的频道）**必须反问**，不许自己挑。
+   - 保存时程序会拿名录再对一遍类型：对不上会**拒绝保存**并告诉你正确栏位。
+     被拒绝时别换个 ID 硬试，按它说的挪栏位，或者回头问用户。
+   - 建完/改完把「听谁 / 听哪里」用人话念给他（工具返回里的「听的是」就是），
+     让他能当场说「不对，我要的是那个人」。
 6. 改完要提醒他：改动已经生效了，去「监听规则」页能看到。
 7. 他要「备份 / 换台电脑 / 把规则发给朋友」就调 export_rules 把包念给他，并告诉他
    「监听规则」页上就有「导出规则」按钮能直接下载完整文件（包里的转发地址你看到的是打码的）。
@@ -3517,6 +3619,66 @@ class App:
                 st[r_["kind"]] = r_["c"]
         st["total"] = sum(st[k] for k in NAME_KINDS)
         return st
+
+    # ---------- F2：ID 是人还是频道 ----------
+    def kinds_of_id(self, nid):
+        """这个 ID 在名录里是什么类型（可能不止一种，主键是 (id,kind)）。最近见过的排前面。
+        snowflake 人和频道长相一样，**这是全程序唯一能判断类型的地方**。"""
+        nid = str(nid or "").strip()
+        if not nid:
+            return []
+        return [r_["kind"] for r_ in self.db.q(
+            "SELECT kind FROM names WHERE id=? ORDER BY seen DESC", (nid,))]
+
+    def id_label(self, nid):
+        """一串数字 → 人话「频道 公告」。名录没见过就回空字符串。"""
+        ks = self.kinds_of_id(nid)
+        if not ks:
+            return ""
+        nm = self.name_of(ks[0], nid)
+        return NAME_KINDS[ks[0]] + (f" {nm}" if nm else "")
+
+    def check_slot_kinds(self, rule):
+        """F2 硬校验：规则里每个 ID 拿去名录对类型，返回 (拦下的理由, 只是提醒)。
+
+        名录里没见过的 ID **不拦**（用户可能是从链接里抠出来的，扩展还没见过那个频道），
+        只回一条「类型核对不了」；名录见过、但类型跟栏位对不上的**一律拦**——
+        那是「规则合法但永远不触发」，让用户干等半天的元凶。"""
+        errs, warns = [], []
+        for slot, ok_kinds in SLOT_OK.items():
+            for nid in (rule.get(slot) or []):
+                nid = str(nid)
+                ks = self.kinds_of_id(nid)
+                if not ks:
+                    warns.append(f"「{SLOT_CN[slot]}」里的 {nid} 名录里没见过，类型核对不了 —— "
+                                 f"如果这是从链接里抠的就没问题，如果是猜的就务必先问清楚")
+                    continue
+                if any(k in ok_kinds for k in ks):
+                    continue
+                k = ks[0]
+                nm = self.name_of(k, nid)
+                right = KIND_SLOT.get(k)
+                fix = (f"【{NAME_KINDS[k]}】要填进「{SLOT_CN[right]}」（{right}）"
+                       if right else
+                       "【分类】不能直接填 —— 消息的 channel_id 永远不等于分类 ID，"
+                       "要盯一个分类得把它下面的频道一个个填进 channel_ids")
+                errs.append(f"{nid} 在名录里是【{NAME_KINDS[k]}】" + (f"「{nm}」" if nm else "")
+                            + f"，却填进了「{SLOT_CN[slot]}」（{slot}）：这条规则永远不会触发。"
+                            + fix)
+        return errs, warns
+
+    def rule_targets_cn(self, rule):
+        """规则里的 ID 全翻成人话，按栏位分组。给规则卡片 / list_rules 用 ——
+        填错栏位的规则一眼就能看穿，不用等半天没消息才发现。"""
+        out = {}
+        for slot in SLOT_OK:
+            got = []
+            for nid in (rule.get(slot) or []):
+                lab = self.id_label(str(nid))
+                got.append(f"{lab}（{nid}）" if lab else f"{nid}（名录里没见过，类型不明）")
+            if got:
+                out[SLOT_CN[slot]] = got
+        return out
 
     def ctx_text(self, ev, n=12):
         rows = self.db.q("SELECT author,content FROM messages WHERE channel_id=? ORDER BY ts DESC LIMIT ?",
