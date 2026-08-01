@@ -118,7 +118,8 @@ async function badge() {
     [text, color, tip] = ["!", "#c0392b", "投递失败：" + st.sendErr];
   } else {
     [text, color, tip] = ["ON", "#3f7d58",
-      `正常旁听中${st.account ? "（" + st.account + "）" : ""}${st.where ? "：#" + st.where : ""}，已上报 ${st.sent || 0} 条`];
+      `正常旁听中${st.account ? "（" + st.account + "）" : ""}${st.where ? "：#" + st.where : ""}，已上报 ${st.sent || 0} 条`
+      + (st.rescued ? `，救回过 ${st.rescued} 个被 Chrome 回收的标签页` : "")];
   }
   await chrome.action.setBadgeText({ text });
   await chrome.action.setBadgeBackgroundColor({ color });
@@ -151,6 +152,40 @@ async function pullTabs() {
     } catch (e) { /* 这个标签页里没有内容脚本（装扩展前就开着，没按 F5）——角标的「?」会说明 */ }
   }
 }
+
+/* ---------- 后台标签页防冻结/防回收（C6） ----------
+   旁听全靠 Discord 页面活着。后台标签页本来就能继续收消息（MutationObserver
+   不受可见性影响），真正会断的是 Chrome「内存节省程序」：标签页挂后台久了先
+   **冻结**（页面 JS 全停，websocket 都断，这段消息全漏），再**回收**（页面整个
+   卸载，切回去才重新加载）。用户看到的症状就是「窗口必须放前台才更新」。
+   对策两层：
+   1) 每个 Discord 频道标签页都设 autoDiscardable=false —— Chrome 官方给的唯一
+      开关，明确告诉内存节省程序「这个标签页不许动」（冻结/回收都跳过它）。
+   2) 每 30 秒巡检：发现已经被回收/冻结的（比如设置生效前就被收了的），立刻
+      reload 救回来 —— 被回收的标签页本来就没有内容可失，reload 是恢复旁听，
+      不是打扰；它会在后台安静加载，不抢焦点。 */
+const isDiscordTab = t => !!(t && t.url && /^https:\/\/(ptb\.)?discord\.com\/channels\//.test(t.url));
+async function protectTab(id) {
+  try { await chrome.tabs.update(id, { autoDiscardable: false }); } catch (e) {}
+}
+async function protectAll() {
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: ["*://discord.com/channels/*", "*://ptb.discord.com/channels/*"] }); }
+  catch (e) { return; }
+  let rescued = 0;
+  for (const t of tabs) {
+    await protectTab(t.id);
+    if (t.discarded || t.frozen) {
+      try { await chrome.tabs.reload(t.id); rescued++; } catch (e) {}
+    }
+  }
+  if (rescued) {
+    const st = await getSt();
+    await setSt({ rescued: (st.rescued || 0) + rescued, lastRescueAt: Date.now() });
+  }
+}
+chrome.tabs.onCreated.addListener(t => { if (isDiscordTab(t)) protectTab(t.id); });
+chrome.tabs.onUpdated.addListener((id, info, t) => { if (info.status === "loading" && isDiscordTab(t)) protectTab(id); });
 
 /* ---------- 自动开帖：跟心跳一起每 30 秒问一次「有什么要我干的」（C2） ----------
    开哪些 / 关哪些全由服务端决定（它才知道规则在盯哪些频道、同时开着几个、
@@ -272,7 +307,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
 });
 
 chrome.alarms.create("hc", { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener(a => { if (a.name === "hc") { pullTabs().finally(health); tabOrders(); } });
-chrome.runtime.onStartup.addListener(() => { health(); tabOrders(); });
-chrome.runtime.onInstalled.addListener(health);
+chrome.alarms.onAlarm.addListener(a => { if (a.name === "hc") { protectAll(); pullTabs().finally(health); tabOrders(); } });
+chrome.runtime.onStartup.addListener(() => { protectAll(); health(); tabOrders(); });
+chrome.runtime.onInstalled.addListener(() => { protectAll(); health(); });
+protectAll();
 health();

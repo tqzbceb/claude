@@ -55,10 +55,31 @@
         if (q && q.url) arr = arr.filter(x => /discord\.com/.test(x.url || ""));
         return arr;
       },
+      update: async (id, props) => {
+        if (!liveTabs.has(id)) throw new Error("No tab with id: " + id);
+        Object.assign(liveTabs.get(id), props);
+        return liveTabs.get(id);
+      },
+      reload: async (id) => {
+        if (!liveTabs.has(id)) throw new Error("No tab with id: " + id);
+        liveTabs.get(id).discarded = false;
+        liveTabs.get(id).frozen = false;
+        liveTabs.get(id).reloaded = (liveTabs.get(id).reloaded || 0) + 1;
+      },
       onRemoved: {
         _ls: [],
         addListener(fn) { this._ls.push(fn); },
         fire(id) { for (const fn of this._ls) fn(id); },
+      },
+      onCreated: {
+        _ls: [],
+        addListener(fn) { this._ls.push(fn); },
+        fire(tab) { for (const fn of this._ls) fn(tab); },
+      },
+      onUpdated: {
+        _ls: [],
+        addListener(fn) { this._ls.push(fn); },
+        fire(id, info, tab) { for (const fn of this._ls) fn(id, info, tab); },
       },
     },
     action: {
@@ -156,6 +177,30 @@
     }
     return rep;
   }
+
+  /* ---- C6 防冻结/防回收（background.js 的镜像，改动必须两边同步） ---- */
+  const isDiscordTab = t => !!(t && t.url && /^https:\/\/(ptb\.)?discord\.com\/channels\//.test(t.url));
+  async function protectTab(id) {
+    try { await chrome.tabs.update(id, { autoDiscardable: false }); } catch (e) {}
+  }
+  async function protectAll() {
+    let tabs = [];
+    try { tabs = await chrome.tabs.query({ url: ["*://discord.com/channels/*", "*://ptb.discord.com/channels/*"] }); }
+    catch (e) { return; }
+    let rescued = 0;
+    for (const t of tabs) {
+      await protectTab(t.id);
+      if (t.discarded || t.frozen) {
+        try { await chrome.tabs.reload(t.id); rescued++; } catch (e) {}
+      }
+    }
+    if (rescued) {
+      const st = await getSt();
+      await setSt({ rescued: (st.rescued || 0) + rescued, lastRescueAt: Date.now() });
+    }
+  }
+  chrome.tabs.onCreated.addListener(t => { if (isDiscordTab(t)) protectTab(t.id); });
+  chrome.tabs.onUpdated.addListener((id, info, t) => { if (info.status === "loading" && isDiscordTab(t)) protectTab(id); });
 
   chrome.tabs.onRemoved.addListener(async (tabId) => {
     const opened = await getOpened();
@@ -307,6 +352,55 @@
   try { await chrome.tabs.get(tq1.id); } catch (e) { gone = true; }
   t("tabs.remove 后 get 抛错", gone, null);
   t("remove 只关目标 tab", liveTabs.has(tq2.id), [...liveTabs.keys()]);
+
+  // 13) C6：onCreated  Discord 频道页 → autoDiscardable=false
+  liveTabs.clear(); storage.opened = {}; storage.st = {};
+  const td1 = await chrome.tabs.create({ url: "https://discord.com/channels/1/2", active: false });
+  await chrome.tabs.onCreated.fire(td1);
+  await new Promise(r => setTimeout(r, 30));
+  t("新开 Discord 频道页被设 autoDiscardable=false",
+    liveTabs.get(td1.id).autoDiscardable === false, liveTabs.get(td1.id));
+
+  // 14) C6：非 Discord 页 / 非频道页 不动
+  const td2 = await chrome.tabs.create({ url: "https://example.com/", active: false });
+  await chrome.tabs.onCreated.fire(td2);
+  const td3 = await chrome.tabs.create({ url: "https://discord.com/login", active: false });
+  await chrome.tabs.onCreated.fire(td3);
+  await new Promise(r => setTimeout(r, 30));
+  t("非频道页不被设 autoDiscardable",
+    liveTabs.get(td2.id).autoDiscardable == null && liveTabs.get(td3.id).autoDiscardable == null,
+    { ex: liveTabs.get(td2.id), login: liveTabs.get(td3.id) });
+
+  // 15) C6：onUpdated 在已有标签页里打开 Discord 频道 → 补设
+  const td4 = await chrome.tabs.create({ url: "https://example.com/", active: false });
+  liveTabs.get(td4.id).url = "https://discord.com/channels/1/2";
+  await chrome.tabs.onUpdated.fire(td4.id, { status: "loading" }, liveTabs.get(td4.id));
+  await new Promise(r => setTimeout(r, 30));
+  t("老标签页导航到频道页也补设", liveTabs.get(td4.id).autoDiscardable === false,
+    liveTabs.get(td4.id));
+
+  // 16) C6：protectAll 全量设 + 回收/冻结的救回
+  liveTabs.clear(); storage.st = {};
+  const tp1 = await chrome.tabs.create({ url: "https://discord.com/channels/1/2", active: false });
+  const tp2 = await chrome.tabs.create({ url: "https://ptb.discord.com/channels/1/3", active: false });
+  const tp3 = await chrome.tabs.create({ url: "https://discord.com/channels/1/4", active: false });
+  liveTabs.get(tp2.id).discarded = true;
+  liveTabs.get(tp3.id).frozen = true;
+  await protectAll();
+  t("protectAll 把所有频道页都设了 autoDiscardable=false",
+    [tp1, tp2, tp3].every(x => liveTabs.get(x.id).autoDiscardable === false),
+    [...liveTabs.values()]);
+  t("被回收/冻结的被 reload 救回",
+    liveTabs.get(tp2.id).reloaded === 1 && liveTabs.get(tp3.id).reloaded === 1
+    && !liveTabs.get(tp2.id).discarded && !liveTabs.get(tp3.id).frozen,
+    { tp2: liveTabs.get(tp2.id), tp3: liveTabs.get(tp3.id) });
+  t("没被回收的不 reload", liveTabs.get(tp1.id).reloaded == null, liveTabs.get(tp1.id));
+  t("救回计数进了 st.rescued", storage.st && storage.st.rescued === 2, storage.st);
+
+  // 17) C6：ptb 也匹配；再次 protectAll 无事发生不重复救
+  await protectAll();
+  t("再次巡检不重复救回", storage.st.rescued === 2 && liveTabs.get(tp2.id).reloaded === 1,
+    { st: storage.st, tp2: liveTabs.get(tp2.id) });
 
   return {
     pass: checks.filter(c => c.ok).length,
