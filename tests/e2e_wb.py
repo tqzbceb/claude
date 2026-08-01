@@ -441,4 +441,152 @@ for nm in ("list_providers", "list_hooks", "recent_hits", "test_message", "get_l
 ok("函数版提示词里也点了新工具", "list_providers" in pr["text"] and "test_message" in pr["text"],
    pr["text"][:300])
 
+print("16. E9 写工具：开服监听 CRUD / 现探 / 本机提醒 / 自动开帖 / 默认模型")
+# 用户的原话是「模型只会教我一二三步，不能替我配好」。这一节只认一件事：
+# 说完一句话，配置里真的变了 —— 光回一段人话不算通过。
+ECHO = "http://127.0.0.1:8898"     # runall.sh 起的假 webhook，GET 一律 200，现探必然「开着」
+ai(stream=True, tools=True)
+
+
+def wt(name, args, prompt="帮我弄一下"):
+    """让假模型调一次写工具。回 (整个响应, 喂回给模型的那份结果)。
+    工具报错时 tool_out 不是 JSON，用 {} 顶上，报错要看 acts[0].err。"""
+    reset()
+    script([{"tools": [{"name": name, "args": args}]}, {"content": "弄好了。"}])
+    r = ask(prompt)
+    try:
+        return r, json.loads(calls()[-1]["tool_out"])
+    except Exception:
+        return r, {}
+
+
+def act1(r):
+    return (r.get("acts") or [{}])[0]
+
+
+def wlist():
+    return call("/api/watch")["watch"]
+
+
+for w0 in wlist():                                       # 从干净的监视表开始
+    call(f"/api/watch/{w0['id']}", None, method="DELETE")
+
+r, out = wt("list_watch", {}, "我在盯几个服")
+ok("一个都没有时明说是空的", out.get("count") == 0, out)
+ok("空的时候催模型直接帮他加，不许教他自己去点", "别让他自己" in (out.get("note") or ""), out)
+
+r, out = wt("create_watch", {"url": ECHO, "name": "某服官网", "every_sec": 60},
+            "盯着这个网址，开服了叫我")
+ok("模型自己就把监视目标建好了", out.get("ok") is True and out["watch"]["url"] == ECHO, out)
+wid = out.get("watch", {}).get("id")
+ok("真落库了，不是只回一句好听的话", any(str(w["id"]) == wid for w in wlist()), wlist())
+ok("界面上这一步算改动", act1(r).get("wrote") is True and r.get("changed") is True, r.get("acts"))
+ok("说的是人话带上了目标名字", "某服官网" in (act1(r).get("human") or ""), act1(r))
+ok("先说清第一次探测不提醒，免得模型许愿", "不提醒" in (out.get("note") or ""), out)
+
+r, out = wt("create_watch", {"name": "只给了名字"}, "盯一下")
+ok("网址空着直接报错，不许建个废的", act1(r).get("ok") is False, r.get("acts"))
+ok("报错点明必须 http 开头", "http" in (act1(r).get("err") or ""), act1(r))
+r, out = wt("create_watch", {"url": "某服官网"}, "盯这个")
+ok("网址不是链接也报错", act1(r).get("ok") is False
+   and "http" in (act1(r).get("err") or ""), r.get("acts"))
+ok("废的没混进库里", len(wlist()) == 1, wlist())
+
+r, out = wt("update_watch", {"id": wid, "patch": {"every_sec": 1}}, "改成一秒探一次")
+ok("间隔被下限夹住，不许模型拿它去打人家网站", out.get("watch", {}).get("every_sec") == 15, out)
+r, out = wt("update_watch", {"id": wid, "patch": {"every_sec": 90, "颜色": "红"}},
+            "改成 90 秒，顺便标红")
+ok("认识的字段改了", out.get("watch", {}).get("every_sec") == 90, out)
+ok("编出来的字段忽略掉并说清是哪个", any("颜色" in n for n in (out.get("notes") or [])), out)
+r, out = wt("update_watch", {"id": wid, "patch": {}}, "改一下")
+ok("patch 空着报错，不静默地啥也没干", act1(r).get("ok") is False, r.get("acts"))
+r, out = wt("update_watch", {"id": "99999", "patch": {"every_sec": 60}}, "改那个")
+ok("编的 id 报错并列出真的有哪些", act1(r).get("ok") is False
+   and "现有的是" in (act1(r).get("err") or ""), act1(r))
+
+r, out = wt("set_watch_enabled", {"id": wid, "enabled": False}, "这个先别盯了")
+ok("暂停生效", out.get("enabled") is False, out)
+ok("库里真停了", [w for w in wlist() if str(w["id"]) == wid and not w["enabled"]], wlist())
+ok("说的是暂停不是删除", "暂停" in (act1(r).get("human") or ""), act1(r))
+r, out = wt("set_watch_enabled", {"id": wid, "enabled": True}, "接着盯")
+ok("再启用回来", out.get("enabled") is True
+   and [w for w in wlist() if str(w["id"]) == wid and w["enabled"]], out)
+
+r, out = wt("check_watch_now", {"id": wid}, "现在开了吗")
+ok("现探回了此刻的状态", out.get("ok") is True and out["watch"]["state"] == "开着", out)
+ok("明说这是现探不是缓存", "现探" in (out.get("note") or ""), out)
+ok("只是探一次，不算改配置", act1(r).get("wrote") is False, r.get("acts"))
+ok("现探的结果写回库里了", [w for w in wlist() if str(w["id"]) == wid
+                            and w["state"] == "open"], wlist())
+
+r, out = wt("delete_watch", {"id": wid}, "这个不用盯了，删了吧")
+ok("删掉了", out.get("ok") is True, out)
+ok("库里真没了", not [w for w in wlist() if str(w["id"]) == wid], wlist())
+ok("删除会说明不可逆", "不可逆" in (act1(r).get("human") or ""), act1(r))
+
+r, out = wt("set_notify", {"toast": False, "sound": False, "min_score": 60}, "别再弹窗了")
+ok("弹窗和提示音真关了", out["sinks"]["toast"] is False and out["sinks"]["sound"] is False, out)
+ok("分数门槛也改了", out["sinks"]["min_score"] == 60, out)
+sk = call("/api/state")["config"]["sinks"]
+ok("落到配置文件里了", sk.get("toast") is False and sk.get("min_score") == 60, sk)
+ok("他自己填的转发出口没被动", any(h.get("name") == "秘密出口" for h in sk.get("hooks") or []), sk)
+ok("说清转发出口不是模型能改的", "转发出口" in (out.get("note") or ""), out)
+r, out = wt("set_notify", {"min_score": 999}, "门槛拉满")
+ok("分数门槛被夹在 100 以内", out["sinks"]["min_score"] == 100, out)
+r, out = wt("set_notify", {"quiet_from": "23点"}, "半夜别叫我")
+ok("免打扰时间写错格式就报错", act1(r).get("ok") is False, r.get("acts"))
+ok("报错示范了正确写法", "23:00" in (act1(r).get("err") or ""), act1(r))
+r, out = wt("set_notify", {"quiet_from": "23:00", "quiet_to": "08:00"}, "半夜别叫我")
+ok("正常格式的免打扰设上了", out["sinks"]["quiet_from"] == "23:00"
+   and out["sinks"]["quiet_to"] == "08:00", out)
+r, out = wt("set_notify", {}, "改下提醒")
+ok("一个字段都不给时报错，不假装改了", act1(r).get("ok") is False, r.get("acts"))
+call("/api/config", {"sinks": dict(call("/api/state")["config"]["sinks"],
+                                   toast=True, sound=True, min_score=0,
+                                   quiet_from="", quiet_to="")})
+
+r, out = wt("set_auto_open", {"auto_open": True, "max_tabs": 999, "close_idle_min": 45},
+            "打开自动开帖")
+ok("自动开帖的总开关开了", out["browser"]["auto_open"] is True, out)
+ok("同时开的标签页上限被钳住，不许开到 999", out["browser"]["max_tabs"] == 30, out)
+ok("闲置自动关改了", out["browser"]["close_idle_min"] == 45, out)
+ok("说清是新开最小化窗口，不往他当前窗口塞", "最小化" in (out.get("note") or ""), out)
+bc = call("/api/state")["config"]["browser"]
+ok("落到配置文件里了", bc.get("auto_open") is True and bc.get("max_tabs") == 30, bc)
+r, out = wt("set_auto_open", {}, "调一下自动开帖")
+ok("一个字段都不给时报错", act1(r).get("ok") is False, r.get("acts"))
+
+# 拉过一次列表才有 models_cache；没有缓存时工具不设卡（新配的服务也得能换）
+call("/api/config", {"models_cache": {"mock": ["mock-1", "mock-3", "mock-9"]}})
+r, out = wt("set_default_model", {"provider": "mock", "model": "gpt-9"}, "换成 gpt-9")
+ok("拉不到的模型不许硬设上", act1(r).get("ok") is False, r.get("acts"))
+ok("报错告诉模型有哪些可挑", "mock-3" in (act1(r).get("err") or ""), act1(r))
+r, out = wt("set_default_model", {"provider": "别家", "model": "mock-3"}, "换别家的")
+ok("没配过的服务直接报错", act1(r).get("ok") is False
+   and "现有的是" in (act1(r).get("err") or ""), act1(r))
+r, out = wt("set_default_model", {"provider": "mock"}, "换个模型")
+ok("不说换成哪个就报错", act1(r).get("ok") is False, r.get("acts"))
+r, out = wt("set_default_model", {"provider": "mock", "model": "mock-9"}, "默认用 mock-9")
+ok("默认模型换成了它挑的那个", out.get("default") == "mock / mock-9", out)
+ok("落到配置文件里了", call("/api/state")["config"]["default_model"]["model"] == "mock-9",
+   call("/api/state")["config"]["default_model"])
+ok("说清 Key 和端点它改不了", "Key" in (out.get("note") or ""), out)
+
+ai(tools=False)
+reset()
+script([{"tools": [{"name": "create_watch", "args": {"url": ECHO, "name": "偷偷加的"}}]},
+        {"content": "好。"}])
+r = ask("盯着这个网址")
+ok("勾一关掉，写工具一个都不执行", not (r.get("acts") or []) and r.get("changed") is False, r)
+ok("库里没被偷偷加进去", not [w for w in wlist() if w["name"] == "偷偷加的"], wlist())
+ai(tools=True)
+
+pr = [x for x in call("/api/prompts")["builtin"] if x["key"] == "wb_text"][0]
+tl = [x for x in call("/api/prompts")["builtin"] if x["key"] == "wb_tools"][0]
+for nm in ("list_watch", "create_watch", "update_watch", "set_watch_enabled", "delete_watch",
+           "check_watch_now", "set_notify", "set_auto_open", "set_default_model"):
+    ok(f"文本指令协议里有 {nm}", nm in pr["text"], pr["text"][:200])
+    ok(f"函数版提示词里也点了 {nm}", nm in tl["text"], tl["text"][:200])
+ok("提示词明说别输出一二三步教用户自己点", "教他自己去点" in tl["text"], tl["text"][:400])
+
 print(f"\n通过 {P} / 失败 {F}")
