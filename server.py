@@ -18,7 +18,7 @@ try:
 except ImportError:
     sys.exit("need aiohttp:  pip install aiohttp")
 
-VERSION = "1.9.4"                               # 服务端版本，界面和扩展都能看到
+VERSION = "1.10.0"                              # 服务端版本，界面和扩展都能看到
 EXT_MIN = "1.9.4"                               # 低于这个版本的扩展要提示用户更新
 # 扩展上报的跳过原因，给人看的说法（诊断结论里要拼成一句话）
 NICE_SKIP = {"history": "历史消息（时间戳太旧）", "render": "整批渲染（切频道/往上滚）",

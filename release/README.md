@@ -5,12 +5,13 @@
 
 ## 用户怎么下（发给他的原话）
 
-> 打开 https://github.com/tqzbceb/claude/tree/main/release ，点里面那个 `dcwatch-v1.9.4.zip`，
+> 打开 https://github.com/tqzbceb/claude/tree/main/release ，点里面那个 `dcwatch-v1.10.0.zip`，
 > 页面上点 **Download raw file**（右上角那个下载图标）。
 > 下载完解压出 `dcwatch` 文件夹，双击里面的 **启动.bat**。
-> 黑窗口第一行应该写 `dcwatch v1.9.4`。**这次扩展也要重装**（v1.9.4，改了消息解析）：
-> 程序包里自带新的 extension 文件夹（`dcwatch-extension-v1.9.4.zip` 是同一份，单独给只换扩展的人）。
-> 重装三步：覆盖 extension 文件夹 → `chrome://extensions` 里 dcwatch 卡片点 ⟳ → 回 Discord 页面按 F5。
+> 黑窗口第一行应该写 `dcwatch v1.10.0`。**这次扩展不用重装**（v1.10.0 没动扩展，还是 v1.9.4）。
+> 只有当你的扩展还停留在 v1.9.4 之前，才需要重装三步：覆盖 extension 文件夹 →
+> `chrome://extensions` 里 dcwatch 卡片点 ⟳ → 回 Discord 页面按 F5
+> （程序包里自带 extension 文件夹，`dcwatch-extension-v1.9.4.zip` 是同一份，单独给只换扩展的人）。
 
 ## 给接手的 AI
 
