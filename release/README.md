@@ -5,13 +5,13 @@
 
 ## 用户怎么下（发给他的原话）
 
-> 打开 https://github.com/tqzbceb/claude/tree/main/release ，点里面那个 `dcwatch-v1.12.1.zip`，
+> 打开 https://github.com/tqzbceb/claude/tree/main/release ，点里面那个 `dcwatch-v1.12.2.zip`，
 > 页面上点 **Download raw file**（右上角那个下载图标）。
 > 下载完解压出 `dcwatch` 文件夹，双击里面的 **启动.bat**。
-> 黑窗口第一行应该写 `dcwatch v1.12.1`。**这一版扩展真的改了（会自己抄名字→ID 名录），
-> 扩展必须重装，不然「填名字」这个新功能没数据可用**：覆盖 extension 文件夹 →
-> `chrome://extensions` 里 dcwatch 卡片点 ⟳ → 回 Discord 页面按 F5
-> （程序包里自带 extension 文件夹；另有 `dcwatch-extension-v1.12.1.zip` 给只换扩展的人）。
+> 黑窗口第一行应该写 `dcwatch v1.12.2`。**这一版扩展代码没改**（只是版本号跟程序钉齐），
+> 上一版 v1.12.1 的扩展你已经装过的话，这次不用再折腾扩展；没装过就还得装一次：
+> 覆盖 extension 文件夹 → `chrome://extensions` 里 dcwatch 卡片点 ⟳ → 回 Discord 页面按 F5
+> （程序包里自带 extension 文件夹；另有 `dcwatch-extension-v1.12.2.zip` 给只换扩展的人）。
 > 覆盖时**别删旧的 `dcwatch.db`**——你的规则和密钥都在里面。
 
 ## 给接手的 AI
