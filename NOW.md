@@ -163,6 +163,16 @@ tests/e2e_tabs.py（≥35 条）+ content_test.mjs 加 chrome.tabs 桩（≥10 �
   无启用中规则覆盖（kinds + 听哪里 + 听谁）→ 不落库、记跳过；自检/演示消息豁免。
 
 ## 状态
+**🔨 R 窗口（2026-08-01）认领：出 v1.11.1 程序包（A7+C5 落盘进 zip）。**
+用户发「继续」。远端核实 HEAD=69edaff（A7+C5 已推，678 条绿），无人撞车；代码侧无进行中的任务，
+NOW 发版提示点名下一轮出 **v1.11.1**：只动程序（server.py VERSION），extension/ 自 1.11.0 起一行没碰
+→ 不 bump EXT_MIN/manifest、不出扩展包、用户不用重装扩展。步骤：
+① 认领推送 → ② 全套回归复跑（12 件 678 条）→ ③ bump VERSION 1.11.0→1.11.1 + README/release 改版
+→ ④ 出程序 zip（27 文件）进 release/ + outputs/，删旧 1.11.0 程序包 → ⑤ 全新解压冒烟（/version=v1.11.1）
+→ ⑥ NOW/BACKLOG/HANDOFF/START_HERE 收尾推送。
+工作区又是新的：clone ✓、根 AGENTS.md 指针 ✓、PAT 长存 secrets/ ✓（token1 …0Dx28of 可推）。
+
+## 状态
 **✅ A7 + C5 已修完（Q 窗口，2026-08-01），全套 12 件 678 条绿。**
 P 窗口认领后断在「代码改完没推」：改动在 /tmp 随窗口没了，只有认领 commit `9c14e81` 落了盘。
 Q 窗口整个重做：① **A7** —— server 新增 `covers()`（什么时候+听哪里+听谁，关键词档不挡收信），
