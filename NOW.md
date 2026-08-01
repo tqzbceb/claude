@@ -118,6 +118,30 @@ tests/e2e_tabs.py（≥35 条）+ content_test.mjs 加 chrome.tabs 桩（≥10 �
 工作区又是新的：clone ✓、五文档读完 ✓、根 AGENTS.md 指针 ✓、PAT 长存 secrets/ ✓（token1 …0Dx28of）、
 环境自检 e2e 50/50 + imp 74/74 全绿 ✓、远端核实 HEAD=887e22d 无人撞车 ✓。
 
+## M 窗口（第十三个，2026-08-01）只做审计 + 需求拆分，一行代码没动
+
+用户又把 16 条需求整体贴了一遍并问「帮我拆分，可能有些已做完你自己审」。本窗口**只审不改**
+（L 窗口的地盘 extension/ 还张着嘴，撞车代价大）。核销结论：**16 条 15 条已落地**
+（A1–A6 / B1–B6 / C1 / C3 / C4 / D 全部 ✅，见 BACKLOG 各条 commit），只有 **C2 未完**。
+
+**L 窗口真实断点（本窗口逐项 grep 实测，远端 HEAD=842d069 之后无人推）**：
+- ✅ 已做：manifest 加 `tabs` 权限 + version bump 到 **1.11.0**；ui.html 设置页「自动点开新帖」折叠区
+- ❌ 没做：extension 侧 `tabs_report` / `tab_orders` / `threads_open` / `idle_close` **一行都没有**
+  （开帖执行、回报、闲置自关三件核心全空）；`tests/e2e_tabs.py` **文件不存在**；README 新节没写
+- 服务端侧确认全在（`tab_orders`×5 / `tabs_report`×2 / `list_open_threads`×5 / `norm_browser`×2）
+
+**⚠ 雷：三处版本号现在不一致** —— `server.py VERSION=1.10.0` / `EXT_MIN=1.9.4` /
+`manifest=1.11.0`。违反硬规矩 2+5，**在这个状态出包用户必装错版本**。下个窗口第一件事：
+要么把 C2 做完后三处一起钉到 1.11.0，要么先把 manifest 回退到 1.10.0，别让它半吊着。
+
+**给用户的拆分（三轮，本窗口回复里也是这个）**：
+1. **C2 扩展侧收尾**（最大一轮，照 PLAN_C2.md）：background 开/关帖执行 + 回报 + storage 记
+   opened + popup 自检行 + 药丸「· 自动」→ e2e_tabs.py ≥35 条 + content_test.mjs chrome.tabs 桩 ≥10
+   → 三处版本号统一 1.11.0 → README 新节 → 出程序 + 扩展两个 zip
+2. **e2e_chk.py 专项债**（PLAN_B1 §3.3，≥40 条 AI 复核断言，E 窗口欠的）
+3. **真机验收**（用户侧，不用 AI 窗口）：拉模型 401 修好没 → B1 AI 复核真盯 key 社群 →
+   A2 回复消息盯人 / A3 多标签只弹一条 / A5 关开关立刻停 → 导一份诊断包发来
+
 ## 状态
 **🔨 L 窗口正在做 C2 扩展侧（见上面一段），步骤：① 接手 ✓ → ② 状态认领推送 → ③ extension/
 四件 → ④ ui.html 折叠区 → ⑤ e2e_tabs.py + content_test 新断言 → ⑥ 全套回归 → ⑦ bump 1.11.0 +
