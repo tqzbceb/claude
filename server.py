@@ -3667,6 +3667,27 @@ class App:
                             + fix)
         return errs, warns
 
+    def rule_id_labels(self, rules):
+        """规则里出现过的每个 ID → {kind, kind_cn, name, slot（该填哪栏）}。给界面用（F2 第 3 闸）。
+
+        为什么不把标签塞进规则对象里：界面开关规则时会把整条规则原样 POST 回来存库，
+        多带的字段会被写进 json blob 里当垃圾。所以单独一张 id→标签 的表，跟 rules 并列。"""
+        out = {}
+        for r_ in rules or []:
+            for slot in SLOT_OK:
+                for nid in (r_.get(slot) or []):
+                    nid = str(nid)
+                    if nid in out:
+                        continue
+                    ks = self.kinds_of_id(nid)
+                    if not ks:
+                        out[nid] = {"kind": "", "kind_cn": "", "name": "", "slot": ""}
+                        continue
+                    k = ks[0]
+                    out[nid] = {"kind": k, "kind_cn": NAME_KINDS[k], "name": self.name_of(k, nid),
+                                "slot": KIND_SLOT.get(k, "")}
+        return out
+
     def rule_targets_cn(self, rule):
         """规则里的 ID 全翻成人话，按栏位分组。给规则卡片 / list_rules 用 ——
         填错栏位的规则一眼就能看穿，不用等半天没消息才发现。"""
@@ -4324,6 +4345,9 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                     "can_send": can_send(app),
                     "ai": dict({"stream": True, "tools": True}, **(app.cfg.get("ai") or {}))},
             "rules": app.rules(enabled_only=False),
+            # F2：规则卡片要把一串数字显示成「频道 公告」，填错栏位的还要标红。
+            # 类型只有名录知道，界面自己判断不了 → 服务端一次性把标签给它。
+            "idlabels": app.rule_id_labels(app.rules(enabled_only=False)),
             "stats": {
                 "msgs": app.db.q("SELECT COUNT(*) n FROM messages")[0]["n"],
                 "matched": app.db.q("SELECT COUNT(*) n FROM messages WHERE matched<>''")[0]["n"],
@@ -4452,6 +4476,15 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         rid = b.pop("id", None)
         enabled = int(b.pop("enabled", 1))
         b.pop("hits", None)
+        # F2：填错栏位的 ID（人填进「听哪里」之类）＝规则合法但永远不触发，用户只能干等。
+        # 界面上当场点出来，默认不保存；但**人跟模型不一样**，他可能拿的是名录还没见过的
+        # 正确 ID、或者名录那条本身过时了 —— 所以给一条「我确认没错，仍然保存」的路（force）。
+        force = bool(b.pop("force_slots", False))
+        slot_errs, _w = app.check_slot_kinds(b)
+        if slot_errs and not force:
+            return web.json_response({"ok": False, "saved": False, "slot_errs": slot_errs,
+                                      "hint": "这些 ID 填错栏位了，这条规则永远不会触发。"
+                                              "改对栏位，或者确认名录认错了再强制保存。"})
         if rid:
             # 界面编辑一条导入来的规则时，别把「导入来的」这个戳擦掉（它只在库里，
             # 表单里没有对应输入框，所以提交的 body 里可能根本没带）
@@ -4466,12 +4499,16 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             app.db.x("UPDATE rules SET json=?,enabled=? WHERE id=?", (blob, enabled, rid))
         else:
             rid = app.db.x("INSERT INTO rules(json,enabled) VALUES(?,?)", (blob, enabled))
-        return web.json_response({"ok": True, "id": rid, "rules": app.rules(False)})
+        rs = app.rules(False)
+        return web.json_response({"ok": True, "id": rid, "rules": rs,
+                                  "idlabels": app.rule_id_labels(rs),
+                                  "forced": force and bool(slot_errs)})
 
     @r.delete("/api/rules/{rid}")
     async def delrule(req):
         app.db.x("DELETE FROM rules WHERE id=?", (req.match_info["rid"],))
-        return web.json_response({"ok": True, "rules": app.rules(False)})
+        rs = app.rules(False)
+        return web.json_response({"ok": True, "rules": rs, "idlabels": app.rule_id_labels(rs)})
 
     # ---------- 开服监听（D3） ----------
     @r.get("/api/watch")
@@ -4628,7 +4665,8 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         return web.json_response({"ok": True, "dry_run": bool(dry), "mode": mode,
                                   "schema": schema, "from_version": from_ver,
                                   "plan": plan, "removes": removes, "summary": summary,
-                                  "notes": notes, "rules": app.rules(False)})
+                                  "notes": notes, "rules": app.rules(False),
+                                  "idlabels": app.rule_id_labels(app.rules(False))})
 
     @r.post("/api/rules/test")
     async def testrule(req):

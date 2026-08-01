@@ -219,6 +219,15 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .flowline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--text3)}
 .flowline .seg{background:var(--bg-sunk);border:1px solid var(--line);padding:2px 8px;border-radius:6px;
   color:var(--text2)}
+/* F2：规则卡片里的 ID 翻成「类型 名字」；填错栏位的当场标红（那种规则永远不会触发） */
+.flowline .idn{font-weight:600;color:var(--text)}
+.flowline .idq{color:var(--text3);border-bottom:1px dotted var(--text3)}
+.flowline .idbad{color:var(--err);font-weight:600;text-decoration:underline wavy var(--err)}
+.slotbox{border:1px solid var(--err);border-radius:8px;padding:10px 12px;margin:0 0 10px;
+  background:color-mix(in srgb,var(--err) 8%,transparent);font-size:12.5px;line-height:1.7;
+  white-space:normal;word-break:break-word}
+.slotbox b{color:var(--err)}
+.slotbox ul{margin:6px 0 0;padding-left:18px}
 
 /* ============ drawer ============ */
 .scrim{position:fixed;inset:0;background:rgba(31,30,28,.34);opacity:0;pointer-events:none;
@@ -1366,18 +1375,35 @@ const PRESETS=[
  {name:'被 @ 就让 AI 回',mention_only:true,action:'ai_reply'},
  {name:'关键词命中转发 Webhook',keywords_any:['空投','whitelist'],action:'webhook'},
  {name:'水群频道每 30 条出摘要',action:'ai_summary',summary_every:30}];
+// F2：哪些类型填进这一栏才真的会触发（跟服务端 SLOT_OK 一份口径，改一处要改两处）
+const SLOT_OK_UI={guild_ids:['guild'],channel_ids:['channel','thread'],
+  thread_ids:['thread','channel'],author_ids:['user']};
+const SLOT_CN_UI={guild_ids:'只听这些服务器',channel_ids:'听哪里·只听这些频道',
+  thread_ids:'只听这些帖子',author_ids:'听谁·只听这些人'};
+const KIND_CN_UI={guild:'服务器',category:'分类',channel:'频道',thread:'帖子',user:'用户'};
+// 一串数字 → 「频道 公告」。名录没见过就还是数字（虚线下划线＝类型不明，不是错）。
+// 类型跟栏位对不上就标红：那条规则语法合法但永远不触发，用户只会干等半天（F2 用户原话）。
+function idTag(v,slot){
+  const L=(S.idlabels||{})[String(v)];
+  if(!L||!L.kind)return `<span class="idq" title="名录里没见过这个 ID —— 是人还是频道判断不出来。到 Discord 网页上让扩展见一面就有了">${esc(v)}</span>`;
+  const bad=!(SLOT_OK_UI[slot]||[]).includes(L.kind);
+  const nm=L.name?`${L.kind_cn} ${L.name}`:L.kind_cn;
+  const tip=bad?`这个 ID 是【${L.kind_cn}】${L.name||''}，却填在「${SLOT_CN_UI[slot]}」里 —— 这条规则永远不会触发。`
+      +(L.slot?`【${L.kind_cn}】要填进「${SLOT_CN_UI[L.slot]}」`:'【分类】不能直接填，要把它下面的频道一个个填进「听哪里」')
+    :`${L.kind_cn}${L.name?' '+L.name:''}（${v}）`;
+  return `<span class="${bad?'idbad':'idn'}" title="${esc(tip)}">${bad?'⚠ ':''}${esc(nm)}</span>`;}
 function ruleDesc(r){
   const wh=[];
   const kk=r.kinds||['msg'];
   if(!kk.includes('msg'))wh.push('<span class="seg">只在开新帖时</span>');
   else if(kk.includes('thread'))wh.push('<span class="seg">消息 + 新帖</span>');
-  if(r.guild_ids?.length)wh.push(`<span class="seg">服务器 ${r.guild_ids.length} 个</span>`);
-  if(r.channel_ids?.length)wh.push(`<span class="seg">频道 ${r.channel_ids.map(esc).join(', ')}${r.include_threads_of_channels?' + 其子区':''}</span>`);
-  if(r.thread_ids?.length)wh.push(`<span class="seg">子区 ${r.thread_ids.map(esc).join(', ')}</span>`);
+  if(r.guild_ids?.length)wh.push(`<span class="seg">服务器 ${r.guild_ids.map(v=>idTag(v,'guild_ids')).join(', ')}</span>`);
+  if(r.channel_ids?.length)wh.push(`<span class="seg">频道 ${r.channel_ids.map(v=>idTag(v,'channel_ids')).join(', ')}${r.include_threads_of_channels?' + 其子区':''}</span>`);
+  if(r.thread_ids?.length)wh.push(`<span class="seg">子区 ${r.thread_ids.map(v=>idTag(v,'thread_ids')).join(', ')}</span>`);
   if(r.dm)wh.push('<span class="seg">私信</span>');
   if(!wh.length)wh.push('<span class="seg">全部可见频道</span>');
   const who=[];
-  if(r.author_ids?.length)who.push(`<span class="seg">用户 ${r.author_ids.map(esc).join(', ')}</span>`);
+  if(r.author_ids?.length)who.push(`<span class="seg">用户 ${r.author_ids.map(v=>idTag(v,'author_ids')).join(', ')}</span>`);
   if(r.author_name_contains)who.push(`<span class="seg">昵称含 ${esc(r.author_name_contains)}</span>`);
   if(r.mention_only)who.push('<span class="seg">@我</span>');
   if(!who.length)who.push('<span class="seg">任何人</span>');
@@ -1410,9 +1436,12 @@ function renderRules(){
   $$('#rlist [data-edit]').forEach(b=>b.onclick=()=>editRule(S.rules.find(r=>r.id==b.dataset.edit)));
   $$('#rlist [data-del]').forEach(b=>b.onclick=async()=>{if(!confirm('删除这条规则？'))return;
     const r=await api('/api/rules/'+b.dataset.del,'DELETE');
+    if(r&&r.idlabels)S.idlabels=r.idlabels;
     S.rules=r?r.rules:S.rules.filter(x=>x.id!=b.dataset.del);renderRules();toast('已删除')});
   $$('#rlist [data-tog]').forEach(b=>b.onclick=async()=>{const r=S.rules.find(x=>x.id==b.dataset.tog);
-    r.enabled=r.enabled?0:1;await api('/api/rules','POST',r);renderRules()});
+    // 开关一条**已经存在**的规则：带 force_slots —— 不然 F2 的栏位闸会把「只是想停用它」也拦掉，
+    // 而且拦了还看不见（这里没有红框），会变成按了没反应
+    r.enabled=r.enabled?0:1;await api('/api/rules','POST',{...r,force_slots:true});renderRules()});
 }
 /* ---------- 一句话生成规则 ---------- */
 const NL_EG=['有人送用不完的会员套餐，别让我错过',
@@ -1642,7 +1671,7 @@ async function impPreview(mode){
     if(r.removes.length&&!confirm(`会删掉本机 ${r.removes.length} 条规则，确定？`))return;
     const a=await api('/api/rules/import','POST',{data:S.imp.text,mode,dry_run:false});
     if(!a)return;
-    S.rules=a.rules;renderRules();closeDrawer();
+    S.rules=a.rules;if(a.idlabels)S.idlabels=a.idlabels;renderRules();closeDrawer();
     const p=a.summary;
     toast(`导入完成：新增 ${p.new}、覆盖 ${p.overwrite}、没变 ${p.same}`+(p.remove?`、删除 ${p.remove}`:''));};
 }
@@ -1853,10 +1882,26 @@ function editRule(r){
     const ok=res?res.match:localMatch(S.editing,sample);
     $('#t_out').innerHTML=ok?'<span class="tag g">✓ 命中，会执行动作</span>':
       `<span class="tag r">✕ 不命中${res?'（'+esc(res.why)+'）':''}</span>`;};
-  $('#e_save').onclick=async()=>{
-    const res=await api('/api/rules','POST',S.editing);
+  $('#e_save').onclick=async(ev)=>{
+    const force=!!(ev&&ev.__force);
+    const res=await api('/api/rules','POST',force?{...S.editing,force_slots:true}:S.editing);
     if(!res&&S.live){toast('没保存成功：'+S.lastErr);return;}   // 假的「已保存」最害人
-    if(res){S.rules=res.rules;}
+    // F2：ID 填错栏位 → 没存，把话摆在保存按钮上面（红框），并给一条「确认没错仍要存」的路
+    if(res&&res.ok===false&&res.slot_errs){
+      const df=$('#e_save').parentElement;
+      let box=$('#slotErr');
+      if(!box){box=document.createElement('div');box.id='slotErr';box.className='slotbox';
+        df.parentElement.insertBefore(box,df);}
+      box.innerHTML=`<b>⚠ 没保存：ID 填错栏位了</b>（这样的规则语法没问题，但<b>永远不会触发</b>，
+        你会干等半天没消息）<ul>${res.slot_errs.map(e=>`<li>${esc(e)}</li>`).join('')}</ul>
+        <div class="row" style="margin-top:8px"><button class="btn sm" id="slotFix">好，我去改</button>
+        <button class="btn ghost sm" id="slotForce">名录认错了，仍然保存</button></div>`;
+      box.scrollIntoView({block:'nearest',behavior:'smooth'});
+      $('#slotFix').onclick=()=>box.remove();
+      $('#slotForce').onclick=()=>{const e2=new Event('x');e2.__force=true;$('#e_save').onclick(e2);};
+      return;}
+    if($('#slotErr'))$('#slotErr').remove();
+    if(res){S.rules=res.rules;if(res.idlabels)S.idlabels={...(S.idlabels||{}),...res.idlabels};}
     else{                                                      // 演示模式：只改本地，看看效果
       if(S.editing.id)Object.assign(S.rules.find(x=>x.id===S.editing.id),S.editing);
       else S.rules.push({...S.editing,id:Date.now()%9999,enabled:1,hits:0});}
@@ -2865,7 +2910,7 @@ function wbApply(cur,ev){
 function wbAfter(ev){
   if(!ev.changed)return;
   if(ev.rules){S.rules=ev.rules;renderRules();}
-  else api('/api/state').then(st=>{if(st){S.rules=st.rules;renderRules();}});
+  else api('/api/state').then(st=>{if(st){S.rules=st.rules;S.idlabels=st.idlabels||S.idlabels;renderRules();}});
   toast('规则已改动，「监听规则」页可以核对');
 }
 async function wbStream(body,cur){
@@ -3199,6 +3244,7 @@ function connectSSE(){
 async function boot(){
   const st=await api('/api/state');
   if(st){S.cfg=st.config;S.status=st.status;S.rules=st.rules;S.stats=st.stats;S.env=st.env||{};
+    S.idlabels=st.idlabels||{};
     S.findings=st.findings||[];
     const ms=await api('/api/messages?limit=300');S.msgs=ms?ms.messages:[];
     $('#modeTag').textContent='';
