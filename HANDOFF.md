@@ -7,7 +7,7 @@
 > 这四份文件 + `tests/` + `release/` 就是全部交接内容，**不需要上一轮的聊天记录**。
 
 ## 最后更新时间
-2026-08-01 · v1.11.1 出包轮（R 窗口）—— A7+C5 落盘进 zip，代码侧清零
+2026-08-01 · v1.11.2 出包轮（V 窗口）—— C6 后台标签页防冻结，代码侧清零
 
 ## 新账号 / 新窗口先看这三行
 - 用户的账号是「10x10」：**每个窗口 10 条消息，用完换窗口**。进行中的状态在 `NOW.md`（粒度到步），
@@ -17,19 +17,37 @@
 - 工作区里的 `claude/` 是**死快照**（没有 `.git`）。干活永远 `git clone` 到 `/tmp` 上改，改完推。
 
 ## 当前状态
-**v1.11.1 已出包（2026-08-01，R 窗口）**：A7（收信箱规则驱动）+ C5（输入框单光标）落盘进 zip。
-程序 **v1.11.1** / EXT_MIN 与 manifest 仍 **1.11.0**（扩展零改动，**用户不用重装扩展**）。
-回归：12 件 **678 条全绿**。程序 zip（27 文件）在 `release/` 和 outputs/，旧 1.11.0 程序包已删，
-扩展 zip（v1.11.0，10 文件）保留。
+**v1.11.2 已出包（2026-08-01，V 窗口）**：C6（后台标签页防冻结/防回收）落盘。
+程序 / EXT_MIN / manifest 三处钉齐 **v1.11.2**（硬规矩 2）。
+回归：服务端 12 件 **678 条全绿** + 浏览器侧 97 条（run 46 / fresh 16 / tabs 35）全绿。
+程序 zip（27 文件）+ 扩展 zip（10 文件）都在 `release/` 和 outputs/，旧 1.11.1 两个包已删。
 
 下一件按顺序：
-1. **等用户装 v1.11.1 真机验收 + 要新诊断包**（只换程序，覆盖时别删 dcwatch.db）。
-   验：A7 收信箱（没规则=零收信；诊断包[3]段「收信闸拦下 N 条」）、C5 单光标，
-   连带 v1.11.0 欠的老项（自动开帖默认关 / A6 拉模型密钥重填 / B1 AI 复核 / A2 A3 A5）。
+1. **等用户装 v1.11.2 真机验收 + 要新诊断包**（**程序扩展都要换**：扩展有功能改动）。
+   验：①挂后台 10 分钟+ 不再漏消息（C6 原症状）；②图标悬停「救回过 N 个」；
+   ③A7 收信箱没规则=零收信；④C5 单光标；连带老欠账（自动开帖 / A6 密钥重填 / B1 AI 复核）。
 2. 用户新反馈（验收后大概率有）。
 **代码侧 BACKLOG 已清零。**
 
 ## 已完成
+
+### v1.11.2：C6 后台标签页防冻结/防回收（2026-08-01，V 窗口）
+
+- 起因：用户「窗口必须放前台 discord 才能继续更新消息，规则多的话要多开窗口挂前台，有没有适配优化」。
+- 正解：后台标签页**本来就能**收（MutationObserver 不受可见性影响、chrome.alarms 心跳兜底），
+  真正会断的是 Chrome「内存节省程序」的**冻结**（JS 全停，消息全漏）和**回收**（页面卸载）。
+- 落盘（extension/background.js）：`isDiscordTab` + `protectTab`（`chrome.tabs.update(id,
+  {autoDiscardable:false})`，官方唯一防回收 API）+ `protectAll`（30s 巡检：全部频道页补设 +
+  discarded/frozen 的立刻后台 reload 救回，不抢焦点）；三入口（onCreated / onUpdated(loading) /
+  alarm+startup+installed）；救回数记 `st.rescued`，badge 悬停提示「救回过 N 个被 Chrome 回收的标签页」。
+- 文档：README 新一节「能不能挂在后台不管它」（能；两个敌人；手动兜底 chrome://settings/performance
+  加 discord.com；一个标签页=一个频道，盯几个开几个后台标签页）+ 故障对照一行。
+- 测试：tabs_harness 桩补 `tabs.update/reload/onCreated/onUpdated` + **8 条 C6 断言**（runTabs 35/35）；
+  run 46/46、runFresh 16/16；服务端 12 件 678 条全绿（改 server.py 的版本号也全跑了一遍）。
+- 出包：三处钉齐 v1.11.2；双 zip（27+10 文件）进 release/（旧 1.11.1 已删）+ outputs/；
+  全新解压冒烟：启动行三处 v1.11.2 ✓、/version 页 5 处 ✓、/api/presets ✓。
+- 端口提醒：server.py 的端口走 `--port` 参数，**不是 PORT 环境变量**（V 窗口冒烟时踩过，
+  PORT=8892 无效实际起了 8777）。
 
 ### v1.11.1 补钉：版本号对齐（2026-08-01，U 窗口）
 
@@ -62,7 +80,7 @@
 - **v1.10.0 及以前**（详见 git 历史 / 下面存档）：A1–A6、B1–B6、C1、C3、C4、D 全落地
 
 ## 未完成（按优先级排序）
-- [ ] **等用户装 v1.11.1 真机验收 + 要新诊断包**（只换程序，扩展不用重装）
+- [ ] **等用户装 v1.11.2 真机验收 + 要新诊断包**（程序扩展都要换，扩展有功能改动）
 - [ ] exe 打包只能在用户本机做；扩展未在真 Discord load unpacked 端到端验过（靠假 DOM 回归）
 
 ## 注意事项 / 踩过的坑
@@ -72,8 +90,10 @@
 - **C2 扩展字段名 ≠ 服务端字段名**：扩展用 `aoOn` / `rep.opened|closed|failed` / `chrome.tabs.*`，
   服务端用 `tabs_report` / `threads_open` / `idle_close`。用服务端名 grep 扩展会**错判没做**（M 窗口踩过）
 - **runTabs 的 harness 必须是 async IIFE**，且宜拆成 `tabs_harness.js` 再 Runtime.evaluate 注入；
-  塞进 content_test.mjs 模板字符串里容易把 `async` 弄丢 → Uncaught
-- 交付包 **27 文件**（含 presets/）；扩展包 **10 文件**；动了扩展才出扩展 zip（硬规矩 2）
+  塞进 content_test.mjs 模板字符串里容易把 `async` 弄丢 → Uncaught。
+  **harness 里的 chrome 桩和 tabOrders/protectAll 是 background.js 的手工镜像**——改 background.js
+  用了新 chrome API 必须在桩里补（tests/RUN.md 也写着）；C6 这次补了 update/reload/onCreated/onUpdated
+- 交付包 **27 文件**（含 presets/）；扩展包 **10 文件**；每次出程序包都跟着出扩展 zip（硬规矩 2，三处钉齐）
 - 出包前三处版本号必须一致（VERSION / EXT_MIN / manifest）。半吊着出包用户必装错
 - 其余坑见 v1.10.0 段（import_rules 不加、export 打码、WB_PACK_LIMIT、跑回归先 kill 8777、
   .bat GBK+CRLF、setsid 起服务、推送用一次性 URL PAT）

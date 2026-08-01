@@ -72,7 +72,7 @@ cd tests && ./runall.sh e2e.py e2e_ai.py           # 一次两三套，别全塞
 const m = await import(process.cwd()+"/tests/content_test.mjs?t="+Date.now())
 await m.run(session)        // 46 条：解析、折叠消息、子区、私信、去重、合批、心跳
 await m.runFresh(session)   // 16 条：靠消息 ID 里的时间戳判新旧，别把翻出来的历史当新消息
-await m.runTabs(session)    // 27 条：C2 chrome.tabs 桩（create/remove/query/opened/回报）
+await m.runTabs(session)    // 35 条：C2 chrome.tabs 桩 + C6 防回收（update/reload/onCreated/onUpdated）
 ```
 
 细节和每套覆盖什么在 `tests/RUN.md`，**踩坑清单也在那里，动手前扫一眼能省一小时**。

@@ -23,7 +23,7 @@ cd tests
 DCWATCH_DB=/tmp/p.db python3 server.py     # 别用真配置库
 ```
 
-改完 `extension/content.js`：跑 `content_test.mjs` 的 `run()`（46 条）和 `runFresh()`（16 条）；改了 `background.js` 自动开帖再跑 `runTabs()`（27 条 chrome.tabs 桩），
+改完 `extension/content.js`：跑 `content_test.mjs` 的 `run()`（46 条）和 `runFresh()`（16 条）；改了 `background.js` 自动开帖再跑 `runTabs()`（35 条 chrome.tabs 桩，含 C6 防回收 8 条），
 要一个 CDP 会话（`browser_execute` 之类）。它默认读 `../extension/content.js`，
 也可以传路径或设 `DCW_CONTENT_JS`。
 

@@ -24,17 +24,18 @@
 
 ## 新反馈（2026-08-01，后台标签页）
 
-- [ ] **C6 · 窗口必须放前台 Discord 才更新消息（用户原话：「这窗口必须放前台这 discord 网页
+- [x] **C6 · 窗口必须放前台 Discord 才更新消息（用户原话：「这窗口必须放前台这 discord 网页
       才能继续更新消息，那我规则要是多的话，我要多打开几个窗口挂前台，你这程序有没有做
       这个适配优化？」）**
-      计划：①正解先讲清——后台标签页**本来就能**继续收（MutationObserver 不受可见性影响，
-      心跳也有 chrome.alarms 兜底），真正会断的是 Chrome「内存节省程序」把挂后台久的标签页
-      **冻结/回收**：冻结=页面 JS 全停（websocket 都停，消息全漏）、回收=页面卸载。
-      ②扩展侧适配：每个 Discord 标签页 `chrome.tabs.update(id,{autoDiscardable:false})`
-      （官方唯一防回收 API）+ 每 30 秒巡检，发现已回收/冻结的 Discord 标签页立刻 reload 救回；
-      ③README 补「挂后台」说明 + 手动兜底设置（chrome://settings/performance 把 discord.com
-      加进「始终保持活动」）；④一个标签页=一个频道是 Discord 的限制，多看几个频道就多开几个
-      **后台**标签页，不用挂前台。动 extension/ → 三处版本钉齐 bump v1.11.2，这轮程序扩展都要换。
+      ✅ 已修（V 窗口，随 **v1.11.2** 出包）：①`chrome.tabs.update(id,{autoDiscardable:false})`
+      给每个 Discord 频道标签页上「不许回收」保护（onCreated/onUpdated/protectAll 三入口）；
+      ②每 30 秒巡检，发现已回收/冻结的立刻后台 reload 救回，救回数记 st.rescued、
+      图标悬停提示「救回过 N 个被 Chrome 回收的标签页」；③README 新一节「能不能挂在后台不管它」
+      （能，后台标签页一直在收；唯二敌人是 Chrome 冻结/回收；手动兜底：
+      chrome://settings/performance 把 discord.com 加进「始终保持这些网站处于活动状态」；
+      一个标签页=一个频道，盯几个频道开几个后台标签页）+ 故障对照一行。
+      测试：tabs_harness 桩补 tabs.update/reload/onCreated/onUpdated + 8 条 C6 断言，
+      runTabs 35/35（原 27+8）；run 46/46、runFresh 16/16；服务端 12 件 678 条全绿。
 
 ## A. Bug（用户实际踩到的，优先修）
 
