@@ -5104,9 +5104,40 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
         _, known = app.rule_ctx(text + " " + " ".join(str(m.get("content") or "") for m in hist))
         return prov, model, msgs, known
 
+    # ---- G1 撤回用的两本账 -------------------------------------------------
+    # 一条工作台消息的稳定身份就是 wb_msgs.id（界面里叫 mid）。以前界面只有数组下标，
+    # 下标会被「重开会话只捞最后 60 条」错位，撤回时会撤错人，所以必须给真 id。
+    wb_epoch = {}   # sid -> 这个会话被撤回过几次。在跑的调用发现号变了就不许落库
+    wb_live = {}    # sid -> 正在跑的请求 task，撤回时逐个 cancel（用户「模型还在想」就想撤）
+
+    def wb_claim(sid):
+        """登记「这次调用属于哪个会话、第几个 epoch」。返回一个收尾闭包：
+        调用它＝把自己从在跑清单里摘掉，并回答「这轮结果还该不该落库」。"""
+        sid = int(sid or 0)
+        ep = wb_epoch.get(sid, 0)
+        task = asyncio.current_task()
+        if sid and task is not None:
+            wb_live.setdefault(sid, set()).add(task)
+
+        def still_wanted():
+            if sid and task is not None:
+                wb_live.get(sid, set()).discard(task)
+            return wb_epoch.get(sid, 0) == ep
+        return still_wanted
+
+    def wb_msgs_of(sid, limit=60):
+        """一个会话的消息（最多 limit 条，防止超长）。带 mid —— 撤回和复制都靠它认人。"""
+        rows = app.db.q("SELECT id,r,t,acts,ts FROM wb_msgs WHERE sid=? ORDER BY id DESC LIMIT ?",
+                        (sid, limit))
+        return [{"mid": x["id"], "r": x["r"], "t": x["t"], "ts": x["ts"],
+                 "acts": json.loads(x["acts"]) if x["acts"] else []}
+                for x in reversed(rows)]
+
     def wb_save_pair(sid, user_text, ai_text, acts):
         """一轮一问一答落库。sid 为空或不存在就建个新会话；写进去同时把会话名顶成
-        第一句话的头 20 个字（还是「新会话」才顶），并刷新 updated。"""
+        第一句话的头 20 个字（还是「新会话」才顶），并刷新 updated。
+        返回 {"sid": 会话 id, "mids": [用户那条的 mid, 模型那条的 mid]} —— 界面拿它
+        给刚发出去的两条消息补上身份，不然这一轮要等到重开会话才撤得动。"""
         user_text, ai_text = str(user_text)[:4000], str(ai_text or "")[:8000]
         if not user_text:
             return None
@@ -5120,14 +5151,15 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                      (str(sid),))
             row = [{"name": "新会话"}]
         ts = now()
-        app.db.x("INSERT INTO wb_msgs(sid,r,t,acts,ts) VALUES(?,?,?,'',?)", (sid, "u", user_text, ts))
-        app.db.x("INSERT INTO wb_msgs(sid,r,t,acts,ts) VALUES(?,?,?,?,?)",
-                 (sid, "a", ai_text, json.dumps(acts or [], ensure_ascii=False), ts))
+        uid = app.db.x("INSERT INTO wb_msgs(sid,r,t,acts,ts) VALUES(?,?,?,'',?)",
+                       (sid, "u", user_text, ts))
+        aid = app.db.x("INSERT INTO wb_msgs(sid,r,t,acts,ts) VALUES(?,?,?,?,?)",
+                       (sid, "a", ai_text, json.dumps(acts or [], ensure_ascii=False), ts))
         name = row[0]["name"]
         if name == "新会话":
             name = user_text.replace("\n", " ").strip()[:20] or "新会话"
         app.db.x("UPDATE wb_sessions SET name=?,updated=? WHERE id=?", (name, ts, sid))
-        return sid
+        return {"sid": sid, "mids": [uid, aid]}
 
     @r.post("/api/ask")
     async def ask(req):
@@ -5138,9 +5170,16 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
                 return web.json_response({"ok": True, "acts": [], "changed": False,
                                           "text": await app.chat(prov, model, msgs, max_tokens=200,
                                                                  rule="manual")})
+            keep = wb_claim(b.get("sid"))
             text, acts, changed = await wb_run(app, prov, model, msgs, known)
-            wb_save_pair(b.get("sid"), b.get("prompt", ""), text, acts)
             out = {"ok": True, "text": text, "acts": acts, "changed": changed}
+            # 中途被撤回（用户不等了）：答案不许写回已经截断的会话，界面也别再画它
+            if not keep():
+                out["reverted"] = True
+            else:
+                saved = wb_save_pair(b.get("sid"), b.get("prompt", ""), text, acts)
+                if saved:
+                    out["sid"], out["mids"] = saved["sid"], saved["mids"]
             if changed:
                 out["rules"] = app.rules(False)
             return web.json_response(out)
@@ -5167,9 +5206,15 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             async def emit(kind, payload):
                 await line({"t": kind, "d": payload} if kind == "delta" else
                            {"t": kind, "act": payload} if kind == "act" else {"t": kind, "d": payload})
+            keep = wb_claim(b.get("sid"))
             text, acts, changed = await wb_run(app, prov, model, msgs, known, emit=emit, stream=True)
-            wb_save_pair(b.get("sid"), b.get("prompt", ""), text, acts)
             done = {"t": "done", "text": text, "acts": acts, "changed": changed}
+            if not keep():
+                done["reverted"] = True          # 撤回赶在答完之前：不落库，界面丢掉
+            else:
+                saved = wb_save_pair(b.get("sid"), b.get("prompt", ""), text, acts)
+                if saved:
+                    done["sid"], done["mids"] = saved["sid"], saved["mids"]
             if changed:
                 done["rules"] = app.rules(False)
             await line(done)
@@ -5211,12 +5256,44 @@ exe 也一样：重新打包前的 exe 永远是旧版本。</div>
             return web.json_response({"ok": False, "error": "会话不存在"}, status=404)
         app.db.x("INSERT INTO kv(k,v) VALUES('wb_cur',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
                  (str(sid),))
-        rows = app.db.q("SELECT r,t,acts,ts FROM wb_msgs WHERE sid=? ORDER BY id DESC LIMIT 60", (sid,))
-        msgs = [{"r": x["r"], "t": x["t"],
-                 "acts": json.loads(x["acts"]) if x["acts"] else []}
-                for x in reversed(rows)]
         return web.json_response({"ok": True, "id": sid, "name": app.db.q(
-            "SELECT name FROM wb_sessions WHERE id=?", (sid,))[0]["name"], "msgs": msgs})
+            "SELECT name FROM wb_sessions WHERE id=?", (sid,))[0]["name"],
+            "msgs": wb_msgs_of(sid)})
+
+    @r.post("/api/wb/revert")
+    async def wb_revert(req):
+        """G1 撤回到某条消息：把它和它之后的全部删掉（模型回复、工具记录一起走），
+        并掐掉这个会话里正在跑的调用 —— 不掐的话模型答完还会把话写回已经截断的会话，
+        用户看到的就是「撤回了又自己冒出来」。
+        `mid` 不给或给 0 ＝ 只掐正在跑的那次、一条都不删（用户「模型还在想，我不等了」）。
+        撤回没有第二次确认，界面必须先摆清「这条和之后 N 条都会没」再调。"""
+        b = await req.json()
+        sid, mid = int(b.get("id") or 0), int(b.get("mid") or 0)
+        if not sid or not app.db.q("SELECT id FROM wb_sessions WHERE id=?", (sid,)):
+            return web.json_response({"ok": False, "error": "会话不存在"}, status=404)
+        wb_epoch[sid] = wb_epoch.get(sid, 0) + 1
+        for t in list(wb_live.get(sid) or ()):
+            t.cancel()
+        wb_live.pop(sid, None)
+        back, removed = "", 0
+        if mid:
+            row = app.db.q("SELECT id,r,t FROM wb_msgs WHERE sid=? AND id=?", (sid, mid))
+            if not row:
+                return web.json_response({"ok": False, "error": "这条消息已经不在了"}, status=404)
+            first = app.db.q("SELECT t FROM wb_msgs WHERE sid=? AND r='u' ORDER BY id LIMIT 1", (sid,))
+            removed = len(app.db.q("SELECT id FROM wb_msgs WHERE sid=? AND id>=?", (sid, mid)))
+            if row[0]["r"] == "u":
+                back = row[0]["t"] or ""      # 撤自己说的话 → 原文还给输入框，好改一改重发
+            app.db.x("DELETE FROM wb_msgs WHERE sid=? AND id>=?", (sid, mid))
+            left = app.db.q("SELECT COUNT(*) n FROM wb_msgs WHERE sid=?", (sid,))[0]["n"]
+            name = app.db.q("SELECT name FROM wb_sessions WHERE id=?", (sid,))[0]["name"]
+            # 整个会话被撤空了：名字是当初自动顶的第一句话就还原成「新会话」，
+            # 用户手动改过的名字不动（顶名规则见 wb_save_pair）
+            auto = (first[0]["t"].replace("\n", " ").strip()[:20] if first else "")
+            app.db.x("UPDATE wb_sessions SET name=?,updated=? WHERE id=?",
+                     ("新会话" if (not left and name == auto) else name, now(), sid))
+        return web.json_response({"ok": True, "id": sid, "removed": removed, "text": back,
+                                  "msgs": wb_msgs_of(sid), "sessions": wb_sess_list()})
 
     @r.post("/api/wb/session/rename")
     async def wb_rename(req):
