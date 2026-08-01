@@ -7,6 +7,17 @@
 （项目怎么运作、哪些坑别再踩）。`HANDOFF.md`（上一轮做到哪、挑新活）和 `CLAUDE.md`
 （收尾时 HANDOFF 的固定结构）按需读，照着执行。
 
+> ## ⚠️ 出版本前先看这一条（用户反复强调过两次）
+> **程序版本和扩展版本永远是同一个号，必须同步 bump。**
+> 只要动了 `server.py` 的 `VERSION`，就得把 `EXT_MIN`、`extension/manifest.json` 的 `version`
+> 一起改成同一个号，并**重新打扩展 zip** —— 哪怕扩展一行代码都没改。
+> 不存在「只出程序包、扩展留在旧号」的版本。理由是用户的原话：
+> 「拓展和程序版本必须对上，不然不好看」。细节见下面**硬规矩 2**和「怎么出交付包」。
+> 自查一行（三个号必须完全一样，否则不许出包）：
+> ```bash
+> grep -nE 'VERSION = |EXT_MIN = ' server.py; grep -n '"version"' extension/manifest.json
+> ```
+
 **仓库里的每一份东西都是为了「不需要聊天记录也能接上」而存在的**：
 `NOW.md` 手停在哪一步 · `START_HERE.md` 换号第一页 · 这份 项目记忆 · `HANDOFF.md` 进度与坑 · `CLAUDE.md` 协议 ·
 `tests/` 496 条回归（代码说不了谎的那部分）· `release/` 一份现成的成品 zip
@@ -93,8 +104,10 @@ find . -type f | wc -l                                # 必须是 27（v1.10.0 �
 cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch   # 环境里没有 zip 命令
 ```
 
-扩展单独还有一个包（10 个文件）：`cd extension && python3 -m zipfile -c ../dcwatch-extension-v$V.zip .`，
-**每次出程序包都跟着出**（版本钉齐，见硬规矩 2）。两个包都放进 `outputs/`，把旧版本的 zip 删掉。**顺手把 `release/` 里那份也换成新的**
+扩展单独还有一个包（11 个条目 = 10 个文件 + `icons/` 目录条目）：
+`cd extension && python3 -m zipfile -c ../dcwatch-extension-v$V.zip .`，
+**每次出程序包都必须跟着出这个包，一次都不能省**（版本钉齐，见硬规矩 2；
+扩展零改动的那种版本也要重打，只是回复里说清「不重装也能用」）。两个包都放进 `outputs/`，把旧版本的 zip 删掉。**顺手把 `release/` 里那份也换成新的**
 （那是用户在没有 AI 的时候唯一的下载入口，见 `release/README.md`）。
 
 打包前必做两件事：`rm -rf __pycache__`（`py_compile` 会留 .pyc，混进过交付包），
@@ -109,10 +122,18 @@ python3 -c "d=open('启动.bat','rb').read(); print(b'\r\n' in d, d.decode('gbk'
 1. **界面绝不能拿假数据冒充成功**。早期版本把任何请求失败吞成 null 然后编 6 个假模型显示
    「演示：6 个模型」，用户选了假模型后全线报错。现在 `S.live` 一旦为真永不回退，失败必须
    toast 出真实状态码和响应体。演示数据必须带「（演示）」前缀。
-2. **改了 `extension/` 就必须 bump `manifest.json` 的 version 和 server.py 的 `EXT_MIN`**，
-   并在回复里告诉用户该看到几点几。**bump 程序 VERSION 时这两个也必须同步 bump**（用户 2026-08-01
-   定的：「拓展和程序版本必须对上，不然不好看」）——三处永远钉齐，即使扩展零改动也要重打扩展 zip、
-   让用户重装一次看新号。不存在「只动程序」的版本。
+2. **程序版本与扩展版本永远同步，三处号码永远钉齐**（用户 2026-08-01 定、2026-08-02 又强调一次：
+   「拓展和程序版本必须对上，不然不好看」）。三处 = `server.py` 的 `VERSION`、`server.py` 的
+   `EXT_MIN`、`extension/manifest.json` 的 `version`；另外 `extension/怎么装.txt` 里写死的版本行
+   也要跟着改。规矩是双向的：
+   - 改了 `extension/` → 三处一起 bump，并在回复里告诉用户该在 Chrome 里看到几点几；
+   - 只改了程序、扩展一行没动 → **三处照样一起 bump，扩展 zip 照样重打**。
+     不存在「只动程序」的版本。扩展零改动时在回复里说清「代码没变、只是号码对齐，不重装也能用」，
+     但包必须给，否则他手上两个号不一样就会来问。
+   出包前跑一遍自查，三个号不一致就别出包：
+   ```bash
+   grep -nE 'VERSION = |EXT_MIN = ' server.py; grep -n '"version"' extension/manifest.json
+   ```
 3. **交付物一律带版本号**（`dcwatch-v1.8.0.zip`），旧版删掉。他拿错版本这件事发生过三次，
    来源分别是：GitHub 上没推的 commit、界面里下载到的是他自己磁盘上的旧 extension 文件夹、
    Chrome 的 load unpacked 记的是老文件夹路径。
