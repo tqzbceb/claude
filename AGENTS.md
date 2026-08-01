@@ -56,7 +56,7 @@ python3 server.py            # → http://127.0.0.1:8777
 DCWATCH_DB=/tmp/x.db python3 server.py    # 测试时用，别污染真配置
 ```
 
-回归（**改 server.py 必跑**，共 496 条）：
+回归（**改 server.py 必跑**，共 566 条）：
 
 ```bash
 cd tests && ./runall.sh e2e.py e2e_ai.py           # 一次两三套，别全塞一批（会超时）
@@ -80,7 +80,7 @@ await m.runFresh(session)   // 16 条：靠消息 ID 里的时间戳判新旧，
 
 用户拿到的是一个 zip，他解压后双击 `启动.bat`。**交付包里不含 `tests/`、`AGENTS.md`、
 `CLAUDE.md`、`HANDOFF.md` 和两个点文件** —— 那些是给你和给 git 的，塞进去只会让他困惑。
-干净的 26 个文件，355 KB 左右（`README.md` 要留下，那是给用户看的说明书）：
+干净的 27 个文件，400 KB 左右（v1.10.0 起多了 presets/，服务端 /api/presets 运行时读它，不能删）（`README.md` 要留下，那是给用户看的说明书）：
 
 ```bash
 V=$(grep -oP 'VERSION = "\K[^"]+' server.py)          # 版本号只有一个来源：server.py
@@ -88,7 +88,7 @@ rm -rf /tmp/pack && mkdir -p /tmp/pack/dcwatch
 cp -r ./. /tmp/pack/dcwatch/
 cd /tmp/pack/dcwatch && rm -rf .git tests release .gitignore .gitattributes __pycache__ \
     AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md NOW.md agent
-find . -type f | wc -l                                # 必须是 26，少了就是同步把 .bat 弄丢了
+find . -type f | wc -l                                # 必须是 27（v1.10.0 起；少了就是同步把 .bat 弄丢了）
 cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch   # 环境里没有 zip 命令
 ```
 

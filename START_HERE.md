@@ -62,7 +62,7 @@ grep -rl github_pat_ .git/                          # 必须没有输出
 ## 4. 给用户交付东西怎么给
 
 他要的是一个 zip，解压后双击 `启动.bat`。**交付包里留 `README.md`（那是给他看的说明书），
-去掉 `tests/`、`release/`、给你看的三份 .md 和两个点文件**，干净 **26 个文件**：
+去掉 `tests/`、`release/`、给你看的几份 .md 和两个点文件**，干净 **27 个文件**（v1.10.0 起含 `presets/`，服务端运行时读它，别删）：
 
 ```bash
 V=$(grep -oP 'VERSION = "\K[^"]+' server.py)        # 版本号只有一个来源：server.py
@@ -70,7 +70,7 @@ rm -rf __pycache__ tests/__pycache__
 rm -rf /tmp/pack && mkdir -p /tmp/pack/dcwatch && cp -r ./. /tmp/pack/dcwatch/
 cd /tmp/pack/dcwatch && rm -rf .git tests release .gitignore .gitattributes __pycache__ \
     AGENTS.md CLAUDE.md HANDOFF.md START_HERE.md NOW.md agent   # README.md 要留下
-find . -type f | wc -l                              # 必须是 26
+find . -type f | wc -l                              # 必须是 27（v1.10.0 起）
 cd /tmp/pack && python3 -m zipfile -c "dcwatch-v$V.zip" dcwatch
 ```
 

@@ -108,6 +108,18 @@ VERSION，不碰 manifest/EXT_MIN，不出扩展包**。步骤：
 **C2 扩展侧不碰**（单独一轮）；e2e_chk.py 专项债有余力就还。
 
 ## 状态
+**✅ v1.10.0 已出包已推送（K 窗口，2026-08-01），本轮（A1–A5、B1–B6、C1、C3、C4、D）全部落地。**
+K 窗口做完：全套回归 **566/566 全绿**（e2e 50 · ai 27 · multi 26 · wb 118 · imp 74 · ext 53 ·
+v17 46 · diag 47 · chat 42 · wiz 83）→ bump VERSION 1.9.4→1.10.0（**EXT_MIN/manifest 没动**：
+extension/ 自 458e1e6 起 0 commit，实测过）→ README/release/START_HERE 改版
+（新增「v1.10.0 这一版加了什么」+ 故障对照 5 条）→ /version 冒烟印 v1.10.0 ✓ →
+程序 zip（**27 文件**，多了 presets/，打包子流程和交付 zip 里 /api/presets 实测能列出来）进
+release/ + outputs/，旧 1.9.4 程序包删了（扩展包还是 v1.9.4 那份）。打包文档 26→27 已同步改。
+**没有进行中的任务。下窗口的活**（按序）：① 等用户真机验收 v1.10.0（重点：拉模型 401 修好没、
+B1 AI 复核真开起来盯 key 社群）+ 顺嘴要新诊断包；② C2 扩展侧（PLAN_C2.md，动 extension，
+单独一轮，bump manifest + EXT_MIN）；③ e2e_chk.py 专项债（PLAN_B1 §3.3，≥40 条）。
+<details><summary>K 窗口之前的状态存档（I/J 窗口，点开看）</summary>
+
 **I 窗口进度：A6 ✅（50ea64d）→ C4 ✅ CSS 钉死 → B6 ✅ 只读工具 6 个（list_providers/list_hooks/
 recent_hits/test_message/get_logs/export_extract_templates）+ WB_TOOLS/WB_TEXT_PROTO/READ_HUMAN 同步 +
 e2e_wb 第 15 节 19 条（118/118 全绿，中间踩了 json.dumps 转义中文的坑，断言要按解析后的结构写）。**
@@ -146,6 +158,7 @@ ai.params / ai.post 三档 / ai_tag 补格式标尺 / 诊断包 [5.7]）。界�
 ⑤ B5：presets/教模型写规则.json 内置预设 + 界面一键装（引用 docs/discord-命名约定.md）
 ⑥ 回归（e2e/ai/wb/diag/imp）+ 出 v1.10.0 包（程序 zip，扩展没动不出）+ 推送
 ⑦ B1 / C2 / B6 留给下一轮（B1 最大，单独一轮；C2 动 extension 要 bump 版本）
+</details>
 
 ---
 （以下为 v1.9.4 出包轮的存档状态）
