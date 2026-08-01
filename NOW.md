@@ -6,7 +6,7 @@
 > **规矩：本页只保留「当前状态」一节 + 协议。做完一轮，把旧状态压缩成一两行挪进
 > HANDOFF.md，别在这页往上摞新的「## 状态」——摞过 5 个，接手的人分不清哪个是真的。**
 
-## 当前状态（2026-08-02 AP 窗口）
+## 当前状态（2026-08-02 AQ 窗口，接 AP 的手）
 
 **（v1.12.1 / F1 名录那一轮的细节已挪进 HANDOFF.md：扩展抄名字 → `names` 表 → 规则页四栏
 可搜索下拉 → 工作台 `find_target`；服务端 14 套 870 条 + 扩展侧 4 套 139 条全绿）**
@@ -17,13 +17,18 @@ F2 = 模型分不清用户 ID 和频道 ID（用户说「监听某个用户」�
 根因：snowflake 人和频道长相一样，而 `create_rule` 收下就存、压根不校验类型。
 F3 = 规则页的候选表/名录表要能折叠。两条的详细根因和修法在 `BACKLOG.md` 末尾。
 
+**AP 窗口 21:05 推完第 1 步（服务端 F2，含步骤 2/3/4）后没了动静（额度掐断）。
+AQ 窗口 21:18 核查过它那条 commit（2535e0f）质量没问题，接第 5/6/7 步往下做。
+核查结论：`check_slot_kinds` 见过的类型不符一律拦、没见过的只提醒并要求问用户，
+`create_rule`/`update_rule` 拦下就不写库，`find_target` 数字反查在，四处提示词纪律在。**
+
 步骤（每步做完立刻 save）：
 1. ✅ 认领：BACKLOG 写 F2/F3 + 本页改成「正在做」，推送
-2. 服务端 `kinds_of_id` / `check_slot_kinds`：ID 拿去名录对 kind，栏位不符→拒绝并点名正确栏位；
+2. ✅ 服务端 `kinds_of_id` / `check_slot_kinds`：ID 拿去名录对 kind，栏位不符→拒绝并点名正确栏位；
    分类填进 channel_ids 也拦；名录没见过的不拦但回「类型不确定，要跟用户确认」
-3. 在 `create_rule` / `update_rule` 工具里挂上这道闸；`find_target` 支持数字反查（这 ID 是人还是频道）
-4. 提示词写死纪律：RULE_FIELDS_DOC / WB_TOOLS_HOWTO / WORKBENCH_SYS 功能清单（硬规矩 6）/ WIZARD_SYS
-5. `brief_rule` + 界面：ID 翻译成「类型＋名字」显示，填错栏位红字当场点出来
+3. ✅ 在 `create_rule` / `update_rule` 工具里挂上这道闸；`find_target` 支持数字反查（这 ID 是人还是频道）
+4. ✅ 提示词写死纪律：RULE_FIELDS_DOC / WB_TOOLS_HOWTO / WORKBENCH_SYS 功能清单（硬规矩 6）/ WIZARD_SYS
+5. 🔨 `brief_rule` + 界面：ID 翻译成「类型＋名字」显示，填错栏位红字当场点出来
 6. F3 折叠
 7. 回归（服务端全套 + 新断言）→ 三处 bump v1.12.2 → 双 zip → 冒烟 → 文档收尾
 
